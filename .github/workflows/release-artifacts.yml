@@ -1,0 +1,316 @@
+name: Release Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_version:
+        description: "Release version, bare semver (example: 0.5.0)"
+        required: true
+        type: string
+      create_release:
+        description: "Create the GitHub release after every artifact passes"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            executable_suffix: ""
+            archive_ext: tar.gz
+          - os: macos-26-intel
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+            executable_suffix: ""
+            archive_ext: tar.gz
+          - os: macos-26
+            target: aarch64-apple-darwin
+            platform: macos-arm64
+            executable_suffix: ""
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            executable_suffix: .exe
+            archive_ext: zip
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.target }}
+
+      - name: Resolve archive names
+        id: names
+        shell: bash
+        env:
+          VERSION: ${{ inputs.artifact_version }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCHIVE_EXT: ${{ matrix.archive_ext }}
+        run: |
+          set -euo pipefail
+          workspace_version="$(awk -F '"' '/^version = "/ { print $2; exit }' Cargo.toml)"
+          test "${VERSION}" = "${workspace_version}" || {
+            echo "artifact_version ${VERSION} does not match workspace version ${workspace_version}" >&2
+            exit 1
+          }
+          grep -Fq "## [${VERSION}] - " CHANGELOG.md || {
+            echo "CHANGELOG.md has no dated ${VERSION} section" >&2
+            exit 1
+          }
+          if [[ "${{ inputs.create_release }}" == "true" && "${GITHUB_REF}" != "refs/heads/master" ]]; then
+            echo "public releases must be dispatched from master, got ${GITHUB_REF}" >&2
+            exit 1
+          fi
+          bundle="papertiger-${VERSION}-${PLATFORM}"
+          echo "bundle=${bundle}" >> "$GITHUB_OUTPUT"
+          echo "archive=${bundle}.${ARCHIVE_EXT}" >> "$GITHUB_OUTPUT"
+
+      # The source job owns the complete workspace suite. These focused tests
+      # cover code whose behavior or implementation differs by host OS.
+      - name: Test native process boundaries
+        run: >-
+          cargo test --locked -p papertiger-mise --lib --target ${{ matrix.target }}
+          executor::tests:: -- --test-threads=1
+
+      - name: Test native path and evidence boundaries
+        run: >-
+          cargo test --locked -p papertiger-mise --lib --target ${{ matrix.target }}
+          object::tests:: -- --test-threads=1
+
+      - name: Test native process identity
+        run: >-
+          cargo test --locked -p papertiger-mise --lib --target ${{ matrix.target }}
+          process_identity::tests:: -- --test-threads=1
+
+      - name: Test project-root integration
+        run: >-
+          cargo test --locked -p papertiger-mise --test project_root_cli
+          --target ${{ matrix.target }} -- --test-threads=1
+
+      - name: Test project setup integration
+        run: >-
+          cargo test --locked -p papertiger --bin papertiger --target ${{ matrix.target }}
+          project_setup::tests:: -- --test-threads=1
+
+      - name: Build release binaries
+        run: cargo build --locked --release --workspace --bins --target ${{ matrix.target }}
+
+      - name: Stage release bundle (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.artifact_version }}
+        run: |
+          set -euo pipefail
+          bundle="dist/${{ steps.names.outputs.bundle }}"
+          archive="dist/${{ steps.names.outputs.archive }}"
+          mkdir -p "${bundle}"
+          cp "target/${{ matrix.target }}/release/papertiger" "${bundle}/"
+          cp "target/${{ matrix.target }}/release/papertiger-mise" "${bundle}/"
+          cp README.md CHANGELOG.md MISE.md agent_integration.md \
+             LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
+          cat > "${bundle}/manifest.json" <<EOF
+          {
+            "schema": "papertiger.release-manifest.v1",
+            "name": "papertiger",
+            "version": "${VERSION}",
+            "source_commit": "${GITHUB_SHA}",
+            "target": "${{ matrix.target }}",
+            "platform": "${{ matrix.platform }}",
+            "archive": "${{ steps.names.outputs.archive }}",
+            "binaries": ["papertiger", "papertiger-mise"],
+            "planner_setup_installs_mise": false
+          }
+          EOF
+          chmod +x "${bundle}/papertiger" "${bundle}/papertiger-mise"
+          tar -czf "${archive}" -C dist "${{ steps.names.outputs.bundle }}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "${{ steps.names.outputs.archive }}" > "${{ steps.names.outputs.archive }}.sha256")
+          else
+            (cd dist && shasum -a 256 "${{ steps.names.outputs.archive }}" > "${{ steps.names.outputs.archive }}.sha256")
+          fi
+
+      - name: Stage release bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="dist/${{ steps.names.outputs.bundle }}"
+          archive="dist/${{ steps.names.outputs.archive }}"
+          mkdir -p "$bundle"
+          cp "target/${{ matrix.target }}/release/papertiger.exe" "$bundle/"
+          cp "target/${{ matrix.target }}/release/papertiger-mise.exe" "$bundle/"
+          cp README.md CHANGELOG.md MISE.md agent_integration.md \
+             LICENSE LICENSE-SSL LICENSE-VPL "$bundle/"
+          cat > "$bundle/manifest.json" <<EOF
+          {
+            "schema": "papertiger.release-manifest.v1",
+            "name": "papertiger",
+            "version": "${{ inputs.artifact_version }}",
+            "source_commit": "${GITHUB_SHA}",
+            "target": "${{ matrix.target }}",
+            "platform": "${{ matrix.platform }}",
+            "archive": "${{ steps.names.outputs.archive }}",
+            "binaries": ["papertiger.exe", "papertiger-mise.exe"],
+            "planner_setup_installs_mise": false
+          }
+          EOF
+          (cd dist && 7z a -tzip "${{ steps.names.outputs.archive }}" "${{ steps.names.outputs.bundle }}" >/dev/null)
+          (cd dist && sha256sum "${{ steps.names.outputs.archive }}" > "${{ steps.names.outputs.archive }}.sha256")
+
+      - name: Verify packaged release (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.artifact_version }}
+        run: |
+          set -euo pipefail
+          archive="dist/${{ steps.names.outputs.archive }}"
+          verify="dist/verify-${{ matrix.platform }}"
+          mkdir -p "$verify"
+          tar -xzf "$archive" -C "$verify"
+          bundle="$verify/${{ steps.names.outputs.bundle }}"
+          test "$("$bundle/papertiger" --version)" = "papertiger ${VERSION}"
+          test "$("$bundle/papertiger-mise" --version)" = "papertiger-mise ${VERSION}"
+          grep -q 'setup-project' < <("$bundle/papertiger" --help)
+          grep -q -- '--project-root' < <("$bundle/papertiger-mise" --help)
+          grep -Fq '"schema": "papertiger.release-manifest.v1"' "$bundle/manifest.json"
+          grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "$bundle/manifest.json"
+          grep -Fq '"planner_setup_installs_mise": false' "$bundle/manifest.json"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum -c "${{ steps.names.outputs.archive }}.sha256")
+          else
+            (cd dist && shasum -a 256 -c "${{ steps.names.outputs.archive }}.sha256")
+          fi
+
+          project="$verify/consumer"
+          mkdir -p "$project/nested/work"
+          printf 'repository contract\n' > "$project/AGENTS.md"
+          printf 'target/\n' > "$project/.gitignore"
+          "$bundle/papertiger" setup-project "$project" --json > "$verify/setup.json"
+          test -f "$project/tools/papertiger/bin/papertiger"
+          test ! -e "$project/tools/papertiger/bin/papertiger-mise"
+          test "$(cat "$project/AGENTS.md")" = "repository contract"
+          (cd "$project/nested/work" && ../../scripts/papertiger init)
+          test -f "$project/state/papertiger.sqlite"
+          test ! -e "$project/nested/work/state"
+          "$bundle/papertiger-mise" --project-root "$project" status --json > "$verify/mise-before.json"
+          grep -q '"initialized": false' "$verify/mise-before.json"
+          "$bundle/papertiger-mise" --project-root "$project" init
+          "$bundle/papertiger-mise" --project-root "$project" status --json > "$verify/mise-after.json"
+          grep -q '"initialized": true' "$verify/mise-after.json"
+          test ! -e "$project/tools/papertiger/bin/papertiger-mise"
+
+      - name: Verify packaged release (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.artifact_version }}
+        run: |
+          set -euo pipefail
+          archive="dist/${{ steps.names.outputs.archive }}"
+          verify="dist/verify-${{ matrix.platform }}"
+          mkdir -p "$verify"
+          7z x -y "${archive}" "-o${verify}" >/dev/null
+          bundle="$verify/${{ steps.names.outputs.bundle }}"
+          planner="$bundle/papertiger.exe"
+          mise="$bundle/papertiger-mise.exe"
+          test "$("$planner" --version)" = "papertiger ${VERSION}"
+          test "$("$mise" --version)" = "papertiger-mise ${VERSION}"
+          grep -q 'setup-project' < <("$planner" --help)
+          grep -q -- '--project-root' < <("$mise" --help)
+          grep -Fq '"schema": "papertiger.release-manifest.v1"' "$bundle/manifest.json"
+          grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "$bundle/manifest.json"
+          grep -Fq '"planner_setup_installs_mise": false' "$bundle/manifest.json"
+          (cd dist && sha256sum -c "${{ steps.names.outputs.archive }}.sha256")
+
+          project="$verify/consumer"
+          mkdir -p "$project/nested/work"
+          printf 'repository contract\n' > "$project/AGENTS.md"
+          printf 'target/\n' > "$project/.gitignore"
+          "$planner" setup-project "$project" --json > "$verify/setup.json"
+          grep -Fq '"schema": "papertiger.project_setup.v1"' "$verify/setup.json"
+          test -f "$project/tools/papertiger/bin/papertiger.exe"
+          test ! -e "$project/tools/papertiger/bin/papertiger-mise.exe"
+          test "$(cat "$project/AGENTS.md")" = "repository contract"
+          (cd "$project/nested/work" && ../../scripts/papertiger init)
+          test -f "$project/state/papertiger.sqlite"
+          test ! -e "$project/nested/work/state"
+          "$mise" --project-root "$project" status --json > "$verify/mise-before.json"
+          grep -q '"initialized": false' "$verify/mise-before.json"
+          "$mise" --project-root "$project" init
+          "$mise" --project-root "$project" status --json > "$verify/mise-after.json"
+          grep -q '"initialized": true' "$verify/mise-after.json"
+          test ! -e "$project/tools/papertiger/bin/papertiger-mise.exe"
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: papertiger-${{ inputs.artifact_version }}-${{ matrix.platform }}
+          path: |
+            dist/${{ steps.names.outputs.archive }}
+            dist/${{ steps.names.outputs.archive }}.sha256
+          if-no-files-found: error
+
+  publish-release:
+    if: inputs.create_release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          path: release-assets
+          pattern: papertiger-${{ inputs.artifact_version }}-*
+          merge-multiple: true
+
+      - name: Extract release notes
+        shell: bash
+        env:
+          VERSION: ${{ inputs.artifact_version }}
+        run: |
+          set -euo pipefail
+          awk -v heading="## [${VERSION}]" '
+            index($0, heading) == 1 { found = 1; next }
+            /^## / { if (found) exit }
+            found { print }
+          ' CHANGELOG.md > release_body.md
+          test -s release_body.md || {
+            echo "CHANGELOG.md has no release notes for ${VERSION}" >&2
+            exit 1
+          }
+          cat >> release_body.md <<'EOF'
+
+          Prebuilt archives are attached for Windows x64, Linux x64, Intel macOS,
+          and Apple Silicon macOS. Each contains the version-aligned `papertiger`
+          and `papertiger-mise` binaries, setup and operating documentation,
+          licenses, and a release manifest. Verify the adjacent SHA-256 asset
+          before extraction.
+          EOF
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.artifact_version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --target "$GITHUB_SHA" \
+            --title "Papertiger ${VERSION}" \
+            --notes-file release_body.md \
+            release-assets/*

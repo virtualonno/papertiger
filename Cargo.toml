@@ -1,0 +1,34 @@
+[package]
+name = "papertiger"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Agent-native, SQLite-backed planning for engineering work that must stay truthful across sessions."
+readme = "README.md"
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[workspace]
+resolver = "3"
+members = [
+    ".",
+    "crates/papertiger-mise",
+]
+default-members = ["."]
+
+[workspace.package]
+version = "0.5.0"
+edition = "2024"
+rust-version = "1.95"
+repository = "https://github.com/virtualonno/papertiger"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

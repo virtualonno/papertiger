@@ -1,0 +1,186 @@
+{
+  "schema": "papertiger.project-improvement-brief.v1",
+  "brief_id": "example-project-runtime-readiness-b01",
+  "authority": "planning_input_only",
+  "project": {
+    "name": "example-project",
+    "repository_locator": "/projects/example-project",
+    "observed_revision": "0123456789abcdef0123456789abcdef01234567",
+    "worktree_dirty": true,
+    "intent": "Classify runtime readiness faults and return exact recovery actions while preserving source, schema, tool, and worker identity."
+  },
+  "template": {
+    "key": "reliability_recovery",
+    "version": 1,
+    "registry_sha256": "d86225f9e2ffc3a87808884df79a5320a1810aad7e887c88b783552af729cfc5"
+  },
+  "evidence": [
+    {
+      "key": "runtime-readiness",
+      "freshness": "live",
+      "locator": "command:check-runtime-readiness",
+      "sha256": null,
+      "observation": "The synthetic valid control passes every declared source, schema, tool, and worker check.",
+      "limitation": null
+    },
+    {
+      "key": "source-freshness",
+      "freshness": "live",
+      "locator": "git:0123456789abcdef0123456789abcdef01234567",
+      "sha256": null,
+      "observation": "The fixture marks its checkout dirty so compilation must refuse before producing a draft.",
+      "limitation": null
+    },
+    {
+      "key": "linker-failure",
+      "freshness": "live",
+      "locator": "receipt:7fb0df377cf1dfe0cc30ce388a264ee376fc0207d17107d77efeed5d9c0b9afd",
+      "sha256": "7fb0df377cf1dfe0cc30ce388a264ee376fc0207d17107d77efeed5d9c0b9afd",
+      "observation": "The fault fixture refuses a participant when the declared linker cannot be opened.",
+      "limitation": null
+    },
+    {
+      "key": "temporary-directory-failure",
+      "freshness": "live",
+      "locator": "receipt:7eb9b07a43a0957c408d679d534209e582f562e5ede9e7a5e6d811313fa80ade",
+      "sha256": "7eb9b07a43a0957c408d679d534209e582f562e5ede9e7a5e6d811313fa80ade",
+      "observation": "The fault fixture refuses a participant when its temporary directory is not writable.",
+      "limitation": null
+    },
+    {
+      "key": "native-environment-failure",
+      "freshness": "live",
+      "locator": "receipt:85a79bc7a58b4a9865fe57d5103f40c50a4ae9f62678b38c7922cdb33c6eaae9",
+      "sha256": "85a79bc7a58b4a9865fe57d5103f40c50a4ae9f62678b38c7922cdb33c6eaae9",
+      "observation": "The fault fixture refuses an incomplete native build environment.",
+      "limitation": null
+    },
+    {
+      "key": "sealed-fault-population",
+      "freshness": "unavailable",
+      "locator": null,
+      "sha256": null,
+      "observation": "No sealed and verdict-only fault population is included in this public example.",
+      "limitation": "The disclosed fixture can test development behavior but cannot support a promotion decision."
+    }
+  ],
+  "opportunity": {
+    "intended_outcome": "Return the expected closed diagnosis and corrective action for more runtime faults without introducing false-ready or false-fault results.",
+    "quantitative_primary": "Count of fixture cases receiving the exact expected readiness classification and recovery contract.",
+    "inference_scope": "The result applies only to the disclosed synthetic cases and toolchain contract. It makes no claim about other faults, platforms, or promotion readiness.",
+    "anti_goodhart": {
+      "capability_deletion": "The valid control must remain ready and every identity check remains present, so deleting checks or always refusing cannot improve the primary outcome.",
+      "workload_narrowing": "The adapter executes the complete case manifest and rejects missing, duplicated, or reordered cases.",
+      "cost_displacement": "Diagnostic latency and external probe count are protected objectives, and setup work remains inside the measured process.",
+      "test_weakening": "Fixtures, expected outcomes, and the adapter are frozen outside the candidate mutation allowlist.",
+      "self_certification": "The external adapter derives verdicts from process output and the frozen oracle; candidate-authored success labels are ignored."
+    },
+    "native_observables": [
+      "Structured readiness result and per-check status",
+      "Stable failure code and corrective action",
+      "Process status and diagnostic latency"
+    ],
+    "invariants": [
+      "Zero false-ready classifications",
+      "Successful checks contain no stale failure metadata",
+      "Source, schema, tool, and worker identities remain explicit",
+      "Unknown state fails closed"
+    ],
+    "protected_countermetrics": [
+      "False-fault count",
+      "Diagnostic latency",
+      "External probe count",
+      "Successful-row metadata cleanliness"
+    ],
+    "negative_controls": [
+      "No-op exact source tree",
+      "Candidate that reports a missing authority as ready",
+      "Valid environment",
+      "Invalid schema and missing tool environments"
+    ],
+    "candidate_scope": [
+      "Runtime readiness result construction",
+      "Contract tests for failed and successful check rows"
+    ],
+    "fixtures": [
+      {
+        "key": "workspace-fault-matrix",
+        "locator": "/fixtures/runtime-readiness/cases.json",
+        "disclosure": "disclosed_workspace",
+        "oracle": "Exact expected overall state, failed check, failure code, and corrective action.",
+        "limitation": "The cases are disclosed to candidate code; repeated blocks are deterministic replays, not independent population samples."
+      },
+      {
+        "key": "sealed-fault-matrix",
+        "locator": null,
+        "disclosure": "unavailable",
+        "oracle": "A future verdict-only classification authority.",
+        "limitation": "Unavailable in this public example and therefore ineligible for promotion evidence."
+      }
+    ],
+    "environment_requirements": [
+      {
+        "key": "cargo",
+        "locator": "/toolchains/rust/bin/cargo",
+        "sha256": "eff8933232aa936e639df6ccf8670c4a3797e615f19b45c7f057d73a61b73b1a",
+        "required_behavior": "Build the exact participant source under the declared toolchain.",
+        "evidence": "live"
+      },
+      {
+        "key": "native-linker",
+        "locator": "/toolchains/native/bin/linker",
+        "sha256": "877f9b026f29142cea5bea78d850ed69b7156598b5f10531dcf8b146c0fc62df",
+        "required_behavior": "Link participant build products using the declared search paths.",
+        "evidence": "live"
+      },
+      {
+        "key": "temporary-directory",
+        "locator": "/workspaces/example-project/native-temp",
+        "sha256": null,
+        "required_behavior": "Provide a fresh writable temporary directory to build subprocesses.",
+        "evidence": "inferred"
+      },
+      {
+        "key": "native-build-environment",
+        "locator": null,
+        "sha256": null,
+        "required_behavior": "Bind compiler, include, library, system root, path, temporary directory, and child-process inheritance before admission.",
+        "evidence": "unavailable"
+      }
+    ],
+    "uncertainties": [
+      "The disclosed matrix does not establish behavior on unseen fault classes.",
+      "The complete native child-process environment is intentionally unavailable.",
+      "The synthetic checkout is marked dirty and cannot compile into a campaign draft."
+    ],
+    "resource_costs": [
+      "Each participant requires a build unless an independently verified source-bound artifact is available.",
+      "A paired calibration and research series executes every matrix twice per block.",
+      "Disclosed workspace evidence supports development decisions but not sealed promotion."
+    ],
+    "objectives": [
+      {"key":"correctness","role":"hard_constraint","direction":"maximize","unit":"boolean","minimum_practical_change_units":0,"regression_tolerance_units":0,"acceptance_threshold_units":1},
+      {"key":"compatibility","role":"hard_constraint","direction":"maximize","unit":"boolean","minimum_practical_change_units":0,"regression_tolerance_units":0,"acceptance_threshold_units":1},
+      {"key":"exact-diagnoses","role":"primary","direction":"maximize","unit":"cases","minimum_practical_change_units":1,"regression_tolerance_units":0,"acceptance_threshold_units":null},
+      {"key":"false-faults","role":"protected","direction":"minimize","unit":"cases","minimum_practical_change_units":0,"regression_tolerance_units":0,"acceptance_threshold_units":null},
+      {"key":"diagnostic-latency-ms","role":"protected","direction":"minimize","unit":"milliseconds","minimum_practical_change_units":0,"regression_tolerance_units":10000,"acceptance_threshold_units":null},
+      {"key":"external-probes","role":"protected","direction":"minimize","unit":"count","minimum_practical_change_units":0,"regression_tolerance_units":0,"acceptance_threshold_units":null}
+    ],
+    "mutation_allowlist": [
+      "src/runtime_readiness.rs",
+      "tests/runtime_readiness.rs"
+    ],
+    "budgets": [
+      {"resource":"candidates","hard_limit":3},
+      {"resource":"trials","hard_limit":48},
+      {"resource":"failures","hard_limit":3},
+      {"resource":"wall_time_milliseconds","hard_limit":72000000}
+    ],
+    "stop_rules": {
+      "maximum_candidate_analyses": 1,
+      "maximum_infrastructure_failures": 1,
+      "maximum_trials_without_improvement": 16
+    },
+    "adapter_requirement": "Run the exact participant CLI against the bound fixture matrix, retain per-case receipts, and emit every admitted objective without self-certified verdicts."
+  }
+}

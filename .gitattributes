@@ -1,0 +1,10 @@
+* text=auto
+*.sh text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.sqlite binary
+*.exe binary
+*.zip binary
+*.gz binary
