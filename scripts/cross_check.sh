@@ -48,6 +48,62 @@ case "$release_error" in
     ;;
 esac
 
+notes_fixture="$(mktemp -d "${TMPDIR:-/tmp}/papertiger-release-notes.XXXXXX")"
+notes_cleanup() {
+  case "$notes_fixture" in
+    "${TMPDIR:-/tmp}"/papertiger-release-notes.*) rm -rf -- "$notes_fixture" ;;
+    *) echo "refusing to remove unexpected release-notes fixture: $notes_fixture" >&2 ;;
+  esac
+}
+trap notes_cleanup EXIT
+cat > "$notes_fixture/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [1.2.3] - 2026-08-13
+
+This sentence was wrapped in
+the middle. This sentence was not.
+
+### Fixed
+
+- One release-note item was wrapped
+  at an arbitrary source column. Its second sentence is semantic.
+- Another item stayed on one line.
+
+## [1.2.2] - 2026-08-12
+EOF
+cat > "$notes_fixture/expected.md" <<'EOF'
+This sentence was wrapped in the middle.
+This sentence was not.
+
+### Fixed
+
+- One release-note item was wrapped at an arbitrary source column.
+  Its second sentence is semantic.
+- Another item stayed on one line.
+
+Prebuilt archives are attached for Windows x64, Linux x64, Intel macOS, and Apple Silicon macOS.
+Each contains the version-aligned `papertiger` and `papertiger-mise` binaries, setup and operating documentation, licenses, and a release manifest.
+Verify the adjacent SHA-256 asset before extraction.
+EOF
+bash scripts/render_release_notes.sh 1.2.3 \
+  "$notes_fixture/CHANGELOG.md" > "$notes_fixture/actual.md"
+diff -u "$notes_fixture/expected.md" "$notes_fixture/actual.md"
+if notes_error="$(bash scripts/render_release_notes.sh \
+    9.9.9 "$notes_fixture/CHANGELOG.md" 2>&1)"; then
+  echo "release-note rendering accepted a missing changelog section" >&2
+  exit 1
+fi
+case "$notes_error" in
+  *"CHANGELOG has no release section for ## [9.9.9]"*) ;;
+  *)
+    echo "release-note refusal did not identify the missing version section" >&2
+    exit 1
+    ;;
+esac
+notes_cleanup
+trap - EXIT
+
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/papertiger-cross-check.XXXXXX")"
 cleanup() {
   case "$fixture" in

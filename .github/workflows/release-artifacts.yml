@@ -379,23 +379,7 @@ jobs:
           VERSION: ${{ inputs.artifact_version }}
         run: |
           set -euo pipefail
-          awk -v heading="## [${VERSION}]" '
-            index($0, heading) == 1 { found = 1; next }
-            /^## / { if (found) exit }
-            found { print }
-          ' CHANGELOG.md > release_body.md
-          test -s release_body.md || {
-            echo "CHANGELOG.md has no release notes for ${VERSION}" >&2
-            exit 1
-          }
-          cat >> release_body.md <<'EOF'
-
-          Prebuilt archives are attached for Windows x64, Linux x64, Intel macOS,
-          and Apple Silicon macOS. Each contains the version-aligned `papertiger`
-          and `papertiger-mise` binaries, setup and operating documentation,
-          licenses, and a release manifest. Verify the adjacent SHA-256 asset
-          before extraction.
-          EOF
+          bash scripts/render_release_notes.sh "$VERSION" > release_body.md
 
       - name: Create GitHub release
         env:

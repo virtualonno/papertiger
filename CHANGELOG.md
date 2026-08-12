@@ -6,6 +6,12 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Changed
+
+- Release publication now unfolds source hard-wrapping before creating the
+  GitHub description, keeping headings, paragraphs, and list items on semantic
+  boundaries instead of retaining arbitrary mid-sentence newlines.
+
 ## [0.7.1] - 2026-08-13
 
 ### Fixed
