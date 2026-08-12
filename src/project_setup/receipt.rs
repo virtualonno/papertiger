@@ -1,5 +1,6 @@
 //! Persisted ownership receipt and canonical identity for setup-managed text.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -41,7 +42,7 @@ pub(super) fn build_install_receipt(
         authority_path: authority_path.to_owned(),
         managed_files: managed
             .iter()
-            .filter(|file| file.receipt_tracked)
+            .filter(|file| file.content_kind.is_receipt_text())
             .map(|file| ManagedFileReceipt {
                 path: normalized_path(&file.relative_path),
                 sha256: managed_text_sha256(&file.content),
@@ -178,7 +179,7 @@ pub(super) fn preflight_receipt(
     }
     let existing = fs::read(destination)
         .with_context(|| format!("read project-install receipt {}", destination.display()))?;
-    if existing == expected {
+    if managed_text_sha256(&existing) == managed_text_sha256(expected) {
         return Ok((SetupActionKind::Unchanged, false));
     }
     if prior_receipt_loaded || replace_managed {
@@ -193,9 +194,9 @@ pub(super) fn preflight_receipt(
     ))
 }
 
-pub(super) fn managed_text_sha256(content: &[u8]) -> String {
+pub(super) fn canonical_managed_text(content: &[u8]) -> Cow<'_, [u8]> {
     if !content.windows(2).any(|pair| pair == b"\r\n") {
-        return papertiger::sha256(content);
+        return Cow::Borrowed(content);
     }
     let mut canonical = Vec::with_capacity(content.len());
     let mut index = 0;
@@ -208,5 +209,9 @@ pub(super) fn managed_text_sha256(content: &[u8]) -> String {
             index += 1;
         }
     }
-    papertiger::sha256(&canonical)
+    Cow::Owned(canonical)
+}
+
+pub(super) fn managed_text_sha256(content: &[u8]) -> String {
+    papertiger::sha256(canonical_managed_text(content).as_ref())
 }

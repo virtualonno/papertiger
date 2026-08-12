@@ -15,8 +15,9 @@ use filesystem::{
 #[cfg(test)]
 use receipt::ManagedFileReceipt;
 use receipt::{
-    InstallReceipt, build_install_receipt, load_install_receipt, preflight_receipt, receipt_bytes,
-    receipt_hashes, refuse_release_downgrade, validate_receipt_managed_path,
+    InstallReceipt, build_install_receipt, canonical_managed_text, load_install_receipt,
+    preflight_receipt, receipt_bytes, receipt_hashes, refuse_release_downgrade,
+    validate_receipt_managed_path,
 };
 
 const BASH_LAUNCHER_TEMPLATE: &str = include_str!("../../assets/project-launcher.sh");
@@ -108,7 +109,19 @@ pub(super) struct ManagedFile {
     pub(super) relative_path: PathBuf,
     pub(super) content: Vec<u8>,
     pub(super) executable: bool,
-    pub(super) receipt_tracked: bool,
+    pub(super) content_kind: ManagedContentKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ManagedContentKind {
+    RuntimeBinary,
+    ReceiptText,
+}
+
+impl ManagedContentKind {
+    fn is_receipt_text(self) -> bool {
+        self == Self::ReceiptText
+    }
 }
 
 /// Install a project-local release without touching an existing authority or
@@ -186,37 +199,37 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             relative_path: PathBuf::from(format!("tools/papertiger/bin/papertiger{suffix}")),
             content: binary,
             executable: true,
-            receipt_tracked: false,
+            content_kind: ManagedContentKind::RuntimeBinary,
         },
         ManagedFile {
             relative_path: PathBuf::from("scripts/papertiger"),
             content: bash_launcher.into_bytes(),
             executable: true,
-            receipt_tracked: true,
+            content_kind: ManagedContentKind::ReceiptText,
         },
         ManagedFile {
             relative_path: PathBuf::from("scripts/papertiger.cmd"),
             content: windows_launcher.into_bytes(),
             executable: false,
-            receipt_tracked: true,
+            content_kind: ManagedContentKind::ReceiptText,
         },
         ManagedFile {
             relative_path: PathBuf::from("tools/papertiger/agent_integration.md"),
-            content: AGENT_INTEGRATION.to_vec(),
+            content: canonical_managed_text(AGENT_INTEGRATION).into_owned(),
             executable: false,
-            receipt_tracked: true,
+            content_kind: ManagedContentKind::ReceiptText,
         },
         ManagedFile {
             relative_path: PathBuf::from(".agents/skills/papertiger/SKILL.md"),
-            content: AGENT_SKILL.to_vec(),
+            content: canonical_managed_text(AGENT_SKILL).into_owned(),
             executable: false,
-            receipt_tracked: true,
+            content_kind: ManagedContentKind::ReceiptText,
         },
         ManagedFile {
             relative_path: PathBuf::from(".claude/skills/papertiger/SKILL.md"),
-            content: AGENT_SKILL.to_vec(),
+            content: canonical_managed_text(AGENT_SKILL).into_owned(),
             executable: false,
-            receipt_tracked: true,
+            content_kind: ManagedContentKind::ReceiptText,
         },
     ];
 
@@ -243,10 +256,9 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         let prior_hash = prior_hashes.get(&normalized_path(&file.relative_path));
         let (action, requires_replace_managed) = preflight_managed_file(
             &destination,
-            &file.content,
-            file.executable,
+            file,
             prior_hash.map(String::as_str),
-            prior_receipt.is_some() && !file.receipt_tracked,
+            prior_receipt.is_some() && !file.content_kind.is_receipt_text(),
             request.dry_run,
             request.replace_managed,
         )?;
@@ -610,14 +622,25 @@ fn normalize_authority_path(path: &Path) -> Result<String> {
 }
 
 fn render_bash_launcher(authority_path: &str) -> String {
-    BASH_LAUNCHER_TEMPLATE.replace("@PAPERTIGER_AUTHORITY_PATH@", authority_path)
+    render_launcher(
+        BASH_LAUNCHER_TEMPLATE,
+        "@PAPERTIGER_AUTHORITY_PATH@",
+        authority_path,
+    )
 }
 
 fn render_windows_launcher(authority_path: &str) -> String {
-    WINDOWS_LAUNCHER_TEMPLATE.replace(
+    render_launcher(
+        WINDOWS_LAUNCHER_TEMPLATE,
         "@PAPERTIGER_AUTHORITY_PATH_WINDOWS@",
         &authority_path.replace('/', "\\"),
     )
+}
+
+fn render_launcher(template: &str, token: &str, value: &str) -> String {
+    String::from_utf8(canonical_managed_text(template.as_bytes()).into_owned())
+        .expect("embedded launcher template is UTF-8")
+        .replace(token, value)
 }
 
 fn setup_operation(
@@ -678,7 +701,7 @@ fn write_install_receipt(path: &Path, content: &[u8], action: SetupActionKind) -
     }
     let installed = fs::read(path)
         .with_context(|| format!("verify project-install receipt {}", path.display()))?;
-    if installed != content {
+    if receipt::managed_text_sha256(&installed) != receipt::managed_text_sha256(content) {
         return Err(anyhow!(
             "project-install receipt verification failed at {}; rerun setup-project after checking the filesystem",
             path.display()
@@ -700,14 +723,21 @@ fn verify_installation(
                 root.join(&file.relative_path).display()
             )
         })?;
-        if installed != file.content {
+        let content_matches = if file.content_kind.is_receipt_text() {
+            receipt::managed_text_sha256(&installed) == receipt::managed_text_sha256(&file.content)
+        } else {
+            installed == file.content
+        };
+        if !content_matches {
             return Err(anyhow!(
                 "setup-project verification found unexpected content at {}; rerun setup-project after checking the filesystem",
                 root.join(&file.relative_path).display()
             ));
         }
     }
-    if fs::read(receipt_path)? != receipt_bytes {
+    if receipt::managed_text_sha256(&fs::read(receipt_path)?)
+        != receipt::managed_text_sha256(receipt_bytes)
+    {
         return Err(anyhow!(
             "setup-project verification found an unexpected project-install receipt at {}",
             receipt_path.display()
@@ -1405,23 +1435,106 @@ mod tests {
         let receipt = load_install_receipt(&project.join(INSTALL_RECEIPT_PATH))
             .unwrap()
             .unwrap();
+        let mut original_bytes = Vec::new();
         for file in &receipt.managed_files {
             let path = project.join(&file.path);
             let text = fs::read_to_string(&path).unwrap();
             fs::write(path, as_crlf(&text)).unwrap();
+            original_bytes.push((
+                file.path.clone(),
+                fs::read(project.join(&file.path)).unwrap(),
+            ));
         }
         let receipt_path = project.join(INSTALL_RECEIPT_PATH);
         let receipt_text = fs::read_to_string(&receipt_path).unwrap();
         fs::write(&receipt_path, as_crlf(&receipt_text)).unwrap();
+        let original_receipt = fs::read(&receipt_path).unwrap();
 
-        let upgraded = setup_project(request(&project, &binary)).unwrap();
-        assert_eq!(upgraded.operation, SetupOperation::Upgrade);
-        assert!(!upgraded.actions.iter().any(|action| {
-            action.action == SetupActionKind::ModifiedRefusal || action.requires_replace_managed
-        }));
         let current = setup_project(request(&project, &binary)).unwrap();
         assert_eq!(current.operation, SetupOperation::Unchanged);
+        assert!(!current.actions.iter().any(|action| {
+            action.action == SetupActionKind::ModifiedRefusal || action.requires_replace_managed
+        }));
+        for (path, bytes) in original_bytes {
+            assert_eq!(fs::read(project.join(path)).unwrap(), bytes);
+        }
+        assert_eq!(fs::read(receipt_path).unwrap(), original_receipt);
         cleanup(&project);
+    }
+
+    #[test]
+    fn managed_text_equivalence_never_weakens_binary_identity() {
+        let (project, _) = fixture("binary-line-ending-identity");
+        let destination = project.join("tools/papertiger/bin/papertiger.exe");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&destination, b"binary\r\npayload").unwrap();
+
+        let (text_action, _) = preflight_managed_file(
+            &destination,
+            &ManagedFile {
+                relative_path: PathBuf::from("scripts/papertiger.cmd"),
+                content: b"binary\npayload".to_vec(),
+                executable: false,
+                content_kind: ManagedContentKind::ReceiptText,
+            },
+            None,
+            false,
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(text_action, SetupActionKind::Unchanged);
+
+        let (binary_action, requires_replacement) = preflight_managed_file(
+            &destination,
+            &ManagedFile {
+                relative_path: PathBuf::from("tools/papertiger/bin/papertiger.exe"),
+                content: b"binary\npayload".to_vec(),
+                executable: false,
+                content_kind: ManagedContentKind::RuntimeBinary,
+            },
+            None,
+            false,
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(binary_action, SetupActionKind::ModifiedRefusal);
+        assert!(requires_replacement);
+        cleanup(&project);
+    }
+
+    #[test]
+    fn managed_text_rendering_is_checkout_line_ending_independent() {
+        let cases = [
+            (
+                BASH_LAUNCHER_TEMPLATE,
+                "@PAPERTIGER_AUTHORITY_PATH@",
+                "plans/papertiger.sqlite",
+            ),
+            (
+                WINDOWS_LAUNCHER_TEMPLATE,
+                "@PAPERTIGER_AUTHORITY_PATH_WINDOWS@",
+                "plans\\papertiger.sqlite",
+            ),
+        ];
+        for (template, token, value) in cases {
+            let lf = template.replace("\r\n", "\n");
+            let crlf = lf.replace('\n', "\r\n");
+            let from_lf = render_launcher(&lf, token, value);
+            let from_crlf = render_launcher(&crlf, token, value);
+            assert_eq!(from_lf, from_crlf);
+            assert!(!from_lf.contains('\r'));
+        }
+
+        for guidance in [AGENT_INTEGRATION, AGENT_SKILL] {
+            let lf = String::from_utf8_lossy(guidance).replace("\r\n", "\n");
+            let crlf = lf.replace('\n', "\r\n");
+            assert_eq!(
+                canonical_managed_text(lf.as_bytes()),
+                canonical_managed_text(crlf.as_bytes())
+            );
+        }
     }
 
     #[test]

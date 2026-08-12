@@ -6,8 +6,8 @@ use std::path::{Component, Path};
 
 use anyhow::{Context, Result, anyhow};
 
-use super::SetupActionKind;
 use super::receipt::managed_text_sha256;
+use super::{ManagedFile, SetupActionKind};
 use super::{PRE_RECEIPT_BINARY_PATH, PRE_RECEIPT_MANIFEST_PATH, PRE_RECEIPT_MISE_PATH};
 
 #[derive(Debug)]
@@ -187,8 +187,7 @@ pub(super) fn validate_destination(root: &Path, relative: &Path) -> Result<()> {
 
 pub(super) fn preflight_managed_file(
     destination: &Path,
-    expected: &[u8],
-    executable: bool,
+    file: &ManagedFile,
     prior_sha256: Option<&str>,
     install_owned_runtime: bool,
     dry_run: bool,
@@ -205,8 +204,17 @@ pub(super) fn preflight_managed_file(
     }
     let existing = fs::read(destination)
         .with_context(|| format!("read managed file {}", destination.display()))?;
-    if existing != expected {
-        let existing_sha256 = managed_text_sha256(&existing);
+    let content_matches = if file.content_kind.is_receipt_text() {
+        managed_text_sha256(&existing) == managed_text_sha256(&file.content)
+    } else {
+        existing == file.content
+    };
+    if !content_matches {
+        let existing_sha256 = if file.content_kind.is_receipt_text() {
+            managed_text_sha256(&existing)
+        } else {
+            papertiger::sha256(&existing)
+        };
         let prior_content_owned = prior_sha256 == Some(existing_sha256.as_str());
         if prior_content_owned || install_owned_runtime || replace_managed {
             return Ok((SetupActionKind::Replace, false));
@@ -219,7 +227,7 @@ pub(super) fn preflight_managed_file(
             destination.display()
         ));
     }
-    if executable && executable_bit_missing(destination)? {
+    if file.executable && executable_bit_missing(destination)? {
         Ok((SetupActionKind::MakeExecutable, false))
     } else {
         Ok((SetupActionKind::Unchanged, false))

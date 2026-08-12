@@ -6,6 +6,16 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-13
+
+### Fixed
+
+- Canonicalized every setup-managed text artifact to LF before rendering or
+  hashing, so a release binary built from a CRLF source checkout no longer
+  rewrites tracked launchers during an otherwise unchanged project upgrade.
+  Upgrading from 0.7.0 recognizes an equivalent managed launcher without
+  rewriting it and never changes the local planning authority.
+
 ## [0.7.0] - 2026-08-12
 
 This is the first public release after 0.5.0. Version 0.6.0 was an unpublished
@@ -125,6 +135,7 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/virtualonno/papertiger/releases/tag/v0.7.1
 [0.7.0]: https://github.com/virtualonno/papertiger/releases/tag/v0.7.0
 [0.5.0]: https://github.com/virtualonno/papertiger/releases/tag/v0.5.0
