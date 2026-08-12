@@ -1396,6 +1396,10 @@ mod tests {
 
     #[test]
     fn canonical_text_hashes_accept_crlf_checkout_conversion() {
+        fn as_crlf(text: &str) -> String {
+            text.replace("\r\n", "\n").replace('\n', "\r\n")
+        }
+
         let (project, binary) = fixture("crlf-checkout");
         setup_project(request(&project, &binary)).unwrap();
         let receipt = load_install_receipt(&project.join(INSTALL_RECEIPT_PATH))
@@ -1403,12 +1407,12 @@ mod tests {
             .unwrap();
         for file in &receipt.managed_files {
             let path = project.join(&file.path);
-            let lf = fs::read_to_string(&path).unwrap();
-            fs::write(path, lf.replace('\n', "\r\n")).unwrap();
+            let text = fs::read_to_string(&path).unwrap();
+            fs::write(path, as_crlf(&text)).unwrap();
         }
         let receipt_path = project.join(INSTALL_RECEIPT_PATH);
-        let receipt_lf = fs::read_to_string(&receipt_path).unwrap();
-        fs::write(&receipt_path, receipt_lf.replace('\n', "\r\n")).unwrap();
+        let receipt_text = fs::read_to_string(&receipt_path).unwrap();
+        fs::write(&receipt_path, as_crlf(&receipt_text)).unwrap();
 
         let upgraded = setup_project(request(&project, &binary)).unwrap();
         assert_eq!(upgraded.operation, SetupOperation::Upgrade);
