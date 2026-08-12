@@ -32,7 +32,7 @@ use serde::Serialize;
 #[command(
     name = "papertiger-mise",
     version,
-    about = "Evidence-controlled practical recursive self-improvement campaigns"
+    about = "Evidence-controlled candidate evaluation campaigns"
 )]
 struct Cli {
     /// Consuming project root. Every relative database, object, manifest, and

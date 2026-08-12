@@ -1047,7 +1047,6 @@ impl DogfoodFixture {
             &[],
             0,
             None,
-            None,
         )
         .expect("planner task");
         papertiger::add_gate(

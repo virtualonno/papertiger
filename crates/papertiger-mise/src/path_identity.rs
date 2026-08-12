@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+pub use papertiger::portable_absolute;
 
 use crate::digest::sha256;
 
@@ -16,26 +17,6 @@ pub(crate) fn trial_path_identity(campaign_id: &str, trial_id: &str) -> String {
     bytes.push(0);
     bytes.extend_from_slice(trial_id.as_bytes());
     sha256(&bytes)[..TRIAL_PATH_IDENTITY_HEX_LENGTH].to_owned()
-}
-
-/// Render a path in Mise's platform-neutral form: Windows verbatim prefixes
-/// removed, separators forward-slash. This one rendering serves both locator
-/// identity and arguments to cross-platform tools (Rust's Windows
-/// canonicalization returns an extended-length path, which native APIs accept
-/// but Git for Windows does not consistently parse).
-///
-/// This does not resolve the filesystem. Callers that bind filesystem identity
-/// must canonicalize first or use [`canonical_or_pending_absolute`].
-pub fn portable_absolute(path: &Path) -> Result<String> {
-    let value = path.to_str().context("portable path is not UTF-8")?;
-    let value = if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{unc}")
-    } else if let Some(local) = value.strip_prefix(r"\\?\") {
-        local.to_owned()
-    } else {
-        value.to_owned()
-    };
-    Ok(value.replace('\\', "/"))
 }
 
 /// Bind an existing path, or a not-yet-created direct child, to its canonical

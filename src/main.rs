@@ -5,27 +5,21 @@ use rusqlite::{Connection, params};
 use std::io::Read;
 
 mod project_setup;
+mod text_input;
 
-type EventRow = (
-    String,
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-);
+use text_input::{IntentArgs, NoteTextArgs, ResultArgs, WhyArgs, reject_multiple_stdin};
 
 #[derive(Parser)]
 #[command(
     name = "papertiger",
     version,
-    about = "Lean planning surface for cross-session engineering work"
+    about = "Local task planning for cross-session engineering work"
 )]
 struct Cli {
-    /// Database path (default: PAPERTIGER_DB or state/papertiger.sqlite)
+    /// Planning database path (default: PAPERTIGER_DB or state/papertiger.sqlite); invalid with setup-project
     #[arg(long, global = true)]
     db: Option<String>,
-    /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator')
+    /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator'); invalid with setup-project
     #[arg(long, global = true)]
     actor: Option<String>,
     #[command(subcommand)]
@@ -34,7 +28,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Install a project-local binary, launchers, ignore policy, and agent contract
+    /// Install a project-local binary, launchers, ignore policy, and agent contract; does not accept --db or --actor
     SetupProject {
         /// Existing consuming project directory
         project_root: std::path::PathBuf,
@@ -44,14 +38,21 @@ enum Cmd {
         /// Replace divergent release-managed files after review
         #[arg(long)]
         replace_managed: bool,
-        /// Emit papertiger.project_setup.v1 JSON
+        /// Project-relative canonical authority path (preserved by later upgrades)
+        #[arg(long, value_name = "PATH")]
+        authority_path: Option<std::path::PathBuf>,
+        /// Emit papertiger.project_setup.v2 JSON
         #[arg(long)]
         json: bool,
     },
     /// Create or upgrade a Papertiger database; refuses nonempty foreign databases
     Init,
-    /// One-screen orientation: active plan, in-progress, ready, blocked, recent notes
-    Status,
+    /// One-screen orientation: authority, active plans, current work, ready work, recent notes
+    Status {
+        /// Emit papertiger.status.v1 JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Plan management
     Plan {
         #[command(subcommand)]
@@ -59,98 +60,135 @@ enum Cmd {
     },
     /// Add a task
     Add {
+        /// Concise outcome-oriented task title
         title: String,
+        /// Owning plan slug; optional when exactly one plan is active
         #[arg(long)]
         plan: Option<String>,
-        /// Intent text; use --intent-file or '-' (stdin) for long prose
-        #[arg(long)]
-        intent: Option<String>,
-        #[arg(long)]
-        intent_file: Option<String>,
+        #[command(flatten)]
+        intent: IntentArgs,
         /// Work kind: work, probe, or decision
         #[arg(long, default_value = "work")]
         kind: String,
+        /// Parent task sequence (bare N is shell-portable; quoted #N also works)
         #[arg(long)]
         parent: Option<String>,
         /// Dependencies, comma-separated task refs
         #[arg(long, value_delimiter = ',')]
         dep: Vec<String>,
+        /// Searchable task tags, comma-separated or repeated
         #[arg(long, value_delimiter = ',')]
         tag: Vec<String>,
+        /// Scheduling priority; higher values run first within readiness order
         #[arg(long, default_value_t = 0)]
         priority: i64,
-        /// External traceability key only; commands always select tasks by task.seq
-        #[arg(long)]
-        alias: Option<String>,
-        #[arg(long)]
-        why: Option<String>,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Show one task in full
     Show {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
+        /// Emit papertiger.task_context.v4 JSON
         #[arg(long)]
         json: bool,
     },
     /// List tasks (compact)
     List {
+        /// Plan slug; optional when exactly one plan is active
         #[arg(long)]
         plan: Option<String>,
+        /// Filter by task status
         #[arg(long)]
         status: Option<String>,
+        /// Filter by exact tag
         #[arg(long)]
         tag: Option<String>,
+        /// Ordering: seq or activity
+        #[arg(long, default_value = "seq")]
+        sort: String,
+        /// Emit papertiger.task_list.v1 JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search durable task context with deterministic field ranking
+    Search {
+        /// Literal words to find across title, intent, result, tags, and rationale
+        query: String,
+        /// Restrict results to one plan slug; all plans are searched by default
+        #[arg(long)]
+        plan: Option<String>,
+        /// Restrict results to one task status
+        #[arg(long)]
+        status: Option<String>,
+        /// Maximum ranked results to return
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit papertiger.search.v1 JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Edit a task
     Edit {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
+        /// Replacement title
         #[arg(long)]
         title: Option<String>,
-        #[arg(long)]
-        intent: Option<String>,
-        #[arg(long)]
-        intent_file: Option<String>,
+        #[command(flatten)]
+        intent: IntentArgs,
         /// Replace the parent with this task
         #[arg(long, conflicts_with = "clear_parent")]
         parent: Option<String>,
         /// Remove the current parent
         #[arg(long)]
         clear_parent: bool,
+        /// Replacement work kind: work, probe, or decision
         #[arg(long)]
         kind: Option<String>,
+        /// Replacement scheduling priority
         #[arg(long)]
         priority: Option<i64>,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Mark a task in progress
     Start {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
-        #[arg(long)]
-        why: Option<String>,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Complete a task after dependencies, blockers, gates, and children are closed
     Done {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
-        #[arg(long)]
-        result: Option<String>,
+        #[command(flatten)]
+        result: ResultArgs,
     },
     /// Reopen a finished task
     Reopen {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Retire a task (no longer worth doing)
     Retire {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
-        #[arg(long)]
-        why: String,
+        /// Durable same-plan task that replaces this work
+        #[arg(long, value_name = "TASK")]
+        into: Option<String>,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Reject a task/approach (records why, prevents re-litigation)
     Reject {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Gate management
     Gate {
@@ -162,27 +200,25 @@ enum Cmd {
         #[command(subcommand)]
         cmd: BlockerCmd,
     },
+    /// Manage caller-resolved local commit associations without invoking Git
+    Commit {
+        #[command(subcommand)]
+        cmd: CommitCmd,
+    },
     /// Dependency management
     Dep {
         #[command(subcommand)]
         cmd: DepCmd,
     },
-    /// Ready tasks in execution order
-    Next {
-        #[arg(long)]
-        plan: Option<String>,
-        #[arg(long, default_value_t = 10)]
-        limit: usize,
-        /// Also show blocked tasks with named blockers
-        #[arg(long)]
-        all: bool,
-    },
     /// Actionable leaf work ranked by readiness and dependency unlock impact
     Focus {
+        /// Plan slug; optional when exactly one plan is active
         #[arg(long)]
         plan: Option<String>,
+        /// Maximum tasks to return
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Emit papertiger.focus.v4 JSON
         #[arg(long)]
         json: bool,
         /// Include proposed work that is currently blocked
@@ -196,31 +232,55 @@ enum Cmd {
     },
     /// Task hierarchy for a plan
     Tree {
+        /// Plan slug; optional when exactly one plan is active
         #[arg(long)]
         plan: Option<String>,
     },
     /// Record a free-standing evented note (course changes, decisions)
     Note {
-        text: String,
+        #[command(flatten)]
+        text: NoteTextArgs,
+        /// Attach the note to this task sequence
         #[arg(long)]
         task: Option<String>,
     },
     /// Event history
     Log {
+        /// Restrict history to this task sequence
         #[arg(long)]
         task: Option<String>,
+        /// Maximum events to return
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Page backward from an event-v1 cursor emitted by JSON output
+        #[arg(long, conflicts_with = "after_cursor")]
+        before_cursor: Option<String>,
+        /// Read new events after an event-v1 cursor emitted by JSON output
+        #[arg(long)]
+        after_cursor: Option<String>,
+        /// Emit papertiger.event_log.v1 JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Advisory integrity findings
     Audit,
     /// Dump plans/tasks/gates as JSON
     Export {
+        /// Export only this plan slug and its scoped history
         #[arg(long)]
         plan: Option<String>,
+        /// Atomically write canonical UTF-8 JSON to this file instead of stdout
+        #[arg(long, value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
+        /// Replace an existing regular output file after review
+        #[arg(long, requires = "output")]
+        replace: bool,
     },
-    /// Import a papertiger.dump.v1, v2, or v3 JSON file
-    Import { file: String },
+    /// Import a papertiger.dump.v6 JSON file
+    Import {
+        /// Dump file to validate and import atomically
+        file: String,
+    },
     /// Record and inspect verified terminal Mise evidence without changing task state
     Mise {
         #[command(subcommand)]
@@ -229,177 +289,273 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
+enum CommitCmd {
+    /// Associate one full commit object ID with a local task
+    Add {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        task: String,
+        /// Caller-resolved lowercase 40- or 64-hex commit object ID
+        commit_oid: String,
+        /// Stable repository label; '.' denotes the authority's project root
+        #[arg(long, default_value = ".")]
+        repo: String,
+        /// Optional context explaining why this snapshot is useful
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Remove an incorrect association while retaining an evented correction
+    Remove {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        task: String,
+        /// Previously recorded full commit object ID
+        commit_oid: String,
+        /// Repository label used when the association was added
+        #[arg(long, default_value = ".")]
+        repo: String,
+        #[command(flatten)]
+        why: WhyArgs,
+    },
+    /// List commit associations on one task
+    List {
+        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        task: String,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reverse lookup local tasks associated with one full commit object ID
+    Find {
+        /// Caller-resolved lowercase 40- or 64-hex commit object ID
+        commit_oid: String,
+        /// Restrict lookup to this stable repository label
+        #[arg(long)]
+        repo: Option<String>,
+        /// Emit JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum MiseCmd {
     /// Idempotently attach one verified projection document to its owning task
     Project {
+        /// Task sequence that owns the projection
         task: String,
         /// Projection JSON path, or '-' to read a Mise inspector pipeline from stdin
         projection: String,
     },
     /// List every reverified Mise projection attached to one task
     List {
+        /// Task sequence that owns the projections
         task: String,
+        /// Emit JSON
         #[arg(long)]
         json: bool,
     },
     /// Show one exact reverified projection by its SHA-256 identity
-    Show { projection_sha256: String },
+    Show {
+        /// Full lowercase SHA-256 projection identity
+        projection_sha256: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum PlanCmd {
+    /// Create a plan for durable work
     Add {
+        /// Stable local plan selector
         slug: String,
+        /// Human-readable plan title
         title: String,
-        #[arg(long, default_value = "")]
-        intent: String,
+        #[command(flatten)]
+        intent: IntentArgs,
     },
+    /// List every plan with its current status
     List,
     /// Edit plan orientation without replacing its task/event history
     Edit {
+        /// Plan slug to edit
         slug: String,
+        /// Replacement plan title
         #[arg(long)]
         title: Option<String>,
-        #[arg(long)]
-        intent: Option<String>,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        intent: IntentArgs,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Set plan status (active|paused|done|retired)
     Set {
+        /// Plan slug to transition
         slug: String,
+        /// New status: active, paused, done, or retired
         status: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
 }
 
 #[derive(Subcommand)]
 enum GateCmd {
+    /// Add a named proof obligation to a task
     Add {
+        /// Task sequence that owns the gate
         task: String,
+        /// Stable gate name within the task
         name: String,
+        /// Evidence kind: test, benchmark, review, capture, fixture, build, doc, or other
         #[arg(long)]
         kind: String,
+        /// Exact condition required to close the gate
         #[arg(long)]
         requirement: String,
     },
+    /// Close an open gate with an evidence locator
     Close {
+        /// Task sequence that owns the gate
         task: String,
+        /// Name of the open gate
         name: String,
         /// Evidence locator, scheme:value (file:, receipt:, claim:, spec:, commit:, url:, note:)
         #[arg(long)]
         evidence: String,
+        /// Optional lowercase SHA-256 digest binding the evidence bytes
         #[arg(long)]
         sha256: Option<String>,
+        /// Optional concise evidence context
         #[arg(long)]
         note: Option<String>,
     },
+    /// Waive an open gate with durable rationale
     Waive {
+        /// Task sequence that owns the gate
         task: String,
+        /// Name of the open gate
         name: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
+    /// Reopen a closed or waived gate
     Reopen {
+        /// Task sequence that owns the gate
         task: String,
+        /// Name of the terminal gate
         name: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
-    Rm {
+    /// Remove an open gate that no longer models required proof
+    Remove {
+        /// Task sequence that owns the gate
         task: String,
+        /// Name of the open gate
         name: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
+    /// List every gate on one task
     List {
+        /// Task sequence that owns the gates
         task: String,
     },
 }
 
 #[derive(Subcommand)]
 enum BlockerCmd {
+    /// Add a named external blocker to a task
     Add {
+        /// Task sequence that owns the blocker
         task: String,
+        /// Stable blocker name within the task
         name: String,
+        /// External condition preventing progress
         #[arg(long)]
         reason: String,
     },
+    /// Resolve an open blocker with external evidence
     Resolve {
+        /// Task sequence that owns the blocker
         task: String,
+        /// Name of the open blocker
         name: String,
+        /// Evidence locator proving the blocker cleared
         #[arg(long)]
         evidence: String,
+        /// Optional lowercase SHA-256 digest binding the evidence bytes
         #[arg(long)]
         sha256: Option<String>,
+        /// Optional concise evidence context
         #[arg(long)]
         note: Option<String>,
     },
+    /// Waive an open blocker with durable rationale
     Waive {
+        /// Task sequence that owns the blocker
         task: String,
+        /// Name of the open blocker
         name: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
-    Rm {
+    /// Remove an open blocker that no longer models reality
+    Remove {
+        /// Task sequence that owns the blocker
         task: String,
+        /// Name of the open blocker
         name: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
+    /// List every blocker on one task
     List {
+        /// Task sequence that owns the blockers
         task: String,
     },
 }
 
 #[derive(Subcommand)]
 enum TagCmd {
+    /// Add a searchable tag to a task
     Add {
+        /// Task sequence to tag
         task: String,
+        /// Tag value
         tag: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
-    Rm {
+    /// Remove a tag from a task
+    Remove {
+        /// Task sequence to untag
         task: String,
+        /// Existing tag value
         tag: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
 }
 
 #[derive(Subcommand)]
 enum DepCmd {
+    /// Make one task depend on another task
     Add {
+        /// Dependent task sequence
         task: String,
+        /// Prerequisite task sequence
         on: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
-    Rm {
+    /// Remove a dependency edge
+    Remove {
+        /// Dependent task sequence
         task: String,
+        /// Prerequisite task sequence
         on: String,
-        #[arg(long)]
-        why: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
-}
-
-fn read_intent(intent: Option<String>, intent_file: Option<String>) -> Result<String> {
-    match (intent, intent_file) {
-        (Some(_), Some(_)) => bail!("pass --intent or --intent-file, not both"),
-        (Some(i), None) => Ok(i),
-        (None, Some(f)) if f == "-" => {
-            let mut s = String::new();
-            std::io::stdin().read_to_string(&mut s)?;
-            Ok(s.trim().to_string())
-        }
-        (None, Some(f)) => Ok(std::fs::read_to_string(&f)
-            .with_context(|| format!("read {f}"))?
-            .trim()
-            .to_string()),
-        (None, None) => Ok(String::new()),
-    }
 }
 
 fn status_glyph(s: &str) -> &'static str {
@@ -440,9 +596,6 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
     }
     if open_gate_count > 0 {
         extra.push_str(&format!(" [gates open: {open_gate_count}]"));
-    }
-    if let Some(a) = &t.alias {
-        extra.push_str(&format!(" ({a})"));
     }
     if t.kind != "work" {
         extra.push_str(&format!(" [{}]", t.kind));
@@ -498,9 +651,6 @@ fn print_task_context(context: &pt::TaskContext) {
     if open_gate_count > 0 {
         extra.push_str(&format!(" [gates open: {open_gate_count}]"));
     }
-    if let Some(alias) = &task.alias {
-        extra.push_str(&format!(" ({alias})"));
-    }
     if task.kind != "work" {
         extra.push_str(&format!(" [{}]", task.kind));
     }
@@ -515,6 +665,19 @@ fn print_task_context(context: &pt::TaskContext) {
         println!("  intent: {}", task.intent.replace('\n', "\n  "));
     }
     println!("  kind: {}", task.kind);
+    for (label, event) in [
+        ("created", context.activity.created_event.as_ref()),
+        ("last event", context.activity.last_event.as_ref()),
+        ("started event", context.activity.started_event.as_ref()),
+        ("completed event", context.activity.completed_event.as_ref()),
+    ] {
+        if let Some(event) = event {
+            println!(
+                "  {label}: {} by {} (@{})",
+                event.at, event.actor, event.event_id
+            );
+        }
+    }
     if let Some(result) = &task.result {
         println!("  result: {}", result.replace('\n', "\n  "));
     }
@@ -524,6 +687,14 @@ fn print_task_context(context: &pt::TaskContext) {
             status_glyph(&parent.status),
             parent.seq,
             parent.title
+        );
+    }
+    if let Some(replacement) = &context.replacement {
+        println!(
+            "  replacement {} #{} {}",
+            status_glyph(&replacement.status),
+            replacement.seq,
+            replacement.title
         );
     }
     if task.priority != 0 {
@@ -582,6 +753,17 @@ fn print_task_context(context: &pt::TaskContext) {
             blocker.status, blocker.name, blocker.reason, evidence, digest, note
         );
     }
+    for commit in &context.commit_associations {
+        let note = commit
+            .note
+            .as_ref()
+            .map(|note| format!(" ({note})"))
+            .unwrap_or_default();
+        println!(
+            "  commit {} {}{}",
+            commit.repository, commit.commit_oid, note
+        );
+    }
     for projection in &context.mise_projections {
         println!(
             "  Mise [{}] {} candidate {} campaign {}{}",
@@ -632,20 +814,36 @@ fn print_task_context(context: &pt::TaskContext) {
 }
 
 fn main() -> Result<()> {
+    run().map_err(pt::normalize_sqlite_lock_error)
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     if let Cmd::SetupProject {
         project_root,
         dry_run,
         replace_managed,
+        authority_path,
         json,
     } = &cli.cmd
     {
+        if cli.db.is_some() {
+            bail!(
+                "setup-project does not accept --db; omit --db and select a nondefault project authority with --authority-path <project-relative-path>"
+            );
+        }
+        if cli.actor.is_some() {
+            bail!(
+                "setup-project does not accept --actor because installation records no planning events; omit --actor"
+            );
+        }
         let result = project_setup::setup_project(project_setup::SetupProjectRequest {
             project_root,
             source_binary: None,
             dry_run: *dry_run,
             replace_managed: *replace_managed,
+            authority_path: authority_path.as_deref(),
         })?;
         if *json {
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -703,53 +901,49 @@ fn main() -> Result<()> {
     match cli.cmd {
         Cmd::SetupProject { .. } => unreachable!(),
         Cmd::Init => unreachable!(),
-        Cmd::Status => {
-            let mut st = conn.prepare("SELECT slug, title, status FROM plans ORDER BY plan_id")?;
-            let plans: Vec<(String, String, String)> = st
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                .collect::<rusqlite::Result<_>>()?;
-            if plans.is_empty() {
-                println!("no plans; start with `papertiger plan add <slug> <title>`");
+        Cmd::Status { json } => {
+            let status = pt::status_response(&conn, &db_path)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
                 return Ok(());
             }
-            for (slug, title, pstatus) in &plans {
-                if pstatus != "active" {
-                    continue;
+            println!(
+                "papertiger {} | schema v{} | {}",
+                status.authority.papertiger_version,
+                status.authority.schema_version,
+                status.authority.resolved_path
+            );
+            if status.active_plans.is_empty() {
+                println!(
+                    "no active plans; inspect `papertiger plan list` or create one with `papertiger plan add <slug> <title>`"
+                );
+            }
+            for active in &status.active_plans {
+                let counts = &active.counts;
+                println!(
+                    "plan {}: {} [proposed {}, in_progress {}, done {}, retired {}, rejected {}]",
+                    active.plan.slug,
+                    active.plan.title,
+                    counts.proposed,
+                    counts.in_progress,
+                    counts.done,
+                    counts.retired,
+                    counts.rejected
+                );
+                for entry in &active.in_progress {
+                    println!("> #{} {}", entry.task.seq, entry.task.title);
                 }
-                let (plan_id, _) = pt::resolve_plan(&conn, Some(slug))?;
-                let counts: Vec<(String, i64)> = {
-                    let mut st = conn.prepare(
-                        "SELECT status, COUNT(*) FROM tasks WHERE plan_id=?1 GROUP BY status",
-                    )?;
-                    st.query_map(params![plan_id], |r| Ok((r.get(0)?, r.get(1)?)))?
-                        .collect::<rusqlite::Result<_>>()?
-                };
-                let summary = counts
-                    .iter()
-                    .map(|(s, n)| format!("{s} {n}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                println!("plan {slug}: {title} [{summary}]");
-                let in_prog = pt::leaf_tasks_with_status(&conn, plan_id, "in_progress")?;
-                for t in &in_prog {
-                    print_task_line(&conn, t)?;
-                }
-                for e in pt::next(&conn, plan_id, 5, false)? {
-                    print_task_line(&conn, &e.task)?;
+                for entry in &active.ready {
+                    println!("· #{} {}", entry.task.seq, entry.task.title);
                 }
             }
-            let mut st = conn.prepare(
-                "SELECT at, actor, why FROM events WHERE kind='note' ORDER BY event_id DESC LIMIT 3",
-            )?;
-            let notes: Vec<(String, String, Option<String>)> = st
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                .collect::<rusqlite::Result<_>>()?;
-            for (at, actor, why) in notes {
+            for note in &status.recent_notes {
                 println!(
-                    "note {} {}: {}",
-                    short_event_time(&at),
-                    actor,
-                    why.unwrap_or_default()
+                    "note @{} {} {}: {}",
+                    note.event_id,
+                    short_event_time(&note.at),
+                    note.actor,
+                    note.why.as_deref().unwrap_or_default()
                 );
             }
         }
@@ -759,6 +953,7 @@ fn main() -> Result<()> {
                 title,
                 intent,
             } => {
+                let intent = intent.optional()?.unwrap_or_default();
                 pt::add_plan(&conn, &actor, &slug, &title, &intent)?;
                 println!("plan {slug} created");
             }
@@ -778,6 +973,12 @@ fn main() -> Result<()> {
                 intent,
                 why,
             } => {
+                reject_multiple_stdin(&[
+                    ("intent", intent.reads_stdin()),
+                    ("why", why.reads_stdin()),
+                ])?;
+                let intent = intent.optional()?;
+                let why = why.required()?;
                 let changed = pt::edit_plan(
                     &conn,
                     &actor,
@@ -789,6 +990,7 @@ fn main() -> Result<()> {
                 println!("plan {slug} updated ({})", changed.join(", "));
             }
             PlanCmd::Set { slug, status, why } => {
+                let why = why.required()?;
                 pt::set_plan_status(&conn, &actor, &slug, &status, &why)?;
                 println!("plan {slug} -> {status}");
             }
@@ -797,16 +999,16 @@ fn main() -> Result<()> {
             title,
             plan,
             intent,
-            intent_file,
             kind,
             parent,
             dep,
             tag,
             priority,
-            alias,
             why,
         } => {
-            let intent = read_intent(intent, intent_file)?;
+            reject_multiple_stdin(&[("intent", intent.reads_stdin()), ("why", why.reads_stdin())])?;
+            let intent = intent.optional()?.unwrap_or_default();
+            let why = why.optional()?;
             let parent = parent.map(|p| pt::parse_task_ref(&p)).transpose()?;
             let deps: Vec<i64> = dep
                 .iter()
@@ -823,7 +1025,6 @@ fn main() -> Result<()> {
                 &deps,
                 &tag,
                 priority,
-                alias.as_deref(),
                 why.as_deref(),
             )?;
             println!("#{seq} added to {slug}");
@@ -836,29 +1037,89 @@ fn main() -> Result<()> {
             }
             print_task_context(&context);
         }
-        Cmd::List { plan, status, tag } => {
+        Cmd::List {
+            plan,
+            status,
+            tag,
+            sort,
+            json,
+        } => {
+            if json {
+                let response = pt::task_list_response(
+                    &conn,
+                    plan.as_deref(),
+                    status.as_deref(),
+                    tag.as_deref(),
+                    &sort,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&response)?);
+                return Ok(());
+            }
             let (plan_id, _) = pt::resolve_plan(&conn, plan.as_deref())?;
-            let tasks = pt::list_tasks(&conn, plan_id, status.as_deref(), tag.as_deref())?;
+            let tasks = match sort.as_str() {
+                "seq" => pt::list_tasks(&conn, plan_id, status.as_deref(), tag.as_deref())?,
+                "activity" => {
+                    pt::list_tasks_by_activity(&conn, plan_id, status.as_deref(), tag.as_deref())?
+                }
+                _ => bail!("unknown list sort '{sort}' (expected seq|activity)"),
+            };
             for t in &tasks {
                 print_task_line(&conn, t)?;
+            }
+        }
+        Cmd::Search {
+            query,
+            plan,
+            status,
+            limit,
+            json,
+        } => {
+            let response =
+                pt::search_tasks(&conn, &query, plan.as_deref(), status.as_deref(), limit)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+                return Ok(());
+            }
+            if response.results.is_empty() {
+                println!("no matching tasks");
+            }
+            for result in &response.results {
+                println!(
+                    "{} #{} [{}] {}",
+                    status_glyph(&result.task.status),
+                    result.task.seq,
+                    result.plan,
+                    result.task.title
+                );
+                println!(
+                    "  matched {} (score {}); {}: {}",
+                    result.matched_fields.join(", "),
+                    result.score,
+                    result.excerpt.field,
+                    result.excerpt.text.replace('\n', " ")
+                );
+            }
+            if response.truncated {
+                println!(
+                    "{} matches; showing {}. Increase --limit up to 200.",
+                    response.total_matches,
+                    response.results.len()
+                );
             }
         }
         Cmd::Edit {
             task,
             title,
             intent,
-            intent_file,
             parent,
             clear_parent,
             kind,
             priority,
             why,
         } => {
-            let intent = if intent.is_some() || intent_file.is_some() {
-                Some(read_intent(intent, intent_file)?)
-            } else {
-                None
-            };
+            reject_multiple_stdin(&[("intent", intent.reads_stdin()), ("why", why.reads_stdin())])?;
+            let intent = intent.optional()?;
+            let why = why.required()?;
             let parent = if clear_parent {
                 Some(None)
             } else {
@@ -883,29 +1144,36 @@ fn main() -> Result<()> {
             println!("#{seq} updated ({})", changed.join(", "));
         }
         Cmd::Start { task, why } => {
+            let why = why.optional()?;
             let seq = pt::parse_task_ref(&task)?;
             pt::start_task(&conn, &actor, seq, why.as_deref())?;
             println!("#{seq} in progress");
         }
         Cmd::Done { task, result } => {
+            let result = result.optional()?;
             let seq = pt::parse_task_ref(&task)?;
             pt::complete_task(&conn, &actor, seq, result.as_deref())?;
             println!("#{seq} done");
         }
         Cmd::Reopen { task, why } => {
-            if why.trim().is_empty() {
-                bail!("reopening a task requires a nonblank reason");
-            }
+            let why = why.required()?;
             let seq = pt::parse_task_ref(&task)?;
             pt::reopen_task(&conn, &actor, seq, &why)?;
             println!("#{seq} reopened");
         }
-        Cmd::Retire { task, why } => {
+        Cmd::Retire { task, into, why } => {
+            let why = why.required()?;
             let seq = pt::parse_task_ref(&task)?;
-            pt::retire_task(&conn, &actor, seq, &why)?;
-            println!("#{seq} retired");
+            let replacement_seq = into.as_deref().map(pt::parse_task_ref).transpose()?;
+            pt::retire_task(&conn, &actor, seq, replacement_seq, &why)?;
+            if let Some(replacement_seq) = replacement_seq {
+                println!("#{seq} retired into #{replacement_seq}");
+            } else {
+                println!("#{seq} retired");
+            }
         }
         Cmd::Reject { task, why } => {
+            let why = why.required()?;
             let seq = pt::parse_task_ref(&task)?;
             pt::reject_task(&conn, &actor, seq, &why)?;
             println!("#{seq} rejected");
@@ -941,16 +1209,19 @@ fn main() -> Result<()> {
                 println!("gate '{name}' on #{seq} closed");
             }
             GateCmd::Waive { task, name, why } => {
+                let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::waive_gate(&conn, &actor, seq, &name, &why)?;
                 println!("gate '{name}' on #{seq} waived");
             }
             GateCmd::Reopen { task, name, why } => {
+                let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::reopen_gate(&conn, &actor, seq, &name, &why)?;
                 println!("gate '{name}' on #{seq} reopened");
             }
-            GateCmd::Rm { task, name, why } => {
+            GateCmd::Remove { task, name, why } => {
+                let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::remove_open_gate(&conn, &actor, seq, &name, &why)?;
                 println!("gate '{name}' removed from #{seq}");
@@ -996,11 +1267,13 @@ fn main() -> Result<()> {
                 println!("blocker '{name}' on #{seq} resolved");
             }
             BlockerCmd::Waive { task, name, why } => {
+                let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::waive_task_blocker(&conn, &actor, seq, &name, &why)?;
                 println!("blocker '{name}' on #{seq} waived");
             }
-            BlockerCmd::Rm { task, name, why } => {
+            BlockerCmd::Remove { task, name, why } => {
+                let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::remove_open_task_blocker(&conn, &actor, seq, &name, &why)?;
                 println!("blocker '{name}' removed from #{seq}");
@@ -1021,37 +1294,91 @@ fn main() -> Result<()> {
                 }
             }
         },
+        Cmd::Commit { cmd } => match cmd {
+            CommitCmd::Add {
+                task,
+                commit_oid,
+                repo,
+                note,
+            } => {
+                let seq = pt::parse_task_ref(&task)?;
+                pt::add_commit_association(
+                    &conn,
+                    &actor,
+                    seq,
+                    &repo,
+                    &commit_oid,
+                    note.as_deref(),
+                )?;
+                println!("commit {commit_oid} ({repo}) recorded on #{seq}");
+            }
+            CommitCmd::Remove {
+                task,
+                commit_oid,
+                repo,
+                why,
+            } => {
+                let why = why.required()?;
+                let seq = pt::parse_task_ref(&task)?;
+                pt::remove_commit_association(&conn, &actor, seq, &repo, &commit_oid, &why)?;
+                println!("commit {commit_oid} ({repo}) removed from #{seq}");
+            }
+            CommitCmd::List { task, json } => {
+                let seq = pt::parse_task_ref(&task)?;
+                let commits = pt::commit_associations(&conn, seq)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&commits)?);
+                } else {
+                    for commit in commits {
+                        let note = commit
+                            .note
+                            .map(|note| format!(" - {note}"))
+                            .unwrap_or_default();
+                        println!(
+                            "{} {} {}{}",
+                            short_event_time(&commit.recorded_at),
+                            commit.repository,
+                            commit.commit_oid,
+                            note
+                        );
+                    }
+                }
+            }
+            CommitCmd::Find {
+                commit_oid,
+                repo,
+                json,
+            } => {
+                let matches = pt::find_commit_associations(&conn, &commit_oid, repo.as_deref())?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&matches)?);
+                } else {
+                    for found in matches {
+                        println!(
+                            "#{} {} ({}) {}",
+                            found.task_seq,
+                            found.task_title,
+                            found.commit.repository,
+                            found.commit.recorded_at
+                        );
+                    }
+                }
+            }
+        },
         Cmd::Dep { cmd } => match cmd {
             DepCmd::Add { task, on, why } => {
+                let why = why.required()?;
                 let (a, b) = (pt::parse_task_ref(&task)?, pt::parse_task_ref(&on)?);
                 pt::add_dep(&conn, &actor, a, b, &why)?;
                 println!("#{a} now depends on #{b}");
             }
-            DepCmd::Rm { task, on, why } => {
+            DepCmd::Remove { task, on, why } => {
+                let why = why.required()?;
                 let (a, b) = (pt::parse_task_ref(&task)?, pt::parse_task_ref(&on)?);
                 pt::remove_dep(&conn, &actor, a, b, &why)?;
                 println!("#{a} no longer depends on #{b}");
             }
         },
-        Cmd::Next { plan, limit, all } => {
-            let (plan_id, _) = pt::resolve_plan(&conn, plan.as_deref())?;
-            let entries = pt::next(&conn, plan_id, limit, all)?;
-            if entries.is_empty() {
-                println!("nothing ready");
-            }
-            for e in entries {
-                if e.blockers.is_empty() {
-                    print_task_line(&conn, &e.task)?;
-                } else {
-                    println!(
-                        "blocked #{} {} [{}]",
-                        e.task.seq,
-                        e.task.title,
-                        e.blockers.join(" ")
-                    );
-                }
-            }
-        }
         Cmd::Focus {
             plan,
             limit,
@@ -1067,7 +1394,7 @@ fn main() -> Result<()> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
-                        "schema": "papertiger.focus.v3",
+                        "schema": "papertiger.focus.v4",
                         "selection_state": "no_active_plan",
                         "plan": null,
                         "entries": [],
@@ -1081,7 +1408,7 @@ fn main() -> Result<()> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
-                        "schema": "papertiger.focus.v3",
+                        "schema": "papertiger.focus.v4",
                         "selection_state": "resolved",
                         "plan": plan,
                         "entries": entries,
@@ -1117,11 +1444,13 @@ fn main() -> Result<()> {
         }
         Cmd::Tag { cmd } => match cmd {
             TagCmd::Add { task, tag, why } => {
+                let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::add_tag(&conn, &actor, seq, &tag, &why)?;
                 println!("tag '{tag}' added to #{seq}");
             }
-            TagCmd::Rm { task, tag, why } => {
+            TagCmd::Remove { task, tag, why } => {
+                let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::remove_tag(&conn, &actor, seq, &tag, &why)?;
                 println!("tag '{tag}' removed from #{seq}");
@@ -1133,60 +1462,66 @@ fn main() -> Result<()> {
             print_tree(&conn, plan_id, None, 1)?;
         }
         Cmd::Note { text, task } => {
+            let text = text.required()?;
             let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
             pt::add_note(&conn, &actor, task_seq, &text)?;
             println!("noted");
         }
-        Cmd::Log { task, limit } => {
-            let (sql, task_seq): (String, Option<i64>) = match task {
-                Some(t) => {
-                    let seq = pt::parse_task_ref(&t)?;
-                    pt::get_task(&conn, seq)?;
-                    (
-                        "SELECT at, actor, entity, kind, why, payload FROM events
-                         WHERE entity_seq=?1 AND entity IN ('task','dep','gate')
-                         ORDER BY event_id DESC LIMIT ?2"
-                            .into(),
-                        Some(seq),
-                    )
-                }
-                None => (
-                    "SELECT at, actor, entity, kind, why, payload FROM events
-                     ORDER BY event_id DESC LIMIT ?1"
-                        .into(),
-                    None,
-                ),
-            };
-            let mut st = conn.prepare(&sql)?;
-            let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<EventRow> {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                ))
-            };
-            let rows: Vec<_> = match task_seq {
-                Some(seq) => st
-                    .query_map(params![seq, limit as i64], map)?
-                    .collect::<rusqlite::Result<_>>()?,
-                None => st
-                    .query_map(params![limit as i64], map)?
-                    .collect::<rusqlite::Result<_>>()?,
-            };
-            for (at, actor, entity, kind, why, payload) in rows {
-                let why = why.map(|w| format!(" — {w}")).unwrap_or_default();
-                let payload = payload.map(|p| format!(" {p}")).unwrap_or_default();
+        Cmd::Log {
+            task,
+            limit,
+            before_cursor,
+            after_cursor,
+            json,
+        } => {
+            let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
+            let log = pt::event_log(
+                &conn,
+                task_seq,
+                limit,
+                before_cursor.as_deref(),
+                after_cursor.as_deref(),
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&log)?);
+                return Ok(());
+            }
+            for event in &log.events {
+                let why = event
+                    .why
+                    .as_ref()
+                    .map(|why| format!(" - {why}"))
+                    .unwrap_or_default();
+                let payload = event
+                    .payload
+                    .as_ref()
+                    .map(|payload| format!(" {payload}"))
+                    .unwrap_or_default();
                 println!(
-                    "{} {} {}/{}{}{}",
-                    short_event_time(&at),
-                    actor,
-                    entity,
-                    kind,
+                    "@{} {} {} {}/{}{}{}",
+                    event.event_id,
+                    short_event_time(&event.at),
+                    event.actor,
+                    event.entity,
+                    event.kind,
                     payload,
                     why
+                );
+            }
+            if log.truncated
+                && let Some(cursor) = &log.continuation
+            {
+                let flag = if log.direction == "after" {
+                    "--after-cursor"
+                } else {
+                    "--before-cursor"
+                };
+                println!(
+                    "more events available: papertiger log {flag} {}{}",
+                    cursor.token,
+                    task_seq
+                        .map(|seq| format!(" --task {seq}"))
+                        .unwrap_or_default()
                 );
             }
         }
@@ -1199,9 +1534,26 @@ fn main() -> Result<()> {
                 println!("[{}] {}", f.kind, f.detail);
             }
         }
-        Cmd::Export { plan } => {
+        Cmd::Export {
+            plan,
+            output,
+            replace,
+        } => {
             let dump = pt::export(&conn, plan.as_deref())?;
-            println!("{}", serde_json::to_string_pretty(&dump)?);
+            if let Some(output) = output {
+                if output.exists()
+                    && std::fs::canonicalize(&output)? == std::fs::canonicalize(&db_path)?
+                {
+                    bail!(
+                        "export --output resolves to the live authority {}; choose a separate recovery file",
+                        output.display()
+                    );
+                }
+                let receipt = pt::write_export_file(&output, &dump, replace)?;
+                println!("{}", serde_json::to_string_pretty(&receipt)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&dump)?);
+            }
         }
         Cmd::Import { file } => {
             let text = std::fs::read_to_string(&file).with_context(|| format!("read {file}"))?;

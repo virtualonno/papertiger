@@ -1,20 +1,20 @@
 # Papertiger — Agent Instructions
 
-Lean project-generic planning surface (`papertiger`) plus the opt-in
-recursive-improvement campaign runtime (`papertiger-mise`). Rust + SQLite, no
-server. Two binaries, two separate SQLite authorities, one workspace.
+Local task planning (`papertiger`) plus the opt-in candidate-evaluation
+campaign runtime (`papertiger-mise`). Rust + SQLite, no server. Two binaries,
+two separate SQLite authorities, one workspace.
 
 ## How To Use This File
 
 This file is the always-loaded contract. Load operational detail only when
 needed:
 
-- **Planning surface usage**: `agent_integration.md` (the one-page vendored
+- **Planner usage**: `agent_integration.md` (the one-page vendored
   contract).
 - **Mise campaigns**: `MISE.md` (generational model, evidence contract,
   promotion boundary). Ordinary planning work never needs it.
 - **Live truth**: `papertiger status` / `focus` / `show <N> --json`, never
-  markdown. This repo dogfoods itself: `state/papertiger.sqlite` is the plan.
+  markdown. This repository's plan is `state/papertiger.sqlite`.
 
 **Do not grow this file with operational detail.** New commands, flags, and
 contracts go to the document that owns them; this file gets at most a one-line
@@ -36,13 +36,14 @@ each under 32 KiB.
 - `papertiger init` is the only migration path. Read commands refuse older
   schemas with the exact command to run; run it deliberately, never as a
   reflex inside a script.
-- Set `PAPERTIGER_ACTOR` to your agent name before mutating; unattributed
-  events make cold history unreadable.
+- Set `PAPERTIGER_ACTOR` to a concise author label before mutating;
+  unattributed events make cold history unreadable. It is event provenance,
+  never task ownership or session liveness.
 - One canonical planning worktree owns the DB. Never initialize or mutate a
   forked copy from another worktree; `export` is transfer/recovery, not a
   second authority.
 
-## Planning Discipline (dogfood)
+## Planning Use in This Repository
 
 - Enter from live truth: `status`, `focus`, `show <N> --json`. Roadmap prose,
   handoff notes, and memories are orientation only — if they disagree with the
@@ -54,6 +55,11 @@ each under 32 KiB.
 - Do not duplicate task status into markdown, and do not create tasks for
   same-session checklist steps. Markdown carries doctrine, zero status.
 - Check `list --status rejected` before proposing a revival; read its `--why`.
+- Treat `task.seq` as authority-local: never put Papertiger task numbers in
+  shared Git/PR/changelog prose. Record optional commit associations inward.
+- When validated deferred work, proof debt, or tooling friction should survive
+  this session, use the Papertiger contract proactively; do not create
+  same-session checklist tasks or interrupt authorized work unnecessarily.
 
 ## Coding Contract
 
@@ -72,12 +78,13 @@ each under 32 KiB.
   adapter, classifier, authority. No metaphor placeholders; one concept has
   one canonical name across CLI, schema, code, and docs; renames are full
   cutovers with no compatibility aliases.
-- Line budgets are design constraints: papertiger core stays under ~5k lines;
-  if a feature breaks the budget, the feature or the structure is
-  wrong. Keep Git materialization in `git_materialization.rs`, path identity in
+- Prefer cohesive owned subsystems over monolith growth. Keep Git
+  materialization in `git_materialization.rs`, path identity in
   `path_identity.rs`, and lifecycle fixtures in `lifecycle_tests.rs`; do not
-  recombine them. Never add a second copy of an existing helper (`sha256`,
-  `validate_sha256`, bounded capture) — hoist to a shared module instead.
+  recombine them. Split new behavior where it has a distinct authority or
+  invariant boundary, not merely to move lines. Never add a second copy of an
+  existing helper (`sha256`, `validate_sha256`, bounded capture) — hoist to a
+  shared module instead.
 - Every public refusal message names the corrective command or the exact
   missing input. That standard already exists in the codebase; match it.
 

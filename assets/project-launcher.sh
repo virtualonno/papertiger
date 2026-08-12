@@ -27,9 +27,8 @@ done
 bin="$prebuilt"
 if [[ -f "$tool/Cargo.toml" ]]; then
   built="$tool/target/release/papertiger$exe"
-  if [[ ! -f "$built" ]]; then
-    cargo build --quiet --locked --release --bin papertiger --manifest-path "$tool/Cargo.toml" 1>&2
-  fi
+  # Cargo owns source freshness, including embedded contracts and templates.
+  cargo build --quiet --locked --release --bin papertiger --manifest-path "$tool/Cargo.toml" 1>&2
   bin="$built"
 fi
 
@@ -40,5 +39,5 @@ if [[ -z "$bin" || ! -f "$bin" ]]; then
   exit 2
 fi
 
-export PAPERTIGER_DB="${PAPERTIGER_DB:-$root/state/papertiger.sqlite}"
+export PAPERTIGER_DB="${PAPERTIGER_DB:-$root/@PAPERTIGER_AUTHORITY_PATH@}"
 exec "$bin" "$@"

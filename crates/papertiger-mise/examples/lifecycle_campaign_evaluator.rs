@@ -13,7 +13,37 @@ use serde::Deserialize;
 const REQUEST_SCHEMA: &str = "papertiger-mise.deterministic-evaluator-request.v1";
 const OUTPUT_SCHEMA: &str = "papertiger-mise.deterministic-evaluator-output.v1";
 const EVALUATOR_LOCATOR: &str = "crates/papertiger-mise/examples/lifecycle_campaign_evaluator.rs";
-const SOURCE_VOLUME_TOLERANCE: u64 = 250;
+
+const OBJECTIVES: [&str; 9] = [
+    "misplaced-trial-transition-sites",
+    "raw-stored-state-sites",
+    "correctness",
+    "compatibility",
+    "public-contract-gates",
+    "test-sites",
+    "assertion-sites",
+    "refusal-sites",
+    "allow-attributes",
+];
+
+const STORED_STATES: [&str; 14] = [
+    "owned",
+    "prepared",
+    "running",
+    "qualified",
+    "inconclusive",
+    "calibrated",
+    "launched",
+    "succeeded",
+    "rejected",
+    "infrastructure_failed",
+    "integrity_failed",
+    "reserved",
+    "settled",
+    "charged",
+];
+
+const TRIAL_TRANSITION_MARKERS: [&str; 2] = ["INSERTINTOTRIALS", "UPDATETRIALSSETSTATUS="];
 
 #[derive(Deserialize)]
 struct Request {
@@ -27,11 +57,14 @@ struct Objective {
     key: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct SourceStats {
-    lifecycle_module_lines: u64,
-    largest_module_lines: u64,
-    total_lines: u64,
+    misplaced_trial_transition_sites: u64,
+    raw_stored_state_sites: u64,
+    test_sites: u64,
+    assertion_sites: u64,
+    refusal_sites: u64,
+    allow_attributes: u64,
 }
 
 fn main() {
@@ -127,20 +160,12 @@ fn evaluate() -> Result<()> {
     let baseline_root = PathBuf::from(&request.baseline_working_directory);
     let baseline = source_stats(&baseline_root)?;
     let candidate = source_stats(&candidate_root)?;
-    let source_volume_ok =
-        baseline.total_lines.abs_diff(candidate.total_lines) <= SOURCE_VOLUME_TOLERANCE;
-    let reason_code = if candidate.largest_module_lines > baseline.largest_module_lines {
-        Some("largest-module-regressed")
-    } else if !source_volume_ok {
-        Some("production-source-drift")
-    } else {
-        None
-    };
+    let reason_code = regression_reason(&baseline, &candidate).map(str::to_owned);
 
     let output = DeterministicEvaluatorOutput {
         schema: OUTPUT_SCHEMA.to_owned(),
-        observations: objective_observations(&baseline, &candidate, source_volume_ok),
-        reason_code: reason_code.map(str::to_owned),
+        observations: objective_observations(&request.objectives, &baseline, &candidate)?,
+        reason_code,
         judge_build: Some(EvaluatorJudgeBuild {
             argv: [
                 cargo.as_str(),
@@ -161,42 +186,40 @@ fn evaluate() -> Result<()> {
 }
 
 fn objective_observations(
+    objectives: &[Objective],
     baseline: &SourceStats,
     candidate: &SourceStats,
-    source_volume_ok: bool,
-) -> Vec<DeterministicObservation> {
-    vec![
-        DeterministicObservation {
-            objective: "largest-module-lines".to_owned(),
-            baseline: baseline.largest_module_lines as f64,
-            candidate: candidate.largest_module_lines as f64,
-        },
-        DeterministicObservation {
-            objective: "lifecycle-module-lines".to_owned(),
-            baseline: baseline.lifecycle_module_lines as f64,
-            candidate: candidate.lifecycle_module_lines as f64,
-        },
-        DeterministicObservation {
-            objective: "production-source-band".to_owned(),
-            baseline: 1.0,
-            candidate: if source_volume_ok { 1.0 } else { 0.0 },
-        },
-        DeterministicObservation {
-            objective: "workspace-gates".to_owned(),
-            baseline: 1.0,
-            candidate: 1.0,
-        },
-    ]
+) -> Result<Vec<DeterministicObservation>> {
+    objectives
+        .iter()
+        .map(|objective| {
+            let (baseline_value, candidate_value) = match objective.key.as_str() {
+                "misplaced-trial-transition-sites" => (
+                    baseline.misplaced_trial_transition_sites,
+                    candidate.misplaced_trial_transition_sites,
+                ),
+                "raw-stored-state-sites" => (
+                    baseline.raw_stored_state_sites,
+                    candidate.raw_stored_state_sites,
+                ),
+                "correctness" | "compatibility" | "public-contract-gates" => (1, 1),
+                "test-sites" => (baseline.test_sites, candidate.test_sites),
+                "assertion-sites" => (baseline.assertion_sites, candidate.assertion_sites),
+                "refusal-sites" => (baseline.refusal_sites, candidate.refusal_sites),
+                "allow-attributes" => (baseline.allow_attributes, candidate.allow_attributes),
+                unknown => bail!("unsupported frozen campaign objective '{unknown}'"),
+            };
+            Ok(DeterministicObservation {
+                objective: objective.key.clone(),
+                baseline: baseline_value as f64,
+                candidate: candidate_value as f64,
+            })
+        })
+        .collect()
 }
 
 fn require_objectives(objectives: &[Objective]) -> Result<()> {
-    let expected = [
-        "lifecycle-module-lines",
-        "largest-module-lines",
-        "production-source-band",
-        "workspace-gates",
-    ];
-    for key in expected {
+    for key in OBJECTIVES {
         if !objectives.iter().any(|objective| objective.key == key) {
             bail!("frozen campaign objective '{key}' is missing from the evaluator request");
         }
@@ -250,37 +273,111 @@ fn preserve_judge_build(executable_name: &str) -> Result<()> {
 
 fn source_stats(root: &Path) -> Result<SourceStats> {
     let source_root = root.join("crates").join("papertiger-mise").join("src");
-    let lifecycle_module = source_root.join("lifecycle.rs");
-    let lifecycle_source = fs::read_to_string(&lifecycle_module).with_context(|| {
-        format!(
-            "read lifecycle module source '{}'",
-            lifecycle_module.display()
-        )
-    })?;
-    let lifecycle_module_lines = u64::try_from(lifecycle_source.lines().count())
-        .context("lifecycle module line count overflow")?;
-    let mut files = Vec::new();
-    collect_rust_files(&source_root, &mut files)?;
-    if files.is_empty() {
+    let mut production_files = Vec::new();
+    collect_rust_files(&source_root, &mut production_files)?;
+    if production_files.is_empty() {
         bail!(
             "no Rust source files found below '{}'",
             source_root.display()
         );
     }
-    let mut largest_module_lines = 0;
-    let mut total_lines = 0;
-    for file in files {
+    production_files.sort();
+    let mut stats = SourceStats {
+        misplaced_trial_transition_sites: 0,
+        raw_stored_state_sites: 0,
+        test_sites: 0,
+        assertion_sites: 0,
+        refusal_sites: 0,
+        allow_attributes: 0,
+    };
+    for file in &production_files {
+        let source = fs::read_to_string(file)
+            .with_context(|| format!("read Rust source '{}'", file.display()))?;
+        let relative = file
+            .strip_prefix(&source_root)
+            .with_context(|| format!("source '{}' escaped its scan root", file.display()))?;
+        if !is_transition_owner(relative) {
+            let normalized = normalize_ascii_code(&source);
+            stats.misplaced_trial_transition_sites += TRIAL_TRANSITION_MARKERS
+                .iter()
+                .map(|marker| count_token(&normalized, marker))
+                .sum::<u64>();
+        }
+        if !is_canonical_state_owner(relative) && !is_test_source(relative) {
+            stats.raw_stored_state_sites += STORED_STATES
+                .iter()
+                .map(|state| count_token(&source, &format!("'{state}'")))
+                .sum::<u64>();
+        }
+    }
+
+    let mut repository_files = Vec::new();
+    collect_rust_files(root, &mut repository_files)?;
+    repository_files.sort();
+    for file in repository_files {
         let source = fs::read_to_string(&file)
             .with_context(|| format!("read Rust source '{}'", file.display()))?;
-        let lines = u64::try_from(source.lines().count()).context("source line count overflow")?;
-        largest_module_lines = largest_module_lines.max(lines);
-        total_lines += lines;
+        stats.test_sites += count_token(&source, "#[test]");
+        stats.assertion_sites += ["assert!(", "assert_eq!(", "assert_ne!(", ".expect_err("]
+            .into_iter()
+            .map(|token| count_token(&source, token))
+            .sum::<u64>();
+        stats.refusal_sites += count_token(&source, "bail!(") + count_token(&source, "ensure!(");
+        stats.allow_attributes += count_token(&source, "#[allow(");
     }
-    Ok(SourceStats {
-        lifecycle_module_lines,
-        largest_module_lines,
-        total_lines,
-    })
+    Ok(stats)
+}
+
+fn is_transition_owner(relative: &Path) -> bool {
+    relative == Path::new("store.rs")
+        || relative == Path::new("lifecycle").join("trial_runtime.rs")
+        || relative == Path::new("lifecycle").join("trial_recovery.rs")
+}
+
+fn is_canonical_state_owner(relative: &Path) -> bool {
+    matches!(relative.to_str(), Some("state.rs" | "store.rs"))
+}
+
+fn is_test_source(relative: &Path) -> bool {
+    relative
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "tests.rs" || name.ends_with("_tests.rs"))
+}
+
+fn normalize_ascii_code(source: &str) -> String {
+    source
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .flat_map(char::to_uppercase)
+        .collect()
+}
+
+fn count_token(source: &str, token: &str) -> u64 {
+    source
+        .match_indices(token)
+        .count()
+        .try_into()
+        .expect("token count fits u64")
+}
+
+fn regression_reason(baseline: &SourceStats, candidate: &SourceStats) -> Option<&'static str> {
+    if candidate.misplaced_trial_transition_sites > baseline.misplaced_trial_transition_sites {
+        return Some("trial-transition-boundary-regressed");
+    }
+    if candidate.raw_stored_state_sites > baseline.raw_stored_state_sites {
+        return Some("stored-state-vocabulary-regressed");
+    }
+    if candidate.allow_attributes > baseline.allow_attributes {
+        return Some("suppression-regressed");
+    }
+    if candidate.test_sites < baseline.test_sites
+        || candidate.assertion_sites < baseline.assertion_sites
+        || candidate.refusal_sites < baseline.refusal_sites
+    {
+        return Some("anti-golf-countermetric-regressed");
+    }
+    None
 }
 
 fn collect_rust_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
@@ -290,7 +387,10 @@ fn collect_rust_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> 
         let entry = entry.context("read source directory entry")?;
         let file_type = entry.file_type().context("read source entry type")?;
         if file_type.is_dir() {
-            collect_rust_files(&entry.path(), files)?;
+            let name = entry.file_name();
+            if name != ".git" && name != "target" && name != "vendor" {
+                collect_rust_files(&entry.path(), files)?;
+            }
         } else if file_type.is_file()
             && entry.path().extension().and_then(|value| value.to_str()) == Some("rs")
         {
@@ -305,23 +405,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_measurement_is_recursive_and_baseline_relative() -> Result<()> {
+    fn detector_counts_state_vocabulary_and_transition_boundary_hazards() -> Result<()> {
         let root = tempfile::tempdir()?;
         let source = root
             .path()
             .join("crates")
             .join("papertiger-mise")
             .join("src");
-        fs::create_dir_all(source.join("nested"))?;
-        fs::write(source.join("lib.rs"), "one\ntwo\nthree\n")?;
-        fs::write(source.join("lifecycle.rs"), "one\ntwo\n")?;
-        fs::write(source.join("nested").join("module.rs"), "one\ntwo\n")?;
+        fs::create_dir_all(source.join("lifecycle"))?;
+        fs::write(
+            source.join("lifecycle.rs"),
+            "// retained rationale\n#[test]\nfn check() { assert!(true); bail!(\"no\"); }\n#[allow(dead_code)]\nfn root() { execute(\"INSERT INTO trials (status) VALUES ('owned')\"); execute(\"update trials set status = 'launched'\"); }\n",
+        )?;
+        fs::write(
+            source.join("lifecycle").join("trial_runtime.rs"),
+            "fn owned() { execute(\"UPDATE trials SET status='succeeded'\"); }\n",
+        )?;
+        fs::write(
+            source.join("store.rs"),
+            "const SCHEMA: &str = \"UPDATE trials SET status='integrity_failed'\";\n",
+        )?;
+        fs::write(
+            source.join("state.rs"),
+            "const OWNED: &str = \"'owned'\";\n",
+        )?;
+        fs::write(
+            source.join("lifecycle_tests.rs"),
+            "const FIXTURE: &str = \"status='rejected'\";\n",
+        )?;
         fs::write(source.join("ignored.txt"), "not Rust\n")?;
 
         let stats = source_stats(root.path())?;
-        assert_eq!(stats.lifecycle_module_lines, 2);
-        assert_eq!(stats.largest_module_lines, 3);
-        assert_eq!(stats.total_lines, 7);
+        assert_eq!(stats.misplaced_trial_transition_sites, 2);
+        assert_eq!(stats.raw_stored_state_sites, 3);
+        assert_eq!(stats.test_sites, 1);
+        assert_eq!(stats.assertion_sites, 1);
+        assert_eq!(stats.refusal_sites, 1);
+        assert_eq!(stats.allow_attributes, 1);
         Ok(())
     }
 
@@ -350,29 +470,68 @@ mod tests {
     }
 
     #[test]
-    fn objective_observations_follow_admission_canonical_order() {
+    fn objective_observations_follow_manifest_order() {
         let baseline = SourceStats {
-            lifecycle_module_lines: 100,
-            largest_module_lines: 110,
-            total_lines: 1_000,
+            misplaced_trial_transition_sites: 4,
+            raw_stored_state_sites: 12,
+            test_sites: 10,
+            assertion_sites: 20,
+            refusal_sites: 40,
+            allow_attributes: 1,
         };
-        let candidate = SourceStats {
-            lifecycle_module_lines: 80,
-            largest_module_lines: 105,
-            total_lines: 990,
-        };
-        let keys = objective_observations(&baseline, &candidate, true)
+        let objectives = [
+            Objective {
+                key: "refusal-sites".to_owned(),
+            },
+            Objective {
+                key: "misplaced-trial-transition-sites".to_owned(),
+            },
+            Objective {
+                key: "correctness".to_owned(),
+            },
+        ];
+        let keys = objective_observations(&objectives, &baseline, &baseline)
+            .expect("supported objectives")
             .into_iter()
             .map(|observation| observation.objective)
             .collect::<Vec<_>>();
         assert_eq!(
             keys,
             [
-                "largest-module-lines",
-                "lifecycle-module-lines",
-                "production-source-band",
-                "workspace-gates",
+                "refusal-sites",
+                "misplaced-trial-transition-sites",
+                "correctness",
             ]
+        );
+    }
+
+    #[test]
+    fn structural_and_countermetric_regressions_are_named() {
+        let baseline = SourceStats {
+            misplaced_trial_transition_sites: 4,
+            raw_stored_state_sites: 12,
+            test_sites: 10,
+            assertion_sites: 20,
+            refusal_sites: 40,
+            allow_attributes: 1,
+        };
+        let mut candidate = baseline.clone();
+        candidate.misplaced_trial_transition_sites += 1;
+        assert_eq!(
+            regression_reason(&baseline, &candidate),
+            Some("trial-transition-boundary-regressed")
+        );
+        candidate = baseline.clone();
+        candidate.raw_stored_state_sites += 1;
+        assert_eq!(
+            regression_reason(&baseline, &candidate),
+            Some("stored-state-vocabulary-regressed")
+        );
+        candidate = baseline.clone();
+        candidate.refusal_sites -= 1;
+        assert_eq!(
+            regression_reason(&baseline, &candidate),
+            Some("anti-golf-countermetric-regressed")
         );
     }
 }

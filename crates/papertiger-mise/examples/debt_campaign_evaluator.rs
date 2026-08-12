@@ -13,16 +13,27 @@ use serde::Deserialize;
 const REQUEST_SCHEMA: &str = "papertiger-mise.deterministic-evaluator-request.v1";
 const OUTPUT_SCHEMA: &str = "papertiger-mise.deterministic-evaluator-output.v1";
 const EVALUATOR_LOCATOR: &str = "crates/papertiger-mise/examples/debt_campaign_evaluator.rs";
-const MODULE_LINE_BUDGET: u64 = 2_000;
 
-const OBJECTIVES: [&str; 9] = [
-    "files-over-2000-lines",
+// These markers are concrete copies of boundary decisions currently repeated
+// by independent adapter surfaces. ASCII whitespace is removed before matching
+// so formatting cannot improve the primary. Counting every candidate-owned
+// Rust source below the repository root keeps moving a copy into another crate,
+// module, or test helper from looking like an improvement. The evaluator itself
+// is the sole exclusion because admission freezes it outside candidate scope.
+const DUPLICATED_BOUNDARY_DECISIONS: [&str; 4] = [
+    r#".strip_suffix(b"\r\n")"#,
+    "Component::Prefix(_)|Component::RootDir|Component::Normal(_)",
+    "Ok(sha256(&std::fs::read(path)?))",
+    "PROHIBITED.contains(&key.as_str())",
+];
+
+const OBJECTIVES: [&str; 8] = [
+    "duplicated-boundary-decision-sites",
     "correctness",
     "compatibility",
     "public-contract-gates",
     "test-sites",
     "assertion-sites",
-    "comment-lines",
     "refusal-sites",
     "allow-attributes",
 ];
@@ -41,10 +52,9 @@ struct Objective {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DebtStats {
-    files_over_line_budget: u64,
+    duplicated_boundary_decision_sites: u64,
     test_sites: u64,
     assertion_sites: u64,
-    comment_lines: u64,
     refusal_sites: u64,
     allow_attributes: u64,
 }
@@ -164,36 +174,27 @@ fn require_objectives(objectives: &[Objective]) -> Result<()> {
 }
 
 fn debt_stats(root: &Path) -> Result<DebtStats> {
-    let source_root = root.join("crates").join("papertiger-mise").join("src");
-    let mut production_files = Vec::new();
-    collect_rust_files(&source_root, &mut production_files)?;
-    if production_files.is_empty() {
-        bail!(
-            "no Rust source files found below '{}'",
-            source_root.display()
-        );
-    }
-    let files_over_line_budget = production_files
-        .iter()
-        .map(|path| physical_line_count(path))
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .filter(|lines| *lines > MODULE_LINE_BUDGET)
-        .count();
-
     let mut repository_files = Vec::new();
     collect_rust_files(root, &mut repository_files)?;
     repository_files.retain(|path| {
         path.strip_prefix(root).ok().is_some_and(|relative| {
-            !relative.starts_with("vendor") && !relative.starts_with("target")
+            relative != Path::new(EVALUATOR_LOCATOR)
+                && !relative.starts_with("vendor")
+                && !relative.starts_with("target")
         })
     });
+    if repository_files.is_empty() {
+        bail!(
+            "no candidate-owned Rust source files found below '{}'",
+            root.display()
+        );
+    }
+    repository_files.sort();
+    let duplicated_boundary_decision_sites = duplicated_boundary_decision_sites(&repository_files)?;
     let mut stats = DebtStats {
-        files_over_line_budget: u64::try_from(files_over_line_budget)
-            .context("files-over-budget count overflow")?,
+        duplicated_boundary_decision_sites,
         test_sites: 0,
         assertion_sites: 0,
-        comment_lines: 0,
         refusal_sites: 0,
         allow_attributes: 0,
     };
@@ -205,37 +206,39 @@ fn debt_stats(root: &Path) -> Result<DebtStats> {
             .into_iter()
             .map(|token| count_token(&source, token))
             .sum::<u64>();
-        let comment_lines = source
-            .lines()
-            .filter(|line| {
-                let line = line.trim_start();
-                line.starts_with("//")
-                    || line.starts_with("/*")
-                    || line.starts_with('*')
-                    || line.starts_with("*/")
-            })
-            .count();
-        let comment_lines = u64::try_from(comment_lines).context("comment-line count overflow")?;
-        stats.comment_lines += comment_lines;
         stats.refusal_sites += count_token(&source, "bail!(") + count_token(&source, "ensure!(");
         stats.allow_attributes += count_token(&source, "#[allow(");
     }
     Ok(stats)
 }
 
-fn physical_line_count(path: &Path) -> Result<u64> {
-    let source = fs::read_to_string(path)
-        .with_context(|| format!("read Rust source '{}'", path.display()))?;
-    if source.is_empty() {
-        return Ok(0);
-    }
-    let breaks = source.bytes().filter(|byte| *byte == b'\n').count();
-    let lines = if source.ends_with('\n') {
-        breaks
-    } else {
-        breaks + 1
-    };
-    u64::try_from(lines).context("physical line count overflow")
+fn duplicated_boundary_decision_sites(files: &[PathBuf]) -> Result<u64> {
+    let normalized_sources = files
+        .iter()
+        .map(|path| {
+            fs::read_to_string(path)
+                .with_context(|| format!("read Rust source '{}'", path.display()))
+                .map(|source| strip_ascii_whitespace(&source))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    DUPLICATED_BOUNDARY_DECISIONS
+        .iter()
+        .try_fold(0_u64, |duplicates, marker| {
+            let sites = normalized_sources
+                .iter()
+                .map(|source| count_token(source, marker))
+                .sum::<u64>();
+            duplicates
+                .checked_add(sites.saturating_sub(1))
+                .context("duplicated boundary-decision count overflow")
+        })
+}
+
+fn strip_ascii_whitespace(source: &str) -> String {
+    source
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .collect()
 }
 
 fn collect_rust_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
@@ -267,12 +270,14 @@ fn count_token(source: &str, token: &str) -> u64 {
 }
 
 fn regression_reason(baseline: &DebtStats, candidate: &DebtStats) -> Option<&'static str> {
+    if candidate.duplicated_boundary_decision_sites > baseline.duplicated_boundary_decision_sites {
+        return Some("boundary-decision-duplication-regressed");
+    }
     if candidate.allow_attributes > baseline.allow_attributes {
         return Some("suppression-regressed");
     }
     if candidate.test_sites < baseline.test_sites
         || candidate.assertion_sites < baseline.assertion_sites
-        || candidate.comment_lines < baseline.comment_lines
         || candidate.refusal_sites < baseline.refusal_sites
     {
         return Some("anti-golf-countermetric-regressed");
@@ -289,14 +294,13 @@ fn objective_observations(
         .iter()
         .map(|objective| {
             let (baseline_value, candidate_value) = match objective.key.as_str() {
-                "files-over-2000-lines" => (
-                    baseline.files_over_line_budget,
-                    candidate.files_over_line_budget,
+                "duplicated-boundary-decision-sites" => (
+                    baseline.duplicated_boundary_decision_sites,
+                    candidate.duplicated_boundary_decision_sites,
                 ),
                 "correctness" | "compatibility" | "public-contract-gates" => (1, 1),
                 "test-sites" => (baseline.test_sites, candidate.test_sites),
                 "assertion-sites" => (baseline.assertion_sites, candidate.assertion_sites),
-                "comment-lines" => (baseline.comment_lines, candidate.comment_lines),
                 "refusal-sites" => (baseline.refusal_sites, candidate.refusal_sites),
                 "allow-attributes" => (baseline.allow_attributes, candidate.allow_attributes),
                 unknown => bail!("unsupported frozen campaign objective '{unknown}'"),
@@ -371,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn detector_counts_debt_and_anti_golf_metrics() -> Result<()> {
+    fn detector_counts_structural_debt_and_anti_golf_metrics() -> Result<()> {
         let root = tempfile::tempdir()?;
         let source = root
             .path()
@@ -379,17 +383,30 @@ mod tests {
             .join("papertiger-mise")
             .join("src");
         fs::create_dir_all(&source)?;
-        let oversized = format!(
-            "// retained rationale\n#[test]\nfn check() {{ assert!(true); bail!(\"no\"); }}\n{}#[allow(dead_code)]\n",
-            "line\n".repeat(2_000)
-        );
-        fs::write(source.join("oversized.rs"), oversized)?;
+        fs::create_dir_all(root.path().join("tests"))?;
+        fs::create_dir_all(
+            root.path()
+                .join("crates")
+                .join("papertiger-mise")
+                .join("examples"),
+        )?;
+        fs::write(
+            source.join("adapter.rs"),
+            "// retained rationale\n#[test]\nfn check() { assert!(true); bail!(\"no\"); }\n#[allow(dead_code)]\nfn first(value: &[u8]) { let _ = value.strip_suffix(b\"\\r\\n\"); }\n",
+        )?;
+        fs::write(
+            root.path().join("tests").join("shadow.rs"),
+            "fn second(value: &[u8]) { let _ = value\n    .strip_suffix( b\"\\r\\n\" ); }\n",
+        )?;
+        fs::write(
+            root.path().join(EVALUATOR_LOCATOR),
+            "fn frozen(value: &[u8]) { let _ = value.strip_suffix(b\"\\r\\n\"); }\n",
+        )?;
 
         let stats = debt_stats(root.path())?;
-        assert_eq!(stats.files_over_line_budget, 1);
+        assert_eq!(stats.duplicated_boundary_decision_sites, 1);
         assert_eq!(stats.test_sites, 1);
         assert_eq!(stats.assertion_sites, 1);
-        assert_eq!(stats.comment_lines, 1);
         assert_eq!(stats.refusal_sites, 1);
         assert_eq!(stats.allow_attributes, 1);
         Ok(())
@@ -398,14 +415,19 @@ mod tests {
     #[test]
     fn suppression_and_countermetric_regressions_are_named() {
         let baseline = DebtStats {
-            files_over_line_budget: 2,
+            duplicated_boundary_decision_sites: 2,
             test_sites: 10,
             assertion_sites: 20,
-            comment_lines: 30,
             refusal_sites: 40,
             allow_attributes: 1,
         };
         let mut candidate = baseline.clone();
+        candidate.duplicated_boundary_decision_sites += 1;
+        assert_eq!(
+            regression_reason(&baseline, &candidate),
+            Some("boundary-decision-duplication-regressed")
+        );
+        candidate = baseline.clone();
         candidate.allow_attributes += 1;
         assert_eq!(
             regression_reason(&baseline, &candidate),
@@ -422,10 +444,9 @@ mod tests {
     #[test]
     fn observations_follow_manifest_order() {
         let stats = DebtStats {
-            files_over_line_budget: 2,
+            duplicated_boundary_decision_sites: 2,
             test_sites: 10,
             assertion_sites: 20,
-            comment_lines: 30,
             refusal_sites: 40,
             allow_attributes: 1,
         };
@@ -434,7 +455,7 @@ mod tests {
                 key: "test-sites".to_owned(),
             },
             Objective {
-                key: "files-over-2000-lines".to_owned(),
+                key: "duplicated-boundary-decision-sites".to_owned(),
             },
             Objective {
                 key: "correctness".to_owned(),
@@ -446,7 +467,11 @@ mod tests {
                 .into_iter()
                 .map(|observation| observation.objective)
                 .collect::<Vec<_>>(),
-            ["test-sites", "files-over-2000-lines", "correctness"]
+            [
+                "test-sites",
+                "duplicated-boundary-decision-sites",
+                "correctness"
+            ]
         );
     }
 

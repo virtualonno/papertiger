@@ -307,7 +307,6 @@ mod tests {
             &[],
             0,
             None,
-            None,
         )
         .expect("fixture task");
         papertiger::add_gate(

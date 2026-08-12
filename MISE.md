@@ -292,7 +292,7 @@ same projection on the same task is a no-op; binding the candidate to another
 task or changing its projected payload is refused. `papertiger mise list
 <task>`, `papertiger mise show <projection-sha256>`, and `papertiger show
 <task> --json` revalidate stored payloads on read. Projection records survive
-`papertiger.dump.v3` export/import. None of these commands changes task, gate,
+`papertiger.dump.v6` export/import. None of these commands changes task, gate,
 or candidate state.
 
 The projection argument may be `-`, so a shell may use a no-scratch-file path:
@@ -322,25 +322,29 @@ Maintainability is a legitimate improvement paradigm when the experiment
 measures removal of a specific, independently detectable change hazard. Its
 primary is a count produced by a frozen detector outside the candidate mutation
 scope, run over the same frozen repository universe for baseline and candidate.
-Suitable primaries include duplicate-helper instances, files exceeding a
-declared line budget, raw state-vocabulary match sites, and warnings emitted by
-a pinned strict lint profile. Total line count, module count, build time, and
-artifact size alone are not maintainability outcomes.
+Suitable primaries include duplicated boundary-decision sites, raw persisted
+state vocabulary outside its canonical owner, transition writes crossing an
+explicit subsystem boundary, and warnings emitted by a pinned strict lint
+profile. File length, total line count, module count, build time, and artifact
+size alone are not maintainability outcomes. Splitting or shrinking source is
+useful only when a detector names the concrete change hazard that disappeared.
 
-The detector implementation, configuration, included and excluded paths, base
-revision, toolchain, and output parser are judge inputs. Admission freezes them
-and protects them from candidate writes. The detector must count movement as
-well as deletion: moving a duplicated decision into an excluded file, generated
-artifact, test helper, or new dependency does not reduce the primary. A known
-debt instance and a no-op candidate are calibration controls; a behavior-
-deleting candidate is the known-bad anti-golf control.
+The detector implementation, semantic markers, ownership boundaries, included
+and excluded paths, base revision, toolchain, and output parser are judge
+inputs. Admission freezes them and protects them from candidate writes. A
+detector must identify the same hazard after harmless formatting or renaming and
+must count movement as well as deletion: moving a duplicated decision into an
+excluded file, generated artifact, test helper, or new dependency does not
+reduce the primary. A known debt instance and a no-op candidate are calibration
+controls; a behavior-deleting candidate is the known-bad anti-golf control.
 
 Every debt-erasure portfolio protects all of these countermetric families:
 
 - an external public behavior and refusal differential, executed from protected
   judge scope against both baseline and candidate;
 - test and assertion count non-decrease over the frozen repository universe;
-- comment mass and public documentation non-decrease;
+- protected public documentation and contract examples remain present and pass
+  their project-native checks;
 - refusal-path count non-decrease; and
 - suppression count non-increase, including lint-allow attributes and excluded
   detector paths.

@@ -7,6 +7,26 @@ use std::collections::{HashMap, HashSet};
 
 mod digest;
 pub use digest::{sha256, sha256_bytes, validate_sha256};
+mod atomic_file;
+pub use atomic_file::{atomic_create_file, atomic_replace_file};
+mod export_file;
+pub use export_file::{ExportFileReceipt, write_export_file};
+mod path_identity;
+pub use path_identity::portable_absolute;
+mod read_model;
+pub use read_model::{
+    ActivityEvent, AuthorityInfo, EventCursor, EventLog, EventRecord, PlanStatus, StatusReadyTask,
+    StatusResponse, StatusTask, TaskActivity, TaskCounts, TaskListItem, TaskListResponse,
+    TaskSummary, authority_info, event_cursor, event_head, event_log, status_response,
+    task_activity, task_list_response,
+};
+mod search;
+pub use search::{SearchExcerpt, SearchHit, SearchResponse, search_tasks};
+mod commit_association;
+pub use commit_association::{
+    CommitAssociation, CommitAssociationMatch, add_commit_association, commit_associations,
+    find_commit_associations, remove_commit_association,
+};
 mod mise_projection;
 mod mise_projection_contract;
 pub use mise_projection::{
@@ -20,7 +40,8 @@ pub use mise_projection_contract::{
     MiseSourceProjection,
 };
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 6;
+const SQLITE_LOCK_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 
 pub const TASK_STATUSES: [&str; 5] = ["proposed", "in_progress", "done", "retired", "rejected"];
 pub const TASK_KINDS: [&str; 3] = ["work", "probe", "decision"];
@@ -41,9 +62,30 @@ pub fn now() -> String {
 }
 
 fn configure_connection(conn: Connection) -> Result<Connection> {
+    conn.busy_timeout(SQLITE_LOCK_GRACE)
+        .context("configure papertiger SQLite lock grace")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.busy_timeout(std::time::Duration::ZERO)?;
     Ok(conn)
+}
+
+/// Replace any SQLite lock error in an anyhow context chain with Papertiger's
+/// single operator-facing retry refusal. SQLite performs the bounded wait;
+/// Papertiger never replays the command.
+pub fn normalize_sqlite_lock_error(error: anyhow::Error) -> anyhow::Error {
+    let locked = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<rusqlite::Error>()
+            .and_then(rusqlite::Error::sqlite_error_code)
+            .is_some_and(|code| matches!(code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked))
+    });
+    if locked {
+        anyhow!(
+            "papertiger SQLite lock admission refused after a {}ms grace: the authority is still locked; retry the command after the current database operation finishes",
+            SQLITE_LOCK_GRACE.as_millis()
+        )
+    } else {
+        error
+    }
 }
 
 pub fn open_for_init(path: &str) -> Result<Connection> {
@@ -103,23 +145,12 @@ fn schema_version(conn: &Connection) -> Result<i64> {
         .map_err(|_| anyhow!("corrupt schema_version '{raw}'"))
 }
 
-/// Reserve SQLite's writer slot without waiting. Dropping the returned
-/// transaction rolls the logical mutation back and releases the reservation.
+/// Reserve SQLite's writer slot within the connection-wide lock grace. The
+/// command itself is never replayed. Dropping the returned transaction rolls
+/// the logical mutation back and releases the reservation.
 pub fn begin_mutation(conn: &Connection) -> Result<Transaction<'_>> {
-    match Transaction::new_unchecked(conn, TransactionBehavior::Immediate) {
-        Ok(tx) => Ok(tx),
-        Err(error)
-            if matches!(
-                error.sqlite_error_code(),
-                Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
-            ) =>
-        {
-            bail!(
-                "papertiger mutation admission refused: the SQLite writer reservation is already held; retry the command after the current writer finishes"
-            )
-        }
-        Err(error) => Err(error).context("begin papertiger mutation"),
-    }
+    Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
+        .context("begin papertiger mutation")
 }
 
 pub fn init(conn: &Connection) -> Result<()> {
@@ -174,6 +205,7 @@ CREATE TABLE tasks (
   seq INTEGER NOT NULL UNIQUE,
   plan_id INTEGER NOT NULL REFERENCES plans(plan_id),
   parent_id INTEGER REFERENCES tasks(task_id),
+  replacement_task_id INTEGER REFERENCES tasks(task_id),
   title TEXT NOT NULL,
   intent TEXT NOT NULL DEFAULT '',
   kind TEXT NOT NULL DEFAULT 'work' CHECK (kind IN ('work','probe','decision')),
@@ -181,7 +213,6 @@ CREATE TABLE tasks (
   status TEXT NOT NULL DEFAULT 'proposed'
     CHECK (status IN ('proposed','in_progress','done','retired','rejected')),
   priority INTEGER NOT NULL DEFAULT 0,
-  alias TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -235,9 +266,19 @@ CREATE TABLE events (
   why TEXT,
   payload TEXT
 );
+CREATE TABLE commit_associations (
+  commit_association_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  repository TEXT NOT NULL,
+  commit_oid TEXT NOT NULL,
+  note TEXT,
+  recorded_at TEXT NOT NULL,
+  UNIQUE (task_id, repository, commit_oid)
+);
 CREATE INDEX idx_tasks_plan ON tasks(plan_id);
 CREATE INDEX idx_events_entity ON events(entity, entity_id);
 CREATE INDEX idx_events_entity_seq ON events(entity_seq, event_id);
+CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, commit_oid);
 "#,
     )?;
     tx.execute_batch(mise_projection::MISE_PROJECTION_SCHEMA_V4)?;
@@ -328,6 +369,33 @@ CREATE INDEX idx_events_entity_seq ON events(entity_seq, event_id);
         tx.execute_batch(mise_projection::MISE_PROJECTION_SCHEMA_V4)?;
         version = 4;
     }
+    if version == 4 {
+        tx.execute_batch(
+            r#"
+ALTER TABLE tasks DROP COLUMN alias;
+CREATE TABLE commit_associations (
+  commit_association_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  repository TEXT NOT NULL,
+  commit_oid TEXT NOT NULL,
+  note TEXT,
+  recorded_at TEXT NOT NULL,
+  UNIQUE (task_id, repository, commit_oid)
+);
+CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, commit_oid);
+"#,
+        )?;
+        version = 5;
+    }
+    if version == 5 {
+        tx.execute_batch(
+            r#"
+ALTER TABLE tasks
+  ADD COLUMN replacement_task_id INTEGER REFERENCES tasks(task_id);
+"#,
+        )?;
+        version = 6;
+    }
     if version != SCHEMA_VERSION {
         bail!("no papertiger migration path from schema v{from} to v{SCHEMA_VERSION}");
     }
@@ -414,21 +482,26 @@ fn record_event_in_mutation(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Task {
+    #[serde(skip_serializing)]
     pub task_id: i64,
     pub seq: i64,
+    #[serde(skip_serializing)]
     pub plan_id: i64,
+    #[serde(skip_serializing)]
     pub parent_id: Option<i64>,
+    #[serde(skip_serializing)]
+    pub replacement_task_id: Option<i64>,
     pub title: String,
     pub intent: String,
     pub kind: String,
     pub result: Option<String>,
     pub status: String,
     pub priority: i64,
-    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Plan {
+    #[serde(skip_serializing)]
     pub plan_id: i64,
     pub slug: String,
     pub title: String,
@@ -464,24 +537,23 @@ fn plan_status(conn: &Connection, plan_id: i64) -> Result<String> {
     .ok_or_else(|| anyhow!("no plan id {plan_id}"))
 }
 
-fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
+pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
     Ok(Task {
         task_id: r.get(0)?,
         seq: r.get(1)?,
         plan_id: r.get(2)?,
         parent_id: r.get(3)?,
-        title: r.get(4)?,
-        intent: r.get(5)?,
-        kind: r.get(6)?,
-        result: r.get(7)?,
-        status: r.get(8)?,
-        priority: r.get(9)?,
-        alias: r.get(10)?,
+        replacement_task_id: r.get(4)?,
+        title: r.get(5)?,
+        intent: r.get(6)?,
+        kind: r.get(7)?,
+        result: r.get(8)?,
+        status: r.get(9)?,
+        priority: r.get(10)?,
     })
 }
 
-const TASK_COLS: &str =
-    "task_id, seq, plan_id, parent_id, title, intent, kind, result, status, priority, alias";
+pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, kind, result, status, priority";
 
 fn validate_task_kind(kind: &str) -> Result<()> {
     if !TASK_KINDS.contains(&kind) {
@@ -511,6 +583,13 @@ pub fn get_task(conn: &Connection, seq: i64) -> Result<Task> {
     .ok_or_else(|| anyhow!("no task #{seq}"))
 }
 
+pub(crate) fn task_tags_by_id(conn: &Connection, task_id: i64) -> Result<Vec<String>> {
+    let mut statement = conn.prepare("SELECT tag FROM task_tags WHERE task_id=?1 ORDER BY tag")?;
+    Ok(statement
+        .query_map(params![task_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 /// Query tasks through the canonical task projection. Optional filters are
 /// applied without placeholder renumbering or a caller-owned row mapping.
 pub fn list_tasks(
@@ -519,11 +598,37 @@ pub fn list_tasks(
     status: Option<&str>,
     tag: Option<&str>,
 ) -> Result<Vec<Task>> {
+    list_tasks_ordered(conn, plan_id, status, tag, false)
+}
+
+pub fn list_tasks_by_activity(
+    conn: &Connection,
+    plan_id: i64,
+    status: Option<&str>,
+    tag: Option<&str>,
+) -> Result<Vec<Task>> {
+    list_tasks_ordered(conn, plan_id, status, tag, true)
+}
+
+fn list_tasks_ordered(
+    conn: &Connection,
+    plan_id: i64,
+    status: Option<&str>,
+    tag: Option<&str>,
+    by_activity: bool,
+) -> Result<Vec<Task>> {
+    let order = if by_activity {
+        "ORDER BY COALESCE((SELECT MAX(event_id) FROM events
+                            WHERE entity_seq=tasks.seq
+                              AND entity IN ('task','dep','gate')), 0) DESC, seq"
+    } else {
+        "ORDER BY seq"
+    };
     let (sql, parameters): (String, Vec<rusqlite::types::Value>) = match (status, tag) {
         (Some(status), Some(tag)) => (
             format!(
                 "SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1 AND status=?2
-                 AND task_id IN (SELECT task_id FROM task_tags WHERE tag=?3) ORDER BY seq"
+                 AND task_id IN (SELECT task_id FROM task_tags WHERE tag=?3) {order}"
             ),
             vec![
                 plan_id.into(),
@@ -532,18 +637,18 @@ pub fn list_tasks(
             ],
         ),
         (Some(status), None) => (
-            format!("SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1 AND status=?2 ORDER BY seq"),
+            format!("SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1 AND status=?2 {order}"),
             vec![plan_id.into(), status.to_owned().into()],
         ),
         (None, Some(tag)) => (
             format!(
                 "SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1
-                 AND task_id IN (SELECT task_id FROM task_tags WHERE tag=?2) ORDER BY seq"
+                 AND task_id IN (SELECT task_id FROM task_tags WHERE tag=?2) {order}"
             ),
             vec![plan_id.into(), tag.to_owned().into()],
         ),
         (None, None) => (
-            format!("SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1 ORDER BY seq"),
+            format!("SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1 {order}"),
             vec![plan_id.into()],
         ),
     };
@@ -566,10 +671,19 @@ pub fn leaf_tasks_with_status(conn: &Connection, plan_id: i64, status: &str) -> 
 }
 
 pub fn parse_task_ref(task_ref: &str) -> Result<i64> {
-    task_ref
-        .trim_start_matches('#')
-        .parse::<i64>()
-        .map_err(|_| anyhow!("bad task reference '{task_ref}' (expected task.seq as N or #N)"))
+    let digits = task_ref.strip_prefix('#').unwrap_or(task_ref);
+    let invalid = || {
+        anyhow!(
+            "bad task reference '{task_ref}' (expected task.seq as N or #N, with N a canonical positive ASCII decimal)"
+        )
+    };
+    if digits.is_empty()
+        || digits.starts_with('0')
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(invalid());
+    }
+    digits.parse::<i64>().map_err(|_| invalid())
 }
 
 pub fn active_plan(conn: &Connection) -> Result<Option<(i64, String)>> {
@@ -737,11 +851,10 @@ pub fn add_task(
     deps: &[i64],
     tags: &[String],
     priority: i64,
-    alias: Option<&str>,
     why: Option<&str>,
 ) -> Result<i64> {
     add_task_with_kind(
-        conn, actor, plan_id, title, intent, "work", parent, deps, tags, priority, alias, why,
+        conn, actor, plan_id, title, intent, "work", parent, deps, tags, priority, why,
     )
 }
 
@@ -757,12 +870,11 @@ pub fn add_task_with_kind(
     deps: &[i64],
     tags: &[String],
     priority: i64,
-    alias: Option<&str>,
     why: Option<&str>,
 ) -> Result<i64> {
     let tx = begin_mutation(conn)?;
     let seq = add_task_in_mutation(
-        &tx, actor, plan_id, title, intent, kind, parent, deps, tags, priority, alias, why,
+        &tx, actor, plan_id, title, intent, kind, parent, deps, tags, priority, why,
     )?;
     tx.commit()?;
     Ok(seq)
@@ -780,13 +892,12 @@ pub fn add_task_for_plan(
     deps: &[i64],
     tags: &[String],
     priority: i64,
-    alias: Option<&str>,
     why: Option<&str>,
 ) -> Result<(i64, String)> {
     let tx = begin_mutation(conn)?;
     let (plan_id, slug) = resolve_plan(&tx, plan)?;
     let seq = add_task_in_mutation(
-        &tx, actor, plan_id, title, intent, kind, parent, deps, tags, priority, alias, why,
+        &tx, actor, plan_id, title, intent, kind, parent, deps, tags, priority, why,
     )?;
     tx.commit()?;
     Ok((seq, slug))
@@ -804,7 +915,6 @@ fn add_task_in_mutation(
     deps: &[i64],
     tags: &[String],
     priority: i64,
-    alias: Option<&str>,
     why: Option<&str>,
 ) -> Result<i64> {
     validate_task_kind(kind)?;
@@ -833,9 +943,9 @@ fn add_task_in_mutation(
     let t = now();
     tx.execute(
         "INSERT INTO tasks
-         (seq, plan_id, parent_id, title, intent, kind, status, priority, alias, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'proposed', ?7, ?8, ?9, ?9)",
-        params![seq, plan_id, parent_id, title, intent, kind, priority, alias, t],
+         (seq, plan_id, parent_id, title, intent, kind, status, priority, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'proposed', ?7, ?8, ?8)",
+        params![seq, plan_id, parent_id, title, intent, kind, priority, t],
     )?;
     let id = tx.last_insert_rowid();
     record_event_in_mutation(
@@ -1192,7 +1302,7 @@ pub fn start_task(conn: &Connection, actor: &str, seq: i64, why: Option<&str>) -
             blockers.join(", ")
         );
     }
-    transition_task(&tx, actor, &task, "in_progress", why, None)?;
+    transition_task(&tx, actor, &task, "in_progress", why, None, None)?;
     tx.commit()?;
     Ok(())
 }
@@ -1235,11 +1345,11 @@ pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&s
     let result = result.map(str::trim).filter(|text| !text.is_empty());
     if matches!(task.kind.as_str(), "probe" | "decision") && result.is_none() {
         bail!(
-            "completing {} task #{seq} requires --result so the measured or selected outcome survives the session",
+            "completing {} task #{seq} requires --result or --result-file so the measured or selected outcome survives the session",
             task.kind
         );
     }
-    transition_task(&tx, actor, &task, "done", result, result)?;
+    transition_task(&tx, actor, &task, "done", result, result, None)?;
     tx.commit()?;
     Ok(())
 }
@@ -1285,20 +1395,33 @@ pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Resul
                 .join(", ")
         );
     }
-    transition_task(&tx, actor, &task, "proposed", Some(why), None)?;
+    transition_task(&tx, actor, &task, "proposed", Some(why), None, None)?;
     tx.commit()?;
     Ok(())
 }
 
-pub fn retire_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Result<()> {
-    terminate_task(conn, actor, seq, "retired", why)
+pub fn retire_task(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    replacement_seq: Option<i64>,
+    why: &str,
+) -> Result<()> {
+    terminate_task(conn, actor, seq, "retired", replacement_seq, why)
 }
 
 pub fn reject_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Result<()> {
-    terminate_task(conn, actor, seq, "rejected", why)
+    terminate_task(conn, actor, seq, "rejected", None, why)
 }
 
-fn terminate_task(conn: &Connection, actor: &str, seq: i64, status: &str, why: &str) -> Result<()> {
+fn terminate_task(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    status: &str,
+    replacement_seq: Option<i64>,
+    why: &str,
+) -> Result<()> {
     if !matches!(status, "retired" | "rejected") {
         bail!("terminal disposition must be retired or rejected");
     }
@@ -1308,6 +1431,11 @@ fn terminate_task(conn: &Connection, actor: &str, seq: i64, status: &str, why: &
     }
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
+    if status == "rejected" && replacement_seq.is_some() {
+        bail!(
+            "reject does not accept a replacement task; use `papertiger retire {seq} --into <task> --why <reason>` when consolidating work"
+        );
+    }
     if task.status == status {
         bail!("#{seq} is already {status}");
     }
@@ -1339,7 +1467,67 @@ fn terminate_task(conn: &Connection, actor: &str, seq: i64, status: &str, why: &
                 .join(", ")
         );
     }
-    transition_task(&tx, actor, &task, status, Some(why), Some(why))?;
+    let replacement_sources = inbound_replacement_sequences(&tx, task.task_id)?;
+    if !replacement_sources.is_empty() && status == "rejected" {
+        bail!(
+            "#{seq} is the canonical replacement for {}; rejection would strand that history; use `papertiger retire {seq} --into <task> --why <reason>` to extend the replacement chain, or reopen and re-disposition the referring tasks first",
+            replacement_sources
+                .iter()
+                .map(|source| format!("#{source}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    if !replacement_sources.is_empty() && status == "retired" && replacement_seq.is_none() {
+        bail!(
+            "#{seq} is the canonical replacement for {}; bare retirement would strand that history; use `papertiger retire {seq} --into <task> --why <reason>` to extend the replacement chain",
+            replacement_sources
+                .iter()
+                .map(|source| format!("#{source}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    let replacement = replacement_seq
+        .map(|replacement_seq| {
+            if replacement_seq == seq {
+                bail!("#{seq} cannot replace itself");
+            }
+            let replacement = get_task(&tx, replacement_seq)?;
+            if replacement.plan_id != task.plan_id {
+                bail!("#{seq} and replacement #{replacement_seq} belong to different plans");
+            }
+            if matches!(replacement.status.as_str(), "retired" | "rejected") {
+                bail!(
+                    "replacement #{replacement_seq} is {}; choose a proposed, in_progress, or done same-plan task for --into",
+                    replacement.status
+                );
+            }
+            Ok(replacement)
+        })
+        .transpose()?;
+    transition_task(
+        &tx,
+        actor,
+        &task,
+        status,
+        Some(why),
+        Some(why),
+        replacement.as_ref(),
+    )?;
+    if let Some(cycle) = find_cycle(
+        &tx,
+        "SELECT task_id, replacement_task_id FROM tasks WHERE replacement_task_id IS NOT NULL",
+    )? {
+        bail!(
+            "replacement would create cycle {}",
+            cycle
+                .iter()
+                .map(|task| format!("#{task}"))
+                .collect::<Vec<_>>()
+                .join(" -> ")
+        );
+    }
     tx.commit()?;
     Ok(())
 }
@@ -1351,11 +1539,29 @@ fn transition_task(
     status: &str,
     why: Option<&str>,
     result: Option<&str>,
+    replacement: Option<&Task>,
 ) -> Result<()> {
     tx.execute(
-        "UPDATE tasks SET status=?1, result=?2, updated_at=?3 WHERE task_id=?4",
-        params![status, result, now(), task.task_id],
+        "UPDATE tasks
+            SET status=?1, result=?2, replacement_task_id=?3, updated_at=?4
+          WHERE task_id=?5",
+        params![
+            status,
+            result,
+            replacement.map(|task| task.task_id),
+            now(),
+            task.task_id
+        ],
     )?;
+    let mut payload = serde_json::json!({
+        "seq": task.seq,
+        "from": task.status,
+        "to": status,
+        "result": result,
+    });
+    if let Some(replacement) = replacement {
+        payload["replacement_seq"] = serde_json::json!(replacement.seq);
+    }
     record_event_in_mutation(
         tx,
         actor,
@@ -1363,12 +1569,7 @@ fn transition_task(
         Some(task.task_id),
         "status",
         why,
-        Some(&serde_json::json!({
-            "seq": task.seq,
-            "from": task.status,
-            "to": status,
-            "result": result,
-        })),
+        Some(&payload),
     )?;
     Ok(())
 }
@@ -1389,6 +1590,14 @@ fn live_child_sequences(conn: &Connection, task_id: i64) -> Result<Vec<i64>> {
     Ok(statement
         .query_map(params![task_id], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?)
+}
+
+fn inbound_replacement_sequences(conn: &Connection, task_id: i64) -> Result<Vec<i64>> {
+    let mut statement =
+        conn.prepare("SELECT seq FROM tasks WHERE replacement_task_id=?1 ORDER BY seq")?;
+    Ok(statement
+        .query_map(params![task_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn completed_dependent_sequences(conn: &Connection, task_id: i64) -> Result<Vec<i64>> {
@@ -1595,7 +1804,7 @@ fn resolve_open_gate_then(
         .optional()?
         .ok_or_else(|| anyhow!("no open gate '{name}' on #{seq}"))?;
     if let Some(loc) = evidence {
-        validate_evidence_locator(loc)?;
+        validate_new_evidence_locator(loc)?;
     }
     validate_optional_sha256(sha256)?;
     let stored_note = if to == "waived" { why } else { note };
@@ -1631,6 +1840,31 @@ fn validate_evidence_locator(locator: &str) -> Result<()> {
         && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'));
     if !valid_scheme {
         bail!("evidence locator '{locator}' has an invalid scheme; use an RFC 3986-style name");
+    }
+    Ok(())
+}
+
+fn validate_new_evidence_locator(locator: &str) -> Result<()> {
+    validate_evidence_locator(locator)?;
+    if let Some((scheme, value)) = locator.split_once(':')
+        && scheme.eq_ignore_ascii_case("commit")
+    {
+        validate_commit_oid(value)?;
+    }
+    Ok(())
+}
+
+pub fn validate_commit_oid(commit_oid: &str) -> Result<()> {
+    let valid_length = matches!(commit_oid.len(), 40 | 64);
+    if !valid_length || !commit_oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!(
+            "commit object id '{commit_oid}' must be the full 40- or 64-character hexadecimal id; resolve it in the owning repository with `git rev-parse --verify 'HEAD^{{commit}}'`"
+        );
+    }
+    if commit_oid.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        bail!(
+            "commit object id '{commit_oid}' must use canonical lowercase hexadecimal; resolve it with `git rev-parse --verify 'HEAD^{{commit}}'`"
+        );
     }
     Ok(())
 }
@@ -1738,7 +1972,7 @@ pub fn resolve_task_blocker(
     sha256: Option<&str>,
     note: Option<&str>,
 ) -> Result<()> {
-    validate_evidence_locator(evidence)?;
+    validate_new_evidence_locator(evidence)?;
     validate_optional_sha256(sha256)?;
     resolve_open_task_blocker(
         conn,
@@ -1890,31 +2124,26 @@ pub struct GateRecord {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct TaskEvent {
-    pub at: String,
-    pub actor: String,
-    pub kind: String,
-    pub why: Option<String>,
-    pub payload: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct TaskContext {
     pub schema: String,
     pub plan: Plan,
     pub task: Task,
     pub tags: Vec<String>,
     pub parent: Option<Task>,
+    pub replacement: Option<Task>,
     pub dependencies: Vec<Task>,
     pub dependents: Vec<Task>,
     pub children: Vec<Task>,
     pub blockers: Vec<TaskBlocker>,
     pub gates: Vec<GateRecord>,
+    pub commit_associations: Vec<CommitAssociation>,
+    pub activity: TaskActivity,
     pub mise_projections: Vec<TaskMiseProjectionSummary>,
     pub immediate_unlock_count: usize,
     pub unfinished_downstream_count: usize,
-    pub recent_events: Vec<TaskEvent>,
+    pub recent_events: Vec<EventRecord>,
     pub recent_events_truncated: bool,
+    pub older_events_cursor: Option<EventCursor>,
 }
 
 pub fn task_context(conn: &Connection, seq: i64) -> Result<TaskContext> {
@@ -1933,11 +2162,21 @@ pub fn task_context(conn: &Connection, seq: i64) -> Result<TaskContext> {
         })
         .transpose()?
         .flatten();
+    let replacement = task
+        .replacement_task_id
+        .map(|replacement_task_id| {
+            conn.query_row(
+                &format!("SELECT {TASK_COLS} FROM tasks WHERE task_id=?1"),
+                params![replacement_task_id],
+                task_from_row,
+            )
+            .optional()
+            .context("query task replacement")
+        })
+        .transpose()?
+        .flatten();
 
-    let mut statement = conn.prepare("SELECT tag FROM task_tags WHERE task_id=?1 ORDER BY tag")?;
-    let tags = statement
-        .query_map(params![task.task_id], |row| row.get(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let tags = task_tags_by_id(conn, task.task_id)?;
 
     let dependencies = query_related_tasks(
         conn,
@@ -1986,59 +2225,30 @@ pub fn task_context(conn: &Connection, seq: i64) -> Result<TaskContext> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     const RECENT_EVENT_LIMIT: usize = 12;
-    let mut statement = conn.prepare(
-        "SELECT at, actor, kind, why, payload
-           FROM events
-          WHERE entity_seq=?1 AND entity IN ('task','dep','gate')
-          ORDER BY event_id DESC
-          LIMIT ?2",
-    )?;
-    let rows = statement
-        .query_map(
-            params![task.seq, i64::try_from(RECENT_EVENT_LIMIT + 1)?],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            },
-        )?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut recent_events = rows
-        .into_iter()
-        .map(|(at, actor, kind, why, payload)| {
-            Ok(TaskEvent {
-                at,
-                actor,
-                kind,
-                why,
-                payload: payload
-                    .map(|raw| serde_json::from_str(&raw).context("invalid stored event payload"))
-                    .transpose()?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let recent_events_truncated = recent_events.len() > RECENT_EVENT_LIMIT;
-    recent_events.truncate(RECENT_EVENT_LIMIT);
+    let recent_event_log = event_log(conn, Some(task.seq), RECENT_EVENT_LIMIT, None, None)?;
+    let recent_events_truncated = recent_event_log.truncated;
+    let older_events_cursor = recent_event_log.continuation;
+    let recent_events = recent_event_log.events;
 
     Ok(TaskContext {
-        schema: "papertiger.task_context.v1".into(),
+        schema: "papertiger.task_context.v4".into(),
         plan,
         tags,
         parent,
+        replacement,
         dependencies,
         dependents,
         children,
         blockers: task_blockers(conn, task.task_id)?,
         gates,
+        commit_associations: commit_associations(conn, task.seq)?,
+        activity: task_activity(conn, task.seq)?,
         mise_projections: task_mise_projection_summaries(conn, task.seq)?,
         immediate_unlock_count: immediate_unlock_count(conn, task.task_id)?,
         unfinished_downstream_count: unfinished_downstream_count(conn, task.task_id)?,
         recent_events,
         recent_events_truncated,
+        older_events_cursor,
         task,
     })
 }
@@ -2063,7 +2273,8 @@ pub fn open_deps(conn: &Connection, task_id: i64) -> Result<Vec<i64>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
-pub struct NextEntry {
+#[derive(Debug, Clone, Serialize)]
+pub struct ReadyEntry {
     pub task: Task,
     pub blockers: Vec<String>,
 }
@@ -2207,12 +2418,12 @@ fn unfinished_downstream_count(conn: &Connection, task_id: i64) -> Result<usize>
 
 /// Ready tasks (proposed, no open deps), priority desc then seq asc.
 /// With `include_blocked`, blocked proposed tasks follow with named blockers.
-pub fn next(
+pub fn ready_tasks(
     conn: &Connection,
     plan_id: i64,
     limit: usize,
     include_blocked: bool,
-) -> Result<Vec<NextEntry>> {
+) -> Result<Vec<ReadyEntry>> {
     // Tasks with children are containers: their children are the actionable
     // units, so they never enter the ready queue themselves.
     let mut st = conn.prepare(&format!(
@@ -2228,12 +2439,12 @@ pub fn next(
     for task in tasks {
         let blockers = entry_blockers(conn, &task)?;
         if blockers.is_empty() {
-            ready.push(NextEntry {
+            ready.push(ReadyEntry {
                 task,
                 blockers: vec![],
             });
         } else if include_blocked {
-            blocked.push(NextEntry { task, blockers });
+            blocked.push(ReadyEntry { task, blockers });
         }
     }
     ready.truncate(limit);
@@ -2306,6 +2517,38 @@ fn visit_cycle(
     None
 }
 
+fn replacement_repair_instruction(seq: i64, status: &str, replacement_seq: Option<i64>) -> String {
+    let into = replacement_seq
+        .map(|replacement| format!(" --into {replacement}"))
+        .unwrap_or_default();
+    let retire = format!("papertiger retire {seq}{into} --why <reason>");
+    if matches!(status, "proposed" | "in_progress") {
+        format!("run `{retire}`")
+    } else {
+        format!("run `papertiger reopen {seq} --why <reason>`, then `{retire}`")
+    }
+}
+
+fn invalid_replacement_terminals(conn: &Connection) -> Result<Vec<(i64, i64, String)>> {
+    let mut statement = conn.prepare(
+        "SELECT source.seq, target.seq, target.status
+           FROM tasks source
+           JOIN tasks target ON target.task_id=source.replacement_task_id
+          WHERE target.status='rejected'
+             OR (target.status='retired' AND target.replacement_task_id IS NULL)
+          ORDER BY source.seq",
+    )?;
+    Ok(statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn terminal_replacement_repair_instruction(target: i64) -> String {
+    format!(
+        "run `papertiger reopen {target} --why <reason>`, then `papertiger retire {target} --into <task> --why <reason>`"
+    )
+}
+
 pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     let mut findings = Vec::new();
     let mut push = |kind: &str, detail: String| {
@@ -2317,6 +2560,100 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
 
     for (kind, detail) in mise_projection::audit_mise_projections(conn)? {
         push(&kind, detail);
+    }
+
+    let mut statement = conn.prepare(
+        "SELECT task.seq, commit_association.repository, commit_association.commit_oid,
+                commit_association.recorded_at
+           FROM commit_associations commit_association
+           JOIN tasks task ON task.task_id=commit_association.task_id
+          ORDER BY task.seq, commit_association.commit_association_id",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (seq, repository, commit_oid, recorded_at) in rows {
+        if repository.trim().is_empty() {
+            push(
+                "blank_commit_repository",
+                format!("#{seq} commit {commit_oid} has a blank repository label"),
+            );
+        } else if repository != repository.trim() {
+            push(
+                "noncanonical_commit_repository",
+                format!(
+                    "#{seq} commit {commit_oid} has repository label '{repository}' with surrounding whitespace"
+                ),
+            );
+        }
+        if validate_commit_oid(&commit_oid).is_err() {
+            push(
+                "malformed_commit_oid",
+                format!("#{seq} commit '{commit_oid}' in repository '{repository}'"),
+            );
+        }
+        if recorded_at != recorded_at.trim()
+            || chrono::DateTime::parse_from_rfc3339(&recorded_at).is_err()
+        {
+            push(
+                "invalid_commit_recorded_at",
+                format!(
+                    "#{seq} commit '{commit_oid}' in repository '{repository}' has noncanonical or invalid RFC3339 recorded_at '{recorded_at}'"
+                ),
+            );
+        }
+    }
+
+    let mut statement = conn.prepare(
+        "SELECT event_id, at, entity, entity_seq, kind, payload FROM events ORDER BY event_id",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (event_id, at, entity, entity_seq, kind, payload) in rows {
+        if chrono::DateTime::parse_from_rfc3339(&at).is_err() {
+            push(
+                "invalid_event_timestamp",
+                format!("event {event_id} has non-RFC3339 timestamp '{at}'"),
+            );
+        }
+        if entity == "task" && kind == "status" {
+            let valid_target = payload
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .and_then(|value| {
+                    value
+                        .get("to")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+                .is_some_and(|target| TASK_STATUSES.contains(&target.as_str()));
+            if !valid_target {
+                let task = entity_seq
+                    .map(|seq| format!("task #{seq}"))
+                    .unwrap_or_else(|| "a task with no stable sequence".to_owned());
+                push(
+                    "invalid_task_status_event",
+                    format!("event {event_id} for {task} lacks a canonical task-status payload.to"),
+                );
+            }
+        }
     }
 
     // Closed gates with malformed or unknown-scheme evidence.
@@ -2334,7 +2671,7 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                 format!("#{seq} gate '{name}' closed without locator"),
             ),
             Some(l) => {
-                if validate_evidence_locator(&l).is_err() {
+                if validate_new_evidence_locator(&l).is_err() {
                     push(
                         "malformed_evidence_locator",
                         format!("#{seq} gate '{name}' locator '{l}'"),
@@ -2422,7 +2759,7 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                     format!("#{seq} blocker '{name}' resolved without locator"),
                 ),
                 Some(locator) => {
-                    if validate_evidence_locator(&locator).is_err() {
+                    if validate_new_evidence_locator(&locator).is_err() {
                         push(
                             "malformed_evidence_locator",
                             format!("#{seq} blocker '{name}' locator '{locator}'"),
@@ -2555,6 +2892,93 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         );
     }
 
+    let mut st = conn.prepare(
+        "SELECT task.seq, task.status, task.replacement_task_id
+           FROM tasks task
+           LEFT JOIN tasks replacement ON replacement.task_id=task.replacement_task_id
+          WHERE task.replacement_task_id IS NOT NULL AND replacement.task_id IS NULL",
+    )?;
+    let rows: Vec<(i64, String, i64)> = st
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (task, status, replacement_task_id) in rows {
+        push(
+            "dangling_replacement",
+            format!(
+                "#{task} names missing replacement row id {replacement_task_id}; restore the referenced task or {} to clear the pointer",
+                replacement_repair_instruction(task, &status, None)
+            ),
+        );
+    }
+
+    let mut st = conn.prepare(
+        "SELECT task.seq, task.status, replacement.seq,
+                task.plan_id=replacement.plan_id, replacement.status
+           FROM tasks task
+           JOIN tasks replacement ON replacement.task_id=task.replacement_task_id
+          WHERE task.status<>'retired'",
+    )?;
+    let rows: Vec<(i64, String, i64, bool, String)> = st
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    for (task, status, replacement, same_plan, replacement_status) in rows {
+        let reusable_replacement = (same_plan
+            && matches!(
+                replacement_status.as_str(),
+                "proposed" | "in_progress" | "done"
+            ))
+        .then_some(replacement);
+        push(
+            "replacement_on_nonretired_task",
+            format!(
+                "#{task} is {status} but names replacement #{replacement}; valid replacement links require a retired source; {}",
+                replacement_repair_instruction(task, &status, reusable_replacement)
+            ),
+        );
+    }
+
+    let mut st = conn.prepare(
+        "SELECT task.seq, task.status, replacement.seq
+           FROM tasks task
+           JOIN tasks replacement ON replacement.task_id=task.replacement_task_id
+          WHERE task.plan_id<>replacement.plan_id",
+    )?;
+    let rows: Vec<(i64, String, i64)> = st
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (task, status, replacement) in rows {
+        push(
+            "cross_plan_replacement",
+            format!(
+                "#{task} names replacement #{replacement} from a different plan; {} to clear the pointer before choosing a same-plan replacement",
+                replacement_repair_instruction(task, &status, None)
+            ),
+        );
+    }
+
+    for (source, target, status) in invalid_replacement_terminals(conn)? {
+        let terminal = if status == "retired" {
+            "retired without its own replacement".to_owned()
+        } else {
+            status
+        };
+        push(
+            "replacement_terminal_dead_end",
+            format!(
+                "#{source} replacement chain terminates at #{target}, which is {terminal}; {} to extend the chain through a live canonical task",
+                terminal_replacement_repair_instruction(target)
+            ),
+        );
+    }
+
     if let Some(cycle) = find_cycle(conn, "SELECT task_id, depends_on FROM deps")? {
         push(
             "dependency_cycle",
@@ -2581,6 +3005,25 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                     .map(|seq| format!("#{seq}"))
                     .collect::<Vec<_>>()
                     .join(" -> ")
+            ),
+        );
+    }
+    if let Some(cycle) = find_cycle(
+        conn,
+        "SELECT task_id, replacement_task_id FROM tasks WHERE replacement_task_id IS NOT NULL",
+    )? {
+        let repair_task = cycle[0];
+        let repair_status = get_task(conn, repair_task)?.status;
+        push(
+            "replacement_cycle",
+            format!(
+                "replacement cycle {}; {} to break one edge",
+                cycle
+                    .iter()
+                    .map(|seq| format!("#{seq}"))
+                    .collect::<Vec<_>>()
+                    .join(" -> "),
+                replacement_repair_instruction(repair_task, &repair_status, None)
             ),
         );
     }
@@ -2670,7 +3113,7 @@ pub struct TaskDump {
     #[serde(default)]
     pub parent_seq: Option<i64>,
     #[serde(default)]
-    pub alias: Option<String>,
+    pub replacement_seq: Option<i64>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -2679,6 +3122,8 @@ pub struct TaskDump {
     pub gates: Vec<GateDump>,
     #[serde(default)]
     pub blockers: Vec<TaskBlocker>,
+    #[serde(default)]
+    pub commit_associations: Vec<CommitAssociation>,
 }
 
 fn default_work() -> String {
@@ -2767,6 +3212,43 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                     .optional()?,
                 None => None,
             };
+            let replacement_seq = match t.replacement_task_id {
+                Some(replacement_task_id) => {
+                    let replacement: (i64, String, Option<i64>) = conn
+                        .query_row(
+                        "SELECT seq, status, replacement_task_id FROM tasks WHERE task_id=?1",
+                        params![replacement_task_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                        .optional()?
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "cannot export: #{} names missing replacement row id {}; {}; run `papertiger audit` to inspect every invalid replacement",
+                                t.seq,
+                                replacement_task_id,
+                                replacement_repair_instruction(t.seq, &t.status, None)
+                            )
+                        })?;
+                    if replacement.1 == "rejected"
+                        || (replacement.1 == "retired" && replacement.2.is_none())
+                    {
+                        let terminal = if replacement.1 == "retired" {
+                            "retired without its own replacement"
+                        } else {
+                            replacement.1.as_str()
+                        };
+                        bail!(
+                            "cannot export: #{} replacement chain terminates at #{}, which is {}; {}; run `papertiger audit` to inspect every invalid replacement",
+                            t.seq,
+                            replacement.0,
+                            terminal,
+                            terminal_replacement_repair_instruction(replacement.0)
+                        );
+                    }
+                    Some(replacement.0)
+                }
+                None => None,
+            };
             let mut st = conn.prepare(
                 "SELECT b.seq FROM deps d JOIN tasks b ON b.task_id=d.depends_on WHERE d.task_id=?1 ORDER BY b.seq",
             )?;
@@ -2796,6 +3278,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                 })?
                 .collect::<rusqlite::Result<_>>()?;
             let blockers = task_blockers(conn, t.task_id)?;
+            let commit_associations = commit_associations(conn, t.seq)?;
             tasks.push(TaskDump {
                 seq: Some(t.seq),
                 plan: slug.clone(),
@@ -2806,11 +3289,12 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                 status: t.status,
                 priority: t.priority,
                 parent_seq,
-                alias: t.alias,
+                replacement_seq,
                 tags,
                 deps,
                 gates,
                 blockers,
+                commit_associations,
             });
         }
     }
@@ -2885,7 +3369,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
         mise_projection::export_mise_projections(conn, &selected_task_sequences)?;
 
     Ok(Dump {
-        schema: "papertiger.dump.v3".into(),
+        schema: "papertiger.dump.v6".into(),
         plans,
         tasks,
         events,
@@ -2894,11 +3378,11 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
 }
 
 pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize, usize)> {
-    if !matches!(
-        dump.schema.as_str(),
-        "papertiger.dump.v1" | "papertiger.dump.v2" | "papertiger.dump.v3"
-    ) {
-        bail!("unsupported dump schema '{}'", dump.schema);
+    if dump.schema != "papertiger.dump.v6" {
+        bail!(
+            "unsupported dump schema '{}'; use the Papertiger release that produced it to import it into a temporary authority, run current `papertiger --db <temporary-authority> init`, then re-export `papertiger.dump.v6`",
+            dump.schema
+        );
     }
     let tx = begin_mutation(conn)?;
     for p in &dump.plans {
@@ -3022,8 +3506,8 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
         let t = now();
         tx.execute(
             "INSERT INTO tasks
-             (seq, plan_id, title, intent, kind, result, status, priority, alias, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+             (seq, plan_id, title, intent, kind, result, status, priority, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
             params![
                 seq,
                 plan_id,
@@ -3033,7 +3517,6 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                 td.result,
                 td.status,
                 td.priority,
-                td.alias,
                 t
             ],
         )
@@ -3065,15 +3548,19 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                     g.status
                 );
             }
-            match g.status.as_str() {
+            let closed_at = match g.status.as_str() {
                 "open" => {
-                    if g.evidence_locator.is_some() || g.evidence_sha256.is_some() {
+                    if g.evidence_locator.is_some()
+                        || g.evidence_sha256.is_some()
+                        || g.closed_at.is_some()
+                    {
                         bail!(
-                            "import: open gate '{}' on '{}' carries completion evidence",
+                            "import: open gate '{}' on '{}' carries completion evidence or closed_at",
                             g.name,
                             td.title
                         );
                     }
+                    None
                 }
                 "closed" => {
                     let locator = g.evidence_locator.as_deref().with_context(|| {
@@ -3084,6 +3571,22 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                     })?;
                     validate_evidence_locator(locator)?;
                     validate_optional_sha256(g.evidence_sha256.as_deref())?;
+                    let closed_at = g.closed_at.as_deref().with_context(|| {
+                        format!(
+                            "import: closed gate '{}' on '{}' lacks closed_at",
+                            g.name, td.title
+                        )
+                    })?;
+                    let closed_at = closed_at.trim();
+                    chrono::DateTime::parse_from_rfc3339(closed_at).with_context(|| {
+                        format!(
+                            "import: closed gate '{}' on '{}' has invalid closed_at '{}'",
+                            g.name,
+                            td.title,
+                            g.closed_at.as_deref().unwrap_or_default()
+                        )
+                    })?;
+                    Some(closed_at)
                 }
                 "waived" => {
                     if g.note.as_deref().map(str::trim).is_none_or(str::is_empty) {
@@ -3100,20 +3603,32 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                             td.title
                         );
                     }
+                    let closed_at = g.closed_at.as_deref().with_context(|| {
+                        format!(
+                            "import: waived gate '{}' on '{}' lacks closed_at",
+                            g.name, td.title
+                        )
+                    })?;
+                    let closed_at = closed_at.trim();
+                    chrono::DateTime::parse_from_rfc3339(closed_at).with_context(|| {
+                        format!(
+                            "import: waived gate '{}' on '{}' has invalid closed_at '{}'",
+                            g.name,
+                            td.title,
+                            g.closed_at.as_deref().unwrap_or_default()
+                        )
+                    })?;
+                    Some(closed_at)
                 }
                 _ => unreachable!(),
-            }
+            };
             tx.execute(
                 "INSERT INTO gates (task_id, name, kind, requirement, status, evidence_locator, evidence_sha256, note, closed_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     id, g.name, g.kind, g.requirement, g.status,
                     g.evidence_locator, g.evidence_sha256, g.note,
-                    if g.status == "open" {
-                        None
-                    } else {
-                        g.closed_at.clone().or_else(|| Some(now()))
-                    }
+                    closed_at
                 ],
             )?;
         }
@@ -3132,7 +3647,7 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                     blocker.status
                 );
             }
-            match blocker.status.as_str() {
+            let resolved_at = match blocker.status.as_str() {
                 "open" => {
                     if blocker.evidence_locator.is_some()
                         || blocker.evidence_sha256.is_some()
@@ -3144,6 +3659,7 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                             td.title
                         );
                     }
+                    None
                 }
                 "resolved" => {
                     let locator = blocker.evidence_locator.as_deref().with_context(|| {
@@ -3154,6 +3670,22 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                     })?;
                     validate_evidence_locator(locator)?;
                     validate_optional_sha256(blocker.evidence_sha256.as_deref())?;
+                    let resolved_at = blocker.resolved_at.as_deref().with_context(|| {
+                        format!(
+                            "import: resolved blocker '{}' on '{}' lacks resolved_at",
+                            blocker.name, td.title
+                        )
+                    })?;
+                    let resolved_at = resolved_at.trim();
+                    chrono::DateTime::parse_from_rfc3339(resolved_at).with_context(|| {
+                        format!(
+                            "import: resolved blocker '{}' on '{}' has invalid resolved_at '{}'",
+                            blocker.name,
+                            td.title,
+                            blocker.resolved_at.as_deref().unwrap_or_default()
+                        )
+                    })?;
+                    Some(resolved_at)
                 }
                 "waived" => {
                     if blocker
@@ -3175,9 +3707,25 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                             td.title
                         );
                     }
+                    let resolved_at = blocker.resolved_at.as_deref().with_context(|| {
+                        format!(
+                            "import: waived blocker '{}' on '{}' lacks resolved_at",
+                            blocker.name, td.title
+                        )
+                    })?;
+                    let resolved_at = resolved_at.trim();
+                    chrono::DateTime::parse_from_rfc3339(resolved_at).with_context(|| {
+                        format!(
+                            "import: waived blocker '{}' on '{}' has invalid resolved_at '{}'",
+                            blocker.name,
+                            td.title,
+                            blocker.resolved_at.as_deref().unwrap_or_default()
+                        )
+                    })?;
+                    Some(resolved_at)
                 }
                 _ => unreachable!(),
-            }
+            };
             tx.execute(
                 "INSERT INTO task_blockers
                  (task_id, name, reason, status, evidence_locator, evidence_sha256, note, resolved_at)
@@ -3190,18 +3738,32 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                     blocker.evidence_locator,
                     blocker.evidence_sha256,
                     blocker.note,
-                    if blocker.status == "open" {
-                        None
-                    } else {
-                        blocker.resolved_at.clone().or_else(|| Some(now()))
-                    }
+                    resolved_at
                 ],
+            )?;
+        }
+        for commit in &td.commit_associations {
+            let repository =
+                require_nonblank("import commit repository label", &commit.repository)?;
+            validate_commit_oid(&commit.commit_oid)?;
+            let recorded_at = commit.recorded_at.trim();
+            chrono::DateTime::parse_from_rfc3339(recorded_at).with_context(|| {
+                format!(
+                    "import commit {} on task #{seq} has invalid recorded_at '{}'",
+                    commit.commit_oid, commit.recorded_at
+                )
+            })?;
+            tx.execute(
+                "INSERT INTO commit_associations
+                 (task_id, repository, commit_oid, note, recorded_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, repository, commit.commit_oid, commit.note, recorded_at],
             )?;
         }
         created += 1;
     }
 
-    // Second pass: parents and dependencies by the preassigned sequences.
+    // Second pass: parents, replacements, and dependencies by the preassigned sequences.
     // References are self-contained within the dump and cannot accidentally
     // bind to an unrelated task already present in the destination database.
     let mut edges = 0usize;
@@ -3217,6 +3779,33 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
             tx.execute(
                 "UPDATE tasks SET parent_id=?1 WHERE seq=?2",
                 params![parent_id, seq],
+            )?;
+        }
+        if let Some(replacement_seq) = td.replacement_seq {
+            if td.status != "retired" {
+                bail!(
+                    "import: #{seq} has replacement #{replacement_seq} but status '{}' is not retired",
+                    td.status
+                );
+            }
+            if replacement_seq == seq {
+                bail!("import: #{seq} cannot replace itself");
+            }
+            let replacement_plan =
+                imported_plan_by_seq
+                    .get(&replacement_seq)
+                    .with_context(|| {
+                        format!("import: #{seq} has missing replacement #{replacement_seq}")
+                    })?;
+            if *replacement_plan != td.plan {
+                bail!(
+                    "import: #{seq} and replacement #{replacement_seq} belong to different plans"
+                );
+            }
+            let replacement_id = imported_task_id_by_seq[&replacement_seq];
+            tx.execute(
+                "UPDATE tasks SET replacement_task_id=?1 WHERE seq=?2",
+                params![replacement_id, seq],
             )?;
         }
         for on in &td.deps {
@@ -3241,6 +3830,30 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                 .map(|seq| format!("#{seq}"))
                 .collect::<Vec<_>>()
                 .join(" -> ")
+        );
+    }
+    if let Some(cycle) = find_cycle(
+        &tx,
+        "SELECT task_id, replacement_task_id FROM tasks WHERE replacement_task_id IS NOT NULL",
+    )? {
+        bail!(
+            "import creates replacement cycle {}",
+            cycle
+                .iter()
+                .map(|seq| format!("#{seq}"))
+                .collect::<Vec<_>>()
+                .join(" -> ")
+        );
+    }
+    if let Some((source, target, status)) = invalid_replacement_terminals(&tx)?.into_iter().next() {
+        let terminal = if status == "retired" {
+            "retired without its own replacement".to_owned()
+        } else {
+            status
+        };
+        bail!(
+            "import: #{source} replacement chain terminates at #{target}, which is {terminal}; re-export after repairing the source authority: {}",
+            terminal_replacement_repair_instruction(target)
         );
     }
     let mut statement =
@@ -3279,13 +3892,11 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
     // Restore the append-only history using stable task sequences, plan slugs,
     // and gate names rather than database-local row ids.
     for event in &dump.events {
-        if event.at.trim().is_empty()
-            || event.actor.trim().is_empty()
-            || event.kind.trim().is_empty()
-        {
+        let at = event.at.trim();
+        if at.is_empty() || event.actor.trim().is_empty() || event.kind.trim().is_empty() {
             bail!("import event has a blank timestamp, actor, or kind");
         }
-        chrono::DateTime::parse_from_rfc3339(event.at.trim()).with_context(|| {
+        chrono::DateTime::parse_from_rfc3339(at).with_context(|| {
             format!("import event timestamp '{}' is not valid RFC3339", event.at)
         })?;
         let entity_id: Option<i64> = match event.entity.as_str() {
@@ -3305,6 +3916,21 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                 let seq = event
                     .entity_seq
                     .context("import task/dep event lacks entity_seq")?;
+                let task_plan = imported_plan_by_seq.get(&seq).with_context(|| {
+                    format!("import event names task #{seq}, which is absent from the dump")
+                })?;
+                let event_plan = event.entity_plan.as_deref().with_context(|| {
+                    format!(
+                        "import {} event for task #{seq} lacks entity_plan",
+                        event.entity
+                    )
+                })?;
+                if event_plan != *task_plan {
+                    bail!(
+                        "import {} event names plan '{event_plan}', but task #{seq} belongs to plan '{task_plan}'",
+                        event.entity
+                    );
+                }
                 Some(*imported_task_id_by_seq.get(&seq).with_context(|| {
                     format!("import event names task #{seq}, which is absent from the dump")
                 })?)
@@ -3313,6 +3939,17 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                 let seq = event
                     .entity_seq
                     .context("import gate event lacks entity_seq")?;
+                let task_plan = imported_plan_by_seq.get(&seq).with_context(|| {
+                    format!("import gate event names task #{seq}, which is absent from the dump")
+                })?;
+                let event_plan = event.entity_plan.as_deref().with_context(|| {
+                    format!("import gate event for task #{seq} lacks entity_plan")
+                })?;
+                if event_plan != *task_plan {
+                    bail!(
+                        "import gate event names plan '{event_plan}', but task #{seq} belongs to plan '{task_plan}'"
+                    );
+                }
                 let task_id = *imported_task_id_by_seq.get(&seq).with_context(|| {
                     format!("import gate event names task #{seq}, which is absent from the dump")
                 })?;
@@ -3329,12 +3966,26 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
             }
             other => bail!("import event has unknown entity '{other}'"),
         };
+        if event.entity == "task" && event.kind == "status" {
+            let target = event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("to"))
+                .and_then(serde_json::Value::as_str);
+            if target.is_none_or(|target| !TASK_STATUSES.contains(&target)) {
+                let seq = event.entity_seq.unwrap_or_default();
+                bail!(
+                    "import task status event for task #{seq} requires payload.to to be one of {}",
+                    TASK_STATUSES.join("|")
+                );
+            }
+        }
         tx.execute(
             "INSERT INTO events
              (at, actor, entity, entity_id, entity_plan, entity_seq, gate_name, kind, why, payload)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
-                event.at,
+                at,
                 event.actor,
                 event.entity,
                 entity_id,
