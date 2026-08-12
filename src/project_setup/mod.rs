@@ -1559,7 +1559,10 @@ mod tests {
         let mut symlinked = request(&project, &binary);
         symlinked.authority_path = Some(Path::new("plans/papertiger.sqlite"));
         let error = setup_project(symlinked).unwrap_err();
-        assert!(error.to_string().contains("refuses symlinked managed path"));
+        assert!(
+            format!("{error:#}").contains("refuses symlinked managed path"),
+            "{error:#}"
+        );
         assert!(!project.join("scripts").exists());
         cleanup(&project);
     }
