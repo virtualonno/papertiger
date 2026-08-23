@@ -20,8 +20,6 @@ use receipt::{
     validate_receipt_managed_path,
 };
 
-const BASH_LAUNCHER_TEMPLATE: &str = include_str!("../../assets/project-launcher.sh");
-const WINDOWS_LAUNCHER_TEMPLATE: &str = include_str!("../../assets/project-launcher.cmd");
 const AGENT_INTEGRATION: &[u8] = include_bytes!("../../agent_integration.md");
 const AGENT_SKILL: &[u8] = include_bytes!("../../templates/papertiger/SKILL.md");
 const INSTALL_RECEIPT_PATH: &str = "tools/papertiger/project-install.json";
@@ -191,27 +189,12 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             authority_destination.display()
         ));
     }
-    let bash_launcher = render_bash_launcher(&authority_path);
-    let windows_launcher = render_windows_launcher(&authority_path);
-
     let managed = vec![
         ManagedFile {
             relative_path: PathBuf::from(format!("tools/papertiger/bin/papertiger{suffix}")),
             content: binary,
             executable: true,
             content_kind: ManagedContentKind::RuntimeBinary,
-        },
-        ManagedFile {
-            relative_path: PathBuf::from("scripts/papertiger"),
-            content: bash_launcher.into_bytes(),
-            executable: true,
-            content_kind: ManagedContentKind::ReceiptText,
-        },
-        ManagedFile {
-            relative_path: PathBuf::from("scripts/papertiger.cmd"),
-            content: windows_launcher.into_bytes(),
-            executable: false,
-            content_kind: ManagedContentKind::ReceiptText,
         },
         ManagedFile {
             relative_path: PathBuf::from("tools/papertiger/agent_integration.md"),
@@ -485,24 +468,24 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     } else {
         let mut applied = vec![
             format!(
-                "Invoke the project-root scripts/papertiger from Bash or .\\scripts\\papertiger.cmd from Command Prompt/PowerShell (using a correct relative path when nested); both bind {authority_path} independently of the caller's current directory."
+                "Invoke the installed native binary at tools/papertiger/bin/papertiger (papertiger.exe on Windows). It discovers this project receipt and binds {authority_path} when called from the project root or any nested directory; no shell launcher or process bridge is required."
             ),
-            "Review the installed Papertiger skill envelope and add only a concise pointer to tools/papertiger/agent_integration.md in repository-owned guidance; setup-project never edits AGENTS.md or CLAUDE.md."
+            "Review the installed Papertiger skill envelope and add the concise repository guidance discovery trigger from tools/papertiger/agent_integration.md; a bare planning link is not equivalent, and setup-project never edits AGENTS.md or CLAUDE.md."
                 .to_owned(),
         ];
         if authority_exists {
             applied.push(
-                "Run the project launcher with status, focus, and audit; setup-project never migrates or replaces the existing authority."
+                "Run the installed Papertiger binary with status, focus, and audit; setup-project never migrates or replaces the existing authority."
                     .to_owned(),
             );
         } else {
             applied.push(
-                "If this project has never had a Papertiger authority, set PAPERTIGER_ACTOR and run the project launcher with init once; if prior work should exist, stop instead of creating a replacement authority."
+                "If this project has never had a Papertiger authority, set PAPERTIGER_ACTOR and run the installed Papertiger binary with init once; if prior work should exist, stop instead of creating a replacement authority."
                     .to_owned(),
             );
         }
         applied.push(format!(
-            "Commit the launchers, project-install receipt, integration contract, skill envelopes, and additive .gitignore policy. Keep tools/papertiger/bin and {authority_path} host-local and outside Git; setup-project writes ignore rules but never changes existing index entries."
+            "Commit the project-install receipt, integration contract, skill envelopes, and additive .gitignore policy. Keep tools/papertiger/bin and {authority_path} host-local and outside Git; setup-project writes ignore rules but never changes existing index entries."
         ));
         applied
     };
@@ -588,7 +571,7 @@ fn normalize_authority_path(path: &Path) -> Result<String> {
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
         {
             return Err(anyhow!(
-                "--authority-path component {part:?} must be a portable non-device name using only ASCII letters, digits, '.', '_', or '-' with no trailing dot, so Bash and Windows launchers select the same file"
+                "--authority-path component {part:?} must be a portable non-device name using only ASCII letters, digits, '.', '_', or '-' with no trailing dot, so every native binary selects the same file"
             ));
         }
         parts.push(part);
@@ -621,26 +604,58 @@ fn normalize_authority_path(path: &Path) -> Result<String> {
     Ok(normalized)
 }
 
-fn render_bash_launcher(authority_path: &str) -> String {
-    render_launcher(
-        BASH_LAUNCHER_TEMPLATE,
-        "@PAPERTIGER_AUTHORITY_PATH@",
-        authority_path,
-    )
+/// Resolve the nearest setup-managed project authority from `start`, walking
+/// upward like Git. Explicit `--db` and `PAPERTIGER_DB` remain higher-priority
+/// caller overrides in the CLI.
+pub(crate) fn discover_project_authority(start: &Path) -> Result<Option<PathBuf>> {
+    let start = fs::canonicalize(start)
+        .with_context(|| format!("resolve current directory {}", start.display()))?;
+    for root in start.ancestors() {
+        let receipt_path = root.join(INSTALL_RECEIPT_PATH);
+        let Some(receipt) = load_install_receipt(&receipt_path)? else {
+            continue;
+        };
+        let running = env!("CARGO_PKG_VERSION");
+        if receipt.papertiger_version != running {
+            return Err(anyhow!(
+                "project-install receipt at {} requires Papertiger {}, but the running binary is {running}; upgrade the project deliberately with: papertiger setup-project \"{}\"",
+                receipt_path.display(),
+                receipt.papertiger_version,
+                root.display()
+            ));
+        }
+        let authority = Path::new(&receipt.authority_path);
+        validate_destination(root, authority).with_context(|| {
+            format!(
+                "validate authority {} selected by project-install receipt {}",
+                receipt.authority_path,
+                receipt_path.display()
+            )
+        })?;
+        return Ok(Some(root.join(authority)));
+    }
+    Ok(None)
 }
 
-fn render_windows_launcher(authority_path: &str) -> String {
-    render_launcher(
-        WINDOWS_LAUNCHER_TEMPLATE,
-        "@PAPERTIGER_AUTHORITY_PATH_WINDOWS@",
-        &authority_path.replace('/', "\\"),
-    )
-}
-
-fn render_launcher(template: &str, token: &str, value: &str) -> String {
-    String::from_utf8(canonical_managed_text(template.as_bytes()).into_owned())
-        .expect("embedded launcher template is UTF-8")
-        .replace(token, value)
+pub(crate) fn discover_project_root(start: &Path) -> Result<Option<PathBuf>> {
+    let start = fs::canonicalize(start)
+        .with_context(|| format!("resolve current directory {}", start.display()))?;
+    for root in start.ancestors() {
+        let receipt_path = root.join(INSTALL_RECEIPT_PATH);
+        if let Some(receipt) = load_install_receipt(&receipt_path)? {
+            let running = env!("CARGO_PKG_VERSION");
+            if receipt.papertiger_version != running {
+                return Err(anyhow!(
+                    "project-install receipt at {} requires Papertiger {}, but the running binary is {running}; upgrade the project deliberately with: papertiger setup-project \"{}\"",
+                    receipt_path.display(),
+                    receipt.papertiger_version,
+                    root.display()
+                ));
+            }
+            return Ok(Some(root.to_path_buf()));
+        }
+    }
+    Ok(None)
 }
 
 fn setup_operation(
@@ -1001,15 +1016,13 @@ mod tests {
         assert_eq!(first.operation, SetupOperation::Install);
         assert_eq!(first.authority_path, DEFAULT_AUTHORITY_PATH);
         assert_eq!(first.agent_guidance_files_found.len(), 2);
-        assert!(
-            first
-                .next_actions
-                .iter()
-                .any(|action| action.contains(".\\scripts\\papertiger.cmd"))
-        );
         assert!(first.next_actions.iter().any(|action| {
-            action.contains("using a correct relative path when nested")
-                && action.contains("independently of the caller's current directory")
+            action.contains("tools/papertiger/bin/papertiger")
+                && action.contains("no shell launcher or process bridge")
+        }));
+        assert!(first.next_actions.iter().any(|action| {
+            action.contains("discovers this project receipt")
+                && action.contains("project root or any nested directory")
         }));
         assert!(first.next_actions.iter().any(|action| {
             action.contains("tools/papertiger/bin")
@@ -1050,7 +1063,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(receipt.authority_path, DEFAULT_AUTHORITY_PATH);
-        assert_eq!(receipt.managed_files.len(), 5);
+        assert_eq!(receipt.managed_files.len(), 3);
 
         let second = setup_project(request(&project, &binary)).unwrap();
         assert_eq!(second.operation, SetupOperation::Unchanged);
@@ -1068,11 +1081,11 @@ mod tests {
         let (project, binary) = fixture("divergent");
         setup_project(request(&project, &binary)).unwrap();
         fs::write(
-            project.join("scripts/papertiger"),
+            project.join("tools/papertiger/agent_integration.md"),
             b"repository-owned replacement",
         )
         .unwrap();
-        fs::remove_file(project.join("tools/papertiger/agent_integration.md")).unwrap();
+        fs::remove_file(project.join(".agents/skills/papertiger/SKILL.md")).unwrap();
 
         let error = setup_project(request(&project, &binary)).unwrap_err();
         assert!(
@@ -1080,11 +1093,7 @@ mod tests {
                 .to_string()
                 .contains("modified or unowned managed file")
         );
-        assert!(
-            !project
-                .join("tools/papertiger/agent_integration.md")
-                .exists()
-        );
+        assert!(!project.join(".agents/skills/papertiger/SKILL.md").exists());
         cleanup(&project);
     }
 
@@ -1092,19 +1101,23 @@ mod tests {
     fn dry_run_discloses_and_explicit_replacement_applies_upgrade() {
         let (project, binary) = fixture("replace");
         setup_project(request(&project, &binary)).unwrap();
-        fs::write(project.join("scripts/papertiger"), b"older release").unwrap();
+        fs::write(
+            project.join("tools/papertiger/agent_integration.md"),
+            b"older release",
+        )
+        .unwrap();
 
         let mut dry_run = request(&project, &binary);
         dry_run.dry_run = true;
         let result = setup_project(dry_run).unwrap();
         assert_eq!(result.operation, SetupOperation::Blocked);
         assert!(result.actions.iter().any(|action| {
-            action.path == "scripts/papertiger"
+            action.path == "tools/papertiger/agent_integration.md"
                 && action.action == SetupActionKind::ModifiedRefusal
                 && action.requires_replace_managed
         }));
         assert_eq!(
-            fs::read(project.join("scripts/papertiger")).unwrap(),
+            fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap(),
             b"older release"
         );
 
@@ -1112,8 +1125,8 @@ mod tests {
         replace.replace_managed = true;
         setup_project(replace).unwrap();
         assert_eq!(
-            fs::read(project.join("scripts/papertiger")).unwrap(),
-            render_bash_launcher(DEFAULT_AUTHORITY_PATH).as_bytes()
+            fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap(),
+            AGENT_INTEGRATION
         );
         cleanup(&project);
     }
@@ -1122,29 +1135,33 @@ mod tests {
     fn receipt_owned_content_upgrades_without_requiring_a_replacement_flag() {
         let (project, binary) = fixture("receipt-upgrade");
         setup_project(request(&project, &binary)).unwrap();
-        let old_launcher = b"#!/usr/bin/env bash\necho old release\n";
-        fs::write(project.join("scripts/papertiger"), old_launcher).unwrap();
+        let old_contract = b"old release contract\n";
+        fs::write(
+            project.join("tools/papertiger/agent_integration.md"),
+            old_contract,
+        )
+        .unwrap();
         let receipt_path = project.join(INSTALL_RECEIPT_PATH);
         let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
         receipt.papertiger_version = "0.4.0".to_owned();
         receipt
             .managed_files
             .iter_mut()
-            .find(|file| file.path == "scripts/papertiger")
+            .find(|file| file.path == "tools/papertiger/agent_integration.md")
             .unwrap()
-            .sha256 = papertiger::sha256(old_launcher);
+            .sha256 = papertiger::sha256(old_contract);
         fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
 
         let upgraded = setup_project(request(&project, &binary)).unwrap();
         assert_eq!(upgraded.operation, SetupOperation::Upgrade);
         assert!(upgraded.actions.iter().any(|action| {
-            action.path == "scripts/papertiger"
+            action.path == "tools/papertiger/agent_integration.md"
                 && action.action == SetupActionKind::Replace
                 && !action.requires_replace_managed
         }));
         assert_eq!(
-            fs::read(project.join("scripts/papertiger")).unwrap(),
-            render_bash_launcher(DEFAULT_AUTHORITY_PATH).as_bytes()
+            fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap(),
+            AGENT_INTEGRATION
         );
         assert_eq!(
             load_install_receipt(&receipt_path)
@@ -1157,11 +1174,39 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_bash_only_receipt_refuses_without_cross_shell_recovery() {
+        let (project, binary) = fixture("unsupported-bash-only-receipt");
+        setup_project(request(&project, &binary)).unwrap();
+        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
+        let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
+        receipt.managed_files.push(ManagedFileReceipt {
+            path: "scripts/papertiger.sh".to_owned(),
+            sha256: papertiger::sha256(b"unsupported launcher\n"),
+        });
+        let unsupported_receipt = receipt_bytes(&receipt).unwrap();
+        fs::write(&receipt_path, &unsupported_receipt).unwrap();
+        let contract_before =
+            fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap();
+
+        let error = setup_project(request(&project, &binary)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "project-install receipt names unsupported managed path scripts/papertiger.sh; this release will not modify or remove it"
+        );
+        assert_eq!(fs::read(&receipt_path).unwrap(), unsupported_receipt);
+        assert_eq!(
+            fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap(),
+            contract_before
+        );
+        cleanup(&project);
+    }
+
+    #[test]
     fn newer_receipt_version_refuses_downgrade_even_with_replacement_authority() {
         let (project, binary) = fixture("receipt-downgrade");
         setup_project(request(&project, &binary)).unwrap();
-        let launcher_path = project.join("scripts/papertiger");
-        let launcher_before = fs::read(&launcher_path).unwrap();
+        let contract_path = project.join("tools/papertiger/agent_integration.md");
+        let contract_before = fs::read(&contract_path).unwrap();
         let receipt_path = project.join(INSTALL_RECEIPT_PATH);
         let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
         receipt.papertiger_version = "999.0.0".to_owned();
@@ -1175,7 +1220,7 @@ mod tests {
         assert!(message.contains("refuses to downgrade"));
         assert!(message.contains("verified Papertiger 999.0.0 or newer"));
         assert_eq!(fs::read(&receipt_path).unwrap(), future_receipt);
-        assert_eq!(fs::read(&launcher_path).unwrap(), launcher_before);
+        assert_eq!(fs::read(&contract_path).unwrap(), contract_before);
         cleanup(&project);
     }
 
@@ -1355,15 +1400,13 @@ mod tests {
         first_request.authority_path = Some(Path::new("plans/papertiger.sqlite"));
         let first = setup_project(first_request).unwrap();
         assert_eq!(first.authority_path, "plans/papertiger.sqlite");
-        assert!(
-            fs::read_to_string(project.join("scripts/papertiger"))
-                .unwrap()
-                .contains("$root/plans/papertiger.sqlite")
-        );
-        assert!(
-            fs::read_to_string(project.join("scripts/papertiger.cmd"))
-                .unwrap()
-                .contains(r"%PAPERTIGER_ROOT%\plans\papertiger.sqlite")
+        assert_eq!(
+            discover_project_authority(&project).unwrap(),
+            Some(
+                fs::canonicalize(&project)
+                    .unwrap()
+                    .join("plans/papertiger.sqlite")
+            )
         );
         let ignore = fs::read_to_string(project.join(".gitignore")).unwrap();
         assert!(
@@ -1384,6 +1427,45 @@ mod tests {
             fs::read(project.join("plans/papertiger.sqlite")).unwrap(),
             b"existing-custom-authority"
         );
+        cleanup(&project);
+    }
+
+    #[test]
+    fn native_binary_discovers_receipt_authority_from_nested_directory() {
+        let (project, binary) = fixture("discover-nested-authority");
+        fs::create_dir(project.join("plans")).unwrap();
+        let mut install = request(&project, &binary);
+        install.authority_path = Some(Path::new("plans/papertiger.sqlite"));
+        setup_project(install).unwrap();
+        let nested = project.join("nested/work");
+        fs::create_dir_all(&nested).unwrap();
+
+        assert_eq!(
+            discover_project_authority(&nested).unwrap(),
+            Some(
+                fs::canonicalize(&project)
+                    .unwrap()
+                    .join("plans/papertiger.sqlite")
+            )
+        );
+        cleanup(&project);
+    }
+
+    #[test]
+    fn native_binary_refuses_receipt_version_drift_with_upgrade_command() {
+        let (project, binary) = fixture("discover-version-drift");
+        setup_project(request(&project, &binary)).unwrap();
+        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
+        let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
+        receipt.papertiger_version = "0.7.1".to_owned();
+        fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
+
+        let error = discover_project_authority(&project).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("requires Papertiger 0.7.1"));
+        assert!(message.contains("running binary is"));
+        assert!(message.contains("papertiger setup-project"));
+        assert!(message.contains("demo-project"));
         cleanup(&project);
     }
 
@@ -1472,7 +1554,7 @@ mod tests {
         let (text_action, _) = preflight_managed_file(
             &destination,
             &ManagedFile {
-                relative_path: PathBuf::from("scripts/papertiger.cmd"),
+                relative_path: PathBuf::from("tools/papertiger/agent_integration.md"),
                 content: b"binary\npayload".to_vec(),
                 executable: false,
                 content_kind: ManagedContentKind::ReceiptText,
@@ -1506,27 +1588,6 @@ mod tests {
 
     #[test]
     fn managed_text_rendering_is_checkout_line_ending_independent() {
-        let cases = [
-            (
-                BASH_LAUNCHER_TEMPLATE,
-                "@PAPERTIGER_AUTHORITY_PATH@",
-                "plans/papertiger.sqlite",
-            ),
-            (
-                WINDOWS_LAUNCHER_TEMPLATE,
-                "@PAPERTIGER_AUTHORITY_PATH_WINDOWS@",
-                "plans\\papertiger.sqlite",
-            ),
-        ];
-        for (template, token, value) in cases {
-            let lf = template.replace("\r\n", "\n");
-            let crlf = lf.replace('\n', "\r\n");
-            let from_lf = render_launcher(&lf, token, value);
-            let from_crlf = render_launcher(&crlf, token, value);
-            assert_eq!(from_lf, from_crlf);
-            assert!(!from_lf.contains('\r'));
-        }
-
         for guidance in [AGENT_INTEGRATION, AGENT_SKILL] {
             let lf = String::from_utf8_lossy(guidance).replace("\r\n", "\n");
             let crlf = lf.replace('\n', "\r\n");
@@ -1647,7 +1708,8 @@ mod tests {
         let (project, binary) = fixture("authority-rebind-refusal");
         setup_project(request(&project, &binary)).unwrap();
         let receipt_before = fs::read(project.join(INSTALL_RECEIPT_PATH)).unwrap();
-        let launcher_before = fs::read(project.join("scripts/papertiger")).unwrap();
+        let contract_before =
+            fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap();
 
         let mut rebind = request(&project, &binary);
         rebind.authority_path = Some(Path::new("plans/papertiger.sqlite"));
@@ -1658,8 +1720,8 @@ mod tests {
             receipt_before
         );
         assert_eq!(
-            fs::read(project.join("scripts/papertiger")).unwrap(),
-            launcher_before
+            fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap(),
+            contract_before
         );
         cleanup(&project);
     }
@@ -1697,15 +1759,50 @@ mod tests {
     #[test]
     fn non_directory_managed_parent_refuses_before_any_write() {
         let (project, binary) = fixture("managed-parent-file");
-        fs::write(project.join("scripts"), b"not a directory").unwrap();
+        fs::write(project.join(".agents"), b"not a directory").unwrap();
 
         let error = setup_project(request(&project, &binary)).unwrap_err();
         assert!(error.to_string().contains("parent path is not a directory"));
         assert!(!project.join("tools").exists());
         assert_eq!(
-            fs::read(project.join("scripts")).unwrap(),
+            fs::read(project.join(".agents")).unwrap(),
             b"not a directory"
         );
         cleanup(&project);
+    }
+
+    #[test]
+    fn managed_agent_text_has_unambiguous_routing_boundaries() {
+        for (name, bytes) in [
+            ("agent integration contract", AGENT_INTEGRATION),
+            ("agent skill", AGENT_SKILL),
+        ] {
+            let text = std::str::from_utf8(bytes).expect("managed text is UTF-8");
+            assert!(
+                !text.to_lowercase().contains("disposable"),
+                "{name} must not use repository-lifecycle words as skip criteria"
+            );
+            assert!(
+                text.contains("intermediate steps inside one independently")
+                    || text.contains("intermediate steps within one independently"),
+                "{name} must name the skipped unit of work"
+            );
+        }
+        let contract = std::str::from_utf8(AGENT_INTEGRATION).expect("managed text is UTF-8");
+        assert!(
+            contract.contains("Before the first edit or commit")
+                && contract.contains("`.agents/skills/papertiger/SKILL.md` completely"),
+            "repository guidance trigger must give exact pre-mutation ordering and skill identity"
+        );
+        for (name, bytes) in [
+            ("agent integration contract", AGENT_INTEGRATION),
+            ("agent skill", AGENT_SKILL),
+        ] {
+            let text = std::str::from_utf8(bytes).expect("managed text is UTF-8");
+            assert!(
+                text.contains("--intent-source user") && text.contains("before task completion"),
+                "{name} must preserve known user provenance and inward commit association ordering"
+            );
+        }
     }
 }

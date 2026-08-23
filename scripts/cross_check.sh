@@ -121,6 +121,7 @@ printf 'target/\n' > "$project/.gitignore"
 "$planner" setup-project "$project" --dry-run --json > "$fixture/setup-dry-run.json"
 grep -q '"schema": "papertiger.project_setup.v2"' "$fixture/setup-dry-run.json"
 test ! -e "$project/scripts/papertiger"
+test ! -e "$project/scripts/papertiger.cmd"
 
 "$planner" setup-project "$project" --json > "$fixture/setup.json"
 test -f "$project/tools/papertiger/bin/papertiger$exe"
@@ -132,7 +133,8 @@ grep -Fq "\"papertiger_version\": \"$planner_semver\"" \
     "$project/tools/papertiger/project-install.json"
 grep -Fq '"authority_path": "state/papertiger.sqlite"' \
     "$project/tools/papertiger/project-install.json"
-test -f "$project/scripts/papertiger.cmd"
+test ! -e "$project/scripts/papertiger"
+test ! -e "$project/scripts/papertiger.cmd"
 cmp "$project/tools/papertiger/agent_integration.md" \
     "$root/agent_integration.md"
 test -f "$project/.agents/skills/papertiger/SKILL.md"
@@ -142,11 +144,35 @@ cmp "$project/.agents/skills/papertiger/SKILL.md" \
 cmp "$project/.agents/skills/papertiger/SKILL.md" \
     "$root/templates/papertiger/SKILL.md"
 test "$(cat "$project/AGENTS.md")" = "repository contract"
-test "$(cd "$project" && ./scripts/papertiger --version)" = "$planner_version"
+installed_planner="$project/tools/papertiger/bin/papertiger$exe"
+test "$(cd "$project" && "$installed_planner" --version)" = "$planner_version"
 
-(cd "$project/nested/work" && ../../scripts/papertiger init)
-(cd "$project/nested/work" && ../../scripts/papertiger status)
-(cd "$project/nested/work" && ../../scripts/papertiger audit)
+(cd "$project/nested/work" && "$installed_planner" init)
+(cd "$project/nested/work" && PAPERTIGER_ACTOR=cross-check \
+  "$installed_planner" plan add orientation "Orientation smoke")
+(cd "$project/nested/work" && PAPERTIGER_ACTOR=cross-check \
+  "$installed_planner" add "Read-only orientation" --plan orientation)
+authority_fingerprint="$(cksum "$project/state/papertiger.sqlite")"
+(cd "$project/nested/work" && "$installed_planner" status --json) \
+  > "$fixture/status.json"
+grep -q '"schema": "papertiger.status.v2"' "$fixture/status.json"
+(cd "$project/nested/work" && "$installed_planner" \
+  focus --plan orientation --json) > "$fixture/focus.json"
+(cd "$project/nested/work" && "$installed_planner" show 1 --json) \
+  > "$fixture/show.json"
+(cd "$project/nested/work" && "$installed_planner" \
+  search "read-only orientation" --json) > "$fixture/search.json"
+(cd "$project/nested/work" && "$installed_planner" audit)
+test "$(cksum "$project/state/papertiger.sqlite")" = "$authority_fingerprint"
+if [[ "$exe" = ".exe" ]]; then
+  planner_windows="$(cygpath -w "$installed_planner")"
+  nested_windows="$(cygpath -w "$project/nested/work")"
+  powershell.exe -NoProfile -Command \
+    "Set-Location -LiteralPath '$nested_windows'; & '$planner_windows' status --json" \
+      > "$fixture/windows-status.json"
+  grep -q '"schema": "papertiger.status.v2"' "$fixture/windows-status.json"
+  test "$(cksum "$project/state/papertiger.sqlite")" = "$authority_fingerprint"
+fi
 test -f "$project/state/papertiger.sqlite"
 test ! -e "$project/nested/work/state"
 

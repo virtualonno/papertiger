@@ -14,7 +14,9 @@ use crate::digest::{sha256, validate_sha256};
 use crate::manifest::{CAMPAIGN_SCHEMA_V1, CampaignManifest};
 use crate::validation::validate_nonblank;
 
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
+pub const AUTHORITY_IDENTITY: &str = "papertiger.mise";
+const AUTHORITY_IDENTITY_KEY: &str = "authority";
 
 const MATERIALIZATION_RETRY_SCHEMA_V7: &str = r#"
 DROP TRIGGER budget_reservation_uses_no_update;
@@ -418,6 +420,13 @@ pub fn open_existing_read_only(path: impl AsRef<Path>) -> Result<Connection> {
 }
 
 fn open_existing_with_flags(path: &Path, flags: OpenFlags) -> Result<Connection> {
+    if !path.exists() {
+        bail!(
+            "no papertiger-mise authority exists at {}; run `papertiger-mise --db {} init` to create one, but restore the original authority if prior campaign work existed",
+            path.display(),
+            path.display()
+        );
+    }
     let connection = Connection::open_with_flags(path, flags)
         .with_context(|| format!("open existing papertiger-mise database {}", path.display()))?;
     let connection = configure_connection(connection)?;
@@ -427,7 +436,13 @@ fn open_existing_with_flags(path: &Path, flags: OpenFlags) -> Result<Connection>
             [],
             |_| Ok(true),
         )
-        .optional()?
+        .optional()
+        .with_context(|| {
+            format!(
+                "{} is not a readable SQLite database; select a papertiger-mise authority or preserve the original bytes before running `papertiger-mise --db <new-path> init`",
+                path.display()
+            )
+        })?
         .unwrap_or(false);
     if !has_meta {
         bail!(
@@ -436,6 +451,7 @@ fn open_existing_with_flags(path: &Path, flags: OpenFlags) -> Result<Connection>
             path.display()
         );
     }
+    require_mise_identity(&connection, path, false)?;
     let version = schema_version(&connection)?;
     if version != SCHEMA_VERSION {
         bail!(
@@ -447,14 +463,86 @@ fn open_existing_with_flags(path: &Path, flags: OpenFlags) -> Result<Connection>
     Ok(connection)
 }
 
+fn has_table(connection: &Connection, name: &str) -> Result<bool> {
+    connection
+        .query_row(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1",
+            params![name],
+            |_| Ok(true),
+        )
+        .optional()
+        .map(|found| found.unwrap_or(false))
+        .context("inspect papertiger-mise authority tables")
+}
+
+fn authority_identity(connection: &Connection) -> Result<Option<String>> {
+    connection
+        .query_row(
+            "SELECT value FROM meta WHERE key=?1",
+            params![AUTHORITY_IDENTITY_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("read papertiger-mise authority identity from meta.authority")
+}
+
+fn require_mise_identity(connection: &Connection, path: &Path, allow_legacy: bool) -> Result<()> {
+    if let Some(identity) = authority_identity(connection)? {
+        if identity == AUTHORITY_IDENTITY {
+            return Ok(());
+        }
+        if identity == papertiger::AUTHORITY_IDENTITY {
+            bail!(
+                "{} is a Papertiger planning authority, not a papertiger-mise authority; use `papertiger --db {} status` or select the Mise database with `papertiger-mise --db <mise-authority>`",
+                path.display(),
+                path.display()
+            );
+        }
+        bail!(
+            "{} has foreign authority identity {identity:?}; select the Mise database with `papertiger-mise --db <mise-authority>`",
+            path.display()
+        );
+    }
+    if has_table(connection, "plans")? {
+        bail!(
+            "{} is a legacy Papertiger planning authority without typed identity; migrate it only with `papertiger --db {} init`",
+            path.display(),
+            path.display()
+        );
+    }
+    let mise_shape = has_table(connection, "campaigns")?
+        && has_table(connection, "events")?
+        && has_table(connection, "candidates")?;
+    if allow_legacy && mise_shape {
+        return Ok(());
+    }
+    if mise_shape {
+        bail!(
+            "{} is a legacy papertiger-mise authority without typed identity; run `papertiger-mise --db {} init` explicitly to migrate it to schema v{SCHEMA_VERSION}",
+            path.display(),
+            path.display()
+        );
+    }
+    bail!(
+        "{} has papertiger-style metadata but no recognized authority identity; restore a verified authority or select `papertiger-mise --db <mise-authority>`",
+        path.display()
+    )
+}
+
 fn schema_version(connection: &Connection) -> Result<i64> {
     let raw: String = connection.query_row(
         "SELECT value FROM meta WHERE key='schema_version'",
         [],
         |row| row.get(0),
+    )
+    .context(
+        "papertiger-mise authority lacks meta.schema_version; restore a verified authority or select the correct Mise database",
     )?;
-    raw.parse()
-        .map_err(|_| anyhow!("corrupt papertiger-mise schema_version '{raw}'"))
+    raw.parse().map_err(|_| {
+        anyhow!(
+            "corrupt papertiger-mise schema_version {raw:?}; restore a verified authority or select the correct Mise database"
+        )
+    })
 }
 
 pub fn begin_mutation(connection: &Connection) -> Result<Transaction<'_>> {
@@ -474,18 +562,49 @@ pub fn begin_mutation(connection: &Connection) -> Result<Transaction<'_>> {
     }
 }
 
-pub fn init(connection: &Connection) -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorityInitOutcome {
+    Created,
+    Migrated { from: i64, to: i64 },
+    Current,
+}
+
+pub fn init(connection: &Connection) -> Result<AuthorityInitOutcome> {
+    init_at(connection, Path::new("the selected database"))
+}
+
+pub fn init_at(connection: &Connection, path: &Path) -> Result<AuthorityInitOutcome> {
     let has_meta = connection
         .query_row(
             "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='meta'",
             [],
             |_| Ok(true),
         )
-        .optional()?
+        .optional()
+        .with_context(|| {
+            format!(
+                "{} is not a readable SQLite database; select a papertiger-mise authority or preserve the original bytes before running `papertiger-mise --db <new-path> init`",
+                path.display()
+            )
+        })?
         .unwrap_or(false);
     if has_meta {
-        migrate(connection, schema_version(connection)?)?;
-        return Ok(());
+        require_mise_identity(connection, path, true)?;
+        let from = schema_version(connection)?;
+        if from == SCHEMA_VERSION {
+            if authority_identity(connection)?.as_deref() != Some(AUTHORITY_IDENTITY) {
+                bail!(
+                    "{} is schema v{SCHEMA_VERSION} but lacks papertiger-mise authority identity; restore a verified authority instead of repairing identity in place",
+                    path.display()
+                );
+            }
+            return Ok(AuthorityInitOutcome::Current);
+        }
+        migrate(connection, from)?;
+        return Ok(AuthorityInitOutcome::Migrated {
+            from,
+            to: SCHEMA_VERSION,
+        });
     }
 
     let initial_page_count: i64 =
@@ -780,8 +899,12 @@ BEGIN SELECT RAISE(ABORT, 'nomination requires a qualified terminal candidate');
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
     )?;
+    transaction.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+        params![AUTHORITY_IDENTITY_KEY, AUTHORITY_IDENTITY],
+    )?;
     transaction.commit()?;
-    Ok(())
+    Ok(AuthorityInitOutcome::Created)
 }
 
 fn migrate(connection: &Connection, from: i64) -> Result<()> {
@@ -846,6 +969,19 @@ fn migrate(connection: &Connection, from: i64) -> Result<()> {
     if from == 6 {
         let transaction = begin_mutation(connection)?;
         transaction.execute_batch(MATERIALIZATION_RETRY_SCHEMA_V7)?;
+        transaction.execute(
+            "UPDATE meta SET value=?1 WHERE key='schema_version'",
+            params![7_i64.to_string()],
+        )?;
+        transaction.commit()?;
+        return migrate(connection, 7);
+    }
+    if from == 7 {
+        let transaction = begin_mutation(connection)?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, ?2)",
+            params![AUTHORITY_IDENTITY_KEY, AUTHORITY_IDENTITY],
+        )?;
         transaction.execute(
             "UPDATE meta SET value=?1 WHERE key='schema_version'",
             params![SCHEMA_VERSION.to_string()],
@@ -1783,6 +1919,24 @@ mod tests {
             .execute("CREATE TABLE foreign_table (value TEXT)", [])
             .expect("foreign table");
         assert!(init(&foreign).is_err());
+
+        let planner_path = directory.path().join("planner.sqlite");
+        let planner = papertiger::open_for_init(planner_path.to_str().expect("UTF-8 path"))
+            .expect("planner initialization connection");
+        papertiger::init(&planner).expect("planner schema");
+        drop(planner);
+        let planner_before = std::fs::read(&planner_path).expect("planner bytes");
+        let error = open_existing(&planner_path).expect_err("Mise must refuse planner authority");
+        assert!(error.to_string().contains("Papertiger planning authority"));
+        assert!(error.to_string().contains("papertiger --db"));
+        let planner = open_for_init(&planner_path).expect("Mise initialization connection");
+        let error = init(&planner).expect_err("Mise init must refuse planner authority");
+        assert!(error.to_string().contains("Papertiger planning authority"));
+        drop(planner);
+        assert_eq!(
+            std::fs::read(&planner_path).expect("planner bytes after refusal"),
+            planner_before
+        );
 
         let path = directory.path().join("mise.sqlite");
         let connection = open_for_init(&path).expect("initialization connection");

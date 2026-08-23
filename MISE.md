@@ -109,7 +109,7 @@ authority contains several campaigns, use `<campaign-id>-<role>-NN` rather
 than relying on a campaign-local `no-op-1`. Candidate and nomination IDs remain
 content-derived hashes. Keep a series that may form parent/child lineage in one
 consuming-project Mise database and CAS; campaign-named workspace directories
-are disposable ergonomics, not separate evidence authorities.
+are ephemeral ergonomics, not separate evidence authorities.
 
 Mise requires a no-op calibration to characterize evaluator noise and a
 known-bad calibration to prove that the evaluator rejects a controlled
@@ -541,7 +541,7 @@ reservation without claiming what filesystem work occurred.
 
 Candidate material, evaluator inputs, canonical successful observations,
 bounded failure stdout/stderr, measurements, crashes, and rejection reasons are
-content-addressed or durably receipt-bound independently of disposable
+content-addressed or durably receipt-bound independently of ephemeral
 worktrees. Successful evaluators must keep stderr empty; any stderr converts the
 trial into a retained infrastructure failure instead of silently discarding a
 warning. A retry is new lineage with an explicit differentiator, not a rewrite

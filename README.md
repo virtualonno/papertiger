@@ -17,14 +17,20 @@ Papertiger has no server or account. It ships as two Rust binaries:
 
 - `status --json`, `focus --json`, `list --json`, and `show <N> --json` provide
   versioned orientation from the live database without exposing internal row
-  identifiers.
+  identifiers. Status distinguishes in-progress parent and leaf work, and each
+  bounded projection reports its scope, ordering, eligible, returned, and
+  omitted counts plus a continuation command when incomplete. Read commands
+  open the SQLite authority read-only by construction.
 - `show` exposes event-derived activity. `started_event` exists only while a
   task is currently in progress, and `completed_event` only while it is
   currently done. Their actor fields record transition authorship, not task
   ownership. `list --sort activity` orders work by the latest meaningful event
   without inventing time tracking.
 - `log --json` provides full event records and history-bound cursors for older
-  pages or incremental reads. A cursor from divergent history refuses.
+  pages or incremental reads. A cursor from divergent history refuses. New
+  task-edit events carry canonical before/after definition revisions; old edit
+  events are labeled `legacy_without_snapshots` rather than assigned invented
+  history.
 - `search` ranks literal terms across task titles, tags, intent, results, and
   event rationale. It includes done, retired, and rejected history by default
   and needs no external or separately synchronized index.
@@ -34,6 +40,10 @@ Papertiger has no server or account. It ships as two Rust binaries:
 - Every mutation records an actor and an event. Actor labels are provenance,
   never assignees, leases, session handles, or liveness signals; unfinished
   work remains `in_progress` across agent replacement without reassignment.
+- `add --start` creates and starts a task atomically, rolling back task and
+  events on readiness failure. Intent, result, and note text may separately
+  record a `user`, `agent`, or `external` meaning source without confusing it
+  with the actor that performed the mutation.
 - Optional caller-resolved commit associations support local task/commit lookup
   without invoking Git or coupling commits to completion.
 - `retire <old> --into <canonical> --why ...` records measured task
@@ -42,18 +52,25 @@ Papertiger has no server or account. It ships as two Rust binaries:
   replacements cannot be rejected or retired without its own live replacement;
   explicit `retire --into` chains preserve the history without silent rewrites.
 - Every connection gets a fixed 500 ms SQLite lock grace so brief read and
-  mutation overlap among agents sharing the canonical authority clears
-  naturally. Papertiger never replays a command; a longer lock is refused with
+  mutation overlap among agents sharing the canonical authority can clear.
+  Papertiger never replays a command; a longer lock is refused with
   an explicit retry instruction. Independent authorities are never merged or
   synchronized.
 - Export and import preserve task identity, graph structure, evidence pointers,
   and history without creating a second live authority. `export --output`
   atomically writes a canonical recovery file and returns its SHA-256 receipt.
+- `evidence verify` resolves stored `file:` bindings beneath the project root,
+  rejects path escapes and symlinks, hashes one stable read of each regular
+  file, and fails closed on missing, unhashed, changed, or mismatched evidence.
+  Failed bindings include exact corrective argument vectors. Other locator
+  schemes remain explicitly unsupported until they have scheme-specific
+  verifiers.
 
-Papertiger is intended for plans that outlive one session or carry meaningful
-dependencies and proof obligations. A short same-session checklist does not
-need it. Domain evidence and issue trackers remain authoritative for their own
-facts.
+Papertiger is intended for independently reviewable outcomes, separate commits,
+or work with meaningful dependencies and proof obligations. That boundary can
+apply even when several outcomes are requested in one session; intermediate
+steps inside one independently reviewable outcome do not need tasks. Domain
+evidence and issue trackers remain authoritative for their own facts.
 
 Task sequences are local selectors, not shared issue identifiers. Never place a
 Papertiger task number in a shared commit, pull request, changelog, or public
@@ -66,7 +83,7 @@ Download the archive for your platform from
 [GitHub Releases](https://github.com/virtualonno/papertiger/releases), verify
 the adjacent SHA-256 checksum, and extract it outside the consuming project.
 For an upgrade, run `setup-project` from that newly verified release binary;
-the existing project launcher cannot update itself.
+a project-local binary cannot overwrite itself while running on Windows.
 
 Preview the installation:
 
@@ -97,11 +114,11 @@ papertiger setup-project /path/to/project \
   --authority-path plans/papertiger.sqlite --json
 ```
 
-Setup installs the planner, Bash and Windows launchers, the agent contract, and
-byte-identical open Agent Skills discovery envelopes for `.agents/skills` and
+Setup installs the native planner binary, the agent contract, and byte-identical
+open Agent Skills discovery envelopes for `.agents/skills` and
 `.claude/skills`. The tracked receipt binds the release and authority path, and
-hashes the managed text: both launchers, the canonical contract, and both skill
-envelopes. The receipt also owns the host-local binary, but deliberately omits
+hashes the managed text: the canonical contract and both skill envelopes. The
+receipt also owns the host-local binary, but deliberately omits
 its platform-specific bytes from that text hash list; every applied setup
 upgrades it to the exact bytes of the running release binary. The receipt
 itself and additive `.gitignore` policy also sit outside the hash list. A normal
@@ -131,43 +148,58 @@ copies exist only in projects managed by `setup-project`.
 
 ## Start planning
 
-From the repository root, use the launcher for the active shell:
+Resolve and invoke the installed native binary directly. If `papertiger` is on
+`PATH`, use that name. Otherwise select the release-managed binary at
+`tools/papertiger/bin/papertiger` on POSIX or
+`tools\papertiger\bin\papertiger.exe` on Windows. The following examples use
+`papertiger` for that resolved executable:
 
 ```bash
-scripts/papertiger status
-scripts/papertiger focus --json
-scripts/papertiger search "<terms>" --json
-scripts/papertiger log --json
+papertiger status
+papertiger focus --json
+papertiger search "<terms>" --json
+papertiger log --json
 ```
 
-```powershell
-.\scripts\papertiger.cmd status
-.\scripts\papertiger.cmd focus --json
-.\scripts\papertiger.cmd search "<terms>" --json
-.\scripts\papertiger.cmd log --json
-```
-
-From a nested directory, invoke that same launcher through a path that actually
-resolves to the repository's `scripts` directory, such as
-`../../scripts/papertiger` or `..\..\scripts\papertiger.cmd`. Once invoked, both
-launchers derive the project root from their own location, so database identity
-does not depend on the caller's working directory.
+The binary walks upward from the current directory to find the nearest tracked
+`tools/papertiger/project-install.json`, verifies that the receipt version
+matches, and resolves its authority against that project root. This works from
+nested directories without a launcher, shell transition, or process bridge.
 
 Set `PAPERTIGER_ACTOR` to a concise author label before mutations. It describes
-who wrote an event, not who owns the task now. Each project-local launcher
-defaults to the receipt-selected database at the project root. `PAPERTIGER_DB`
+who wrote an event, not who owns the task now. The native binary defaults to
+the receipt-selected database at the project root. `PAPERTIGER_DB`
 or an explicit global `--db` deliberately overrides that default for
 operational use. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 
-The current authority schema is v6. Before migrating an older authority, use
+The current authority schema is v8. Before migrating an older authority, use
 its matching Papertiger release to archive its current export. Current import
-accepts only `papertiger.dump.v6`; restore an older dump with the release that
+accepts only `papertiger.dump.v7`; restore an older dump with the release that
 produced it, migrate that temporary authority, and re-export it.
 
+Planner and Mise schema v8 store distinct authority identities. Either binary
+refuses the other authority without changing its bytes. A v7 authority is
+migrated only by its matching binary's explicit `init` command; the dump shape
+remains `papertiger.dump.v7` because authority identity is local metadata.
+
+Verify retained local evidence without mutating the authority:
+
+```bash
+papertiger evidence verify --project-root /path/to/project --json
+papertiger evidence verify --task <task.seq> --project-root /path/to/project
+```
+
+When receipt discovery can identify the project root, `--project-root` is
+optional. A failed binding reports ordered `program` and `arguments` arrays for
+the explicit reopen, close or resolve, and re-completion workflow.
+
 The installer copies [agent_integration.md](agent_integration.md) into the
-project. Incorporate its short operating rules into the repository's existing
-agent guidance after reviewing them.
+project. After reviewing it, incorporate its concise repository-guidance
+discovery trigger into the project's existing agent guidance. A bare link is
+not equivalent: the trigger names both the multi-outcome/exact-resume cases and
+the bounded/read-only/domain-lifecycle skips. Setup never edits repository-owned
+guidance itself.
 
 ## Add Mise when a campaign is warranted
 

@@ -8,23 +8,24 @@ use papertiger_mise::budget::{BudgetRequest, BudgetResource, BudgetSettlement, S
 use papertiger_mise::improvement;
 use papertiger_mise::manifest::{CampaignManifest, Sha256Digest};
 use papertiger_mise::{
-    CandidateProposal, DerivePairedNominationSpec, DomainShadowAdapterBinding,
-    FIXTURE_BUNDLE_SCHEMA_V1, FixtureBundleDescriptor, FixtureBundleEntry, PairedAdapterBinding,
-    PreparePairedCohortSpec, PreservedObject, PromotionGateBinding, SupervisedTrialSpec,
-    TrustedContainmentPolicy, abandon_materialization_attempt, abandon_owned_trial,
-    adjudicate_deterministic_candidate, adjudicate_paired_cohort, admit_verified_campaign,
-    admit_verified_successor, authority_status, bind_candidate, budget_balances,
-    build_git_change_set_material, campaign, candidate, derive_candidate_planner_projection,
-    derive_nomination_planner_projection, derive_paired_nomination, derive_promotion_proof,
-    domain_shadow, execute_next_paired_run, execute_workspace_trial, historical_shadow,
-    host_execution_status, init, inspect_source_binding, materialize_candidate, nominations,
-    object_locator, open_existing, open_existing_read_only, open_for_init, paired_cohort,
-    paired_cohorts, paired_run, paired_runs, portable_absolute, preflight_campaign_admission,
-    prepare_paired_cohort, preserve_object, preserve_parent_promotion_proof, read_object,
-    record_candidate, record_domain_shadow, record_historical_shadow, recover_paired_run,
-    recover_workspace_trial, reserve_budget, reserve_paired_analysis_slot, settle_budget, sha256,
-    successor_admission, trial, verify_campaign_admission, verify_nomination_integrity,
-    verify_parent_promotion_gate, verify_promotion_gate, verify_successor_admission,
+    AuthorityInitOutcome, CandidateProposal, DerivePairedNominationSpec,
+    DomainShadowAdapterBinding, FIXTURE_BUNDLE_SCHEMA_V1, FixtureBundleDescriptor,
+    FixtureBundleEntry, PairedAdapterBinding, PreparePairedCohortSpec, PreservedObject,
+    PromotionGateBinding, SupervisedTrialSpec, TrustedContainmentPolicy,
+    abandon_materialization_attempt, abandon_owned_trial, adjudicate_deterministic_candidate,
+    adjudicate_paired_cohort, admit_verified_campaign, admit_verified_successor, authority_status,
+    bind_candidate, budget_balances, build_git_change_set_material, campaign, candidate,
+    derive_candidate_planner_projection, derive_nomination_planner_projection,
+    derive_paired_nomination, derive_promotion_proof, domain_shadow, execute_next_paired_run,
+    execute_workspace_trial, historical_shadow, host_execution_status, init_at,
+    inspect_source_binding, materialize_candidate, nominations, object_locator, open_existing,
+    open_existing_read_only, open_for_init, paired_cohort, paired_cohorts, paired_run, paired_runs,
+    portable_absolute, preflight_campaign_admission, prepare_paired_cohort, preserve_object,
+    preserve_parent_promotion_proof, read_object, record_candidate, record_domain_shadow,
+    record_historical_shadow, recover_paired_run, recover_workspace_trial, reserve_budget,
+    reserve_paired_analysis_slot, settle_budget, sha256, successor_admission, trial,
+    verify_campaign_admission, verify_nomination_integrity, verify_parent_promotion_gate,
+    verify_promotion_gate, verify_successor_admission,
 };
 use serde::Serialize;
 
@@ -61,22 +62,31 @@ enum Command {
     /// Prepare and validate non-admitted campaign inputs without opening authority state.
     #[command(subcommand)]
     Improvement(ImprovementCommand),
+    /// Admit and inspect immutable campaign definitions and successor lineage.
     #[command(subcommand)]
     Campaign(CampaignCommand),
+    /// Reserve, settle, and inspect finite campaign resources.
     #[command(subcommand)]
     Budget(BudgetCommand),
+    /// Record, materialize, adjudicate, and inspect exact candidate changes.
     #[command(subcommand)]
     Candidate(CandidateCommand),
+    /// Run, recover, abandon, and inspect deterministic candidate trials.
     #[command(subcommand)]
     Trial(TrialCommand),
+    /// Execute and adjudicate predeclared paired-analysis cohorts.
     #[command(subcommand)]
     Paired(PairedCommand),
+    /// Preserve and reopen content-addressed campaign objects.
     #[command(subcommand)]
     Object(ObjectCommand),
+    /// Record and inspect decision-ineligible historical or domain observations.
     #[command(subcommand)]
     Evidence(EvidenceCommand),
+    /// Derive and verify operator-owned promotion proof inputs.
     #[command(subcommand)]
     Promotion(PromotionCommand),
+    /// Reopen terminal campaign evidence as planner-safe projection documents.
     #[command(subcommand)]
     Projection(ProjectionCommand),
 }
@@ -617,8 +627,17 @@ fn run(cli: Cli) -> Result<()> {
                 std::fs::create_dir_all(parent)?;
             }
             let connection = open_for_init(&cli.db)?;
-            init(&connection)?;
-            println!("initialized {}", cli.db.display());
+            match init_at(&connection, &cli.db)? {
+                AuthorityInitOutcome::Created => println!("initialized {}", cli.db.display()),
+                AuthorityInitOutcome::Migrated { from, to } => {
+                    println!("migrated {} from schema v{from} to v{to}", cli.db.display())
+                }
+                AuthorityInitOutcome::Current => println!(
+                    "{} is already a papertiger-mise authority at schema v{}; nothing changed",
+                    cli.db.display(),
+                    papertiger_mise::SCHEMA_VERSION
+                ),
+            }
         }
         Command::Campaign(CampaignCommand::Admit {
             manifest: manifest_path,

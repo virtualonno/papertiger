@@ -19,6 +19,13 @@ fn db() -> rusqlite::Connection {
     conn
 }
 
+fn assert_exact_error<T>(result: anyhow::Result<T>, expected: &str) {
+    match result {
+        Ok(_) => panic!("expected refusal: {expected}"),
+        Err(error) => assert_eq!(error.to_string(), expected),
+    }
+}
+
 fn assert_bounded_lock_refusal(output: &Output, elapsed: Duration, phase: &str) {
     assert!(!output.status.success(), "{phase} unexpectedly succeeded");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -197,10 +204,13 @@ fn open_existing_refuses_missing_database_without_creating_it() {
 
     let err = pt::open_existing(path.to_str().unwrap()).unwrap_err();
 
+    let message = err.to_string();
     assert!(
-        err.to_string()
-            .contains("open existing papertiger database")
+        message.contains("no Papertiger authority exists"),
+        "{message}"
     );
+    assert!(message.contains("papertiger --db"), "{message}");
+    assert!(message.contains("restore an export"), "{message}");
     assert!(!path.exists(), "failed open must not create the database");
 }
 
@@ -215,7 +225,12 @@ fn cli_status_refuses_missing_database_without_creating_it() {
         .unwrap();
 
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("open existing papertiger database"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no Papertiger authority exists"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("restore an export"), "{stderr}");
     assert!(
         !path.exists(),
         "failed command must not create the database"
@@ -233,10 +248,12 @@ fn cli_status_refuses_uninitialized_existing_file_without_mutating_it() {
         .unwrap();
 
     assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("is not an initialized papertiger database")
+        stderr.contains("empty SQLite database without a Papertiger authority"),
+        "{stderr}"
     );
+    assert!(stderr.contains(" init` to initialize it"), "{stderr}");
     assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
     std::fs::remove_file(path).unwrap();
 }
@@ -258,6 +275,47 @@ fn cli_init_creates_database_that_operational_commands_can_reopen() {
         .output()
         .unwrap();
     assert!(status.status.success());
+
+    let current = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .args(["--db", path.to_str().unwrap(), "init"])
+        .output()
+        .unwrap();
+    assert!(current.status.success());
+    assert!(
+        String::from_utf8_lossy(&current.stdout).contains("nothing changed"),
+        "{}",
+        String::from_utf8_lossy(&current.stdout)
+    );
+
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn cli_reads_and_init_refuse_non_sqlite_bytes_with_corrective_context() {
+    let path = unique_test_path("non-sqlite-authority");
+    std::fs::write(&path, b"not a SQLite authority\n").unwrap();
+    let before = std::fs::read(&path).unwrap();
+
+    for command in ["status", "init"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+            .args(["--db", path.to_str().unwrap(), command])
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "{command} accepted non-SQLite bytes"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("not a readable SQLite database"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("papertiger --db <new-path> init"),
+            "{stderr}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
 
     std::fs::remove_file(path).unwrap();
 }
@@ -345,6 +403,63 @@ fn cli_init_refuses_foreign_header_state_without_mutating_bytes() {
     assert_eq!(user_version, 73);
     drop(foreign);
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn typed_authority_identity_is_migrated_and_refuses_mise_databases() {
+    let legacy_path = unique_test_path("legacy-v7-identity");
+    let legacy = pt::open_for_init(legacy_path.to_str().unwrap()).unwrap();
+    assert_eq!(pt::init(&legacy).unwrap(), pt::InitOutcome::Created);
+    legacy
+        .execute("DELETE FROM meta WHERE key='authority'", [])
+        .unwrap();
+    legacy
+        .execute("UPDATE meta SET value='7' WHERE key='schema_version'", [])
+        .unwrap();
+    drop(legacy);
+
+    let error = pt::open_existing_read_only(legacy_path.to_str().unwrap()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("legacy Papertiger planning authority")
+    );
+    assert!(error.to_string().contains(" init` explicitly"));
+    let legacy = pt::open_for_init(legacy_path.to_str().unwrap()).unwrap();
+    assert_eq!(
+        pt::init(&legacy).unwrap(),
+        pt::InitOutcome::Migrated { from: 7, to: 8 }
+    );
+    assert_eq!(
+        legacy
+            .query_row("SELECT value FROM meta WHERE key='authority'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+        pt::AUTHORITY_IDENTITY
+    );
+    drop(legacy);
+    std::fs::remove_file(&legacy_path).unwrap();
+
+    let mise_path = unique_test_path("typed-mise-identity");
+    let mise = rusqlite::Connection::open(&mise_path).unwrap();
+    mise.execute_batch(
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         INSERT INTO meta VALUES ('schema_version', '8');
+         INSERT INTO meta VALUES ('authority', 'papertiger.mise');",
+    )
+    .unwrap();
+    drop(mise);
+    let before = std::fs::read(&mise_path).unwrap();
+    let error = pt::open_existing(mise_path.to_str().unwrap()).unwrap_err();
+    assert!(error.to_string().contains("papertiger-mise authority"));
+    assert!(error.to_string().contains("papertiger-mise --db"));
+    let mise = pt::open_for_init(mise_path.to_str().unwrap()).unwrap();
+    let error = pt::init(&mise).unwrap_err();
+    assert!(error.to_string().contains("papertiger-mise authority"));
+    drop(mise);
+    assert_eq!(std::fs::read(&mise_path).unwrap(), before);
+    std::fs::remove_file(mise_path).unwrap();
 }
 
 #[test]
@@ -583,6 +698,290 @@ fn dependency_cycles_rejected_and_readiness_derived() {
 }
 
 #[test]
+fn dependency_and_read_projection_refusals_have_exact_messages() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
+    let other_plan = pt::add_plan(&conn, "test", "other", "Other", "").unwrap();
+    let a = pt::add_task(&conn, "test", plan, "a", "", None, &[], &[], 0, None).unwrap();
+    let b = pt::add_task(&conn, "test", plan, "b", "", None, &[a], &[], 0, None).unwrap();
+    let c = pt::add_task(&conn, "test", plan, "c", "", None, &[b], &[], 0, None).unwrap();
+    let other = pt::add_task(
+        &conn,
+        "test",
+        other_plan,
+        "other",
+        "",
+        None,
+        &[],
+        &[],
+        0,
+        None,
+    )
+    .unwrap();
+
+    assert_exact_error(
+        pt::add_dep(&conn, "test", a, a, "self dependency"),
+        &format!("#{a} cannot depend on itself"),
+    );
+    assert_exact_error(
+        pt::add_dep(&conn, "test", a, other, "cross-plan dependency"),
+        &format!("#{a} and dependency #{other} belong to different plans"),
+    );
+    assert_exact_error(
+        pt::add_dep(&conn, "test", a, c, "cycle"),
+        &format!("dependency #{a} -> #{c} would create a cycle"),
+    );
+    assert_exact_error(
+        pt::add_dep(&conn, "test", c, b, "duplicate"),
+        &format!("#{c} already depends on #{b}"),
+    );
+    assert_exact_error(
+        pt::remove_dep(&conn, "test", a, b, "not present"),
+        &format!("#{a} does not depend on #{b}"),
+    );
+    assert_exact_error(
+        pt::event_cursor(&conn, 0),
+        "event cursor requires a positive event ID",
+    );
+    assert_exact_error(
+        pt::event_log(&conn, None, 0, None, None),
+        "event log --limit must be between 1 and 500",
+    );
+    assert_exact_error(
+        pt::event_log(&conn, None, 1, Some("x"), Some("y")),
+        "event log accepts only one of --before-cursor or --after-cursor",
+    );
+    assert_exact_error(
+        pt::search_tasks(&conn, "---", None, None, 20),
+        "search query must contain at least one letter or digit",
+    );
+    assert_exact_error(
+        pt::search_tasks(&conn, "task", None, None, 0),
+        "search --limit must be between 1 and 200",
+    );
+    assert_exact_error(
+        pt::search_tasks(&conn, "task", None, Some("complete"), 20),
+        "unknown task status 'complete' (expected proposed|in_progress|done|retired|rejected)",
+    );
+}
+
+#[test]
+fn lifecycle_refusals_have_exact_corrective_messages() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
+    let dependency = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        "dependency",
+        "",
+        None,
+        &[],
+        &[],
+        0,
+        None,
+    )
+    .unwrap();
+    let blocked = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        "blocked",
+        "",
+        None,
+        &[dependency],
+        &[],
+        0,
+        None,
+    )
+    .unwrap();
+    assert_exact_error(
+        pt::start_task(&conn, "test", blocked, None),
+        &format!("#{blocked} is not ready; resolve dep:#{dependency} before starting it"),
+    );
+    pt::start_task(&conn, "test", dependency, None).unwrap();
+    assert_exact_error(
+        pt::start_task(&conn, "test", dependency, None),
+        &format!("#{dependency} is already in_progress"),
+    );
+    pt::complete_task(&conn, "test", dependency, None).unwrap();
+    assert_exact_error(
+        pt::start_task(&conn, "test", dependency, None),
+        &format!("#{dependency} is done; use `reopen` before starting it"),
+    );
+    assert_exact_error(
+        pt::complete_task(&conn, "test", dependency, None),
+        &format!("#{dependency} is already done"),
+    );
+    assert_exact_error(
+        pt::reopen_task(&conn, "test", blocked, "not terminal"),
+        &format!("#{blocked} is proposed; only terminal tasks can be reopened"),
+    );
+    assert_exact_error(
+        pt::reopen_task(&conn, "test", dependency, ""),
+        "reopening a task requires a nonblank reason",
+    );
+
+    let decision = pt::add_task_with_kind(
+        &conn,
+        "test",
+        plan,
+        "decision",
+        "",
+        "decision",
+        None,
+        &[],
+        &[],
+        0,
+        None,
+    )
+    .unwrap();
+    assert_exact_error(
+        pt::complete_task(&conn, "test", decision, None),
+        &format!(
+            "completing decision task #{decision} requires --result or --result-file so the measured or selected outcome survives the session"
+        ),
+    );
+    assert_exact_error(
+        pt::complete_task_with_source(&conn, "test", decision, None, Some("agent")),
+        "--result-source requires --result or --result-file with a durable outcome",
+    );
+    assert_exact_error(
+        pt::validate_meaning_source(Some("operator")),
+        "unknown meaning source 'operator' (expected user|agent|external)",
+    );
+
+    pt::set_plan_status(&conn, "test", "p", "paused", "exercise plan refusal").unwrap();
+    assert_exact_error(
+        pt::start_task(&conn, "test", blocked, None),
+        &format!("plan is paused; set it active before starting task #{blocked}"),
+    );
+    assert_exact_error(
+        pt::complete_task(&conn, "test", blocked, None),
+        &format!("plan is paused; set it active before completing proposed task #{blocked}"),
+    );
+}
+
+#[test]
+fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
+    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+
+    assert_exact_error(
+        pt::add_gate(&conn, "test", task, "proof", "invalid", "requirement"),
+        "unknown gate kind 'invalid' (expected test|benchmark|review|capture|fixture|build|doc|other)",
+    );
+    pt::add_gate(&conn, "test", task, "proof", "test", "requirement").unwrap();
+    assert_exact_error(
+        pt::add_gate(&conn, "test", task, "proof", "test", "requirement"),
+        &format!("gate 'proof' already exists on #{task}; choose a different gate name"),
+    );
+    for (locator, expected) in [
+        (
+            "missing-scheme",
+            "evidence locator 'missing-scheme' must be scheme:value (e.g. file:runtime/evidence/x.json)",
+        ),
+        (
+            "file:   ",
+            "evidence locator 'file:   ' must have a nonblank scheme and value",
+        ),
+        (
+            "1file:proof",
+            "evidence locator '1file:proof' has an invalid scheme; use an RFC 3986-style name",
+        ),
+    ] {
+        assert_exact_error(
+            pt::close_gate(&conn, "test", task, "proof", locator, None, None),
+            expected,
+        );
+    }
+    assert_exact_error(
+        pt::reopen_gate(&conn, "test", task, "proof", "already open"),
+        &format!("gate 'proof' on #{task} is already open"),
+    );
+    assert_exact_error(
+        pt::remove_open_gate(&conn, "test", task, "proof", ""),
+        "removing a gate requires a nonblank reason",
+    );
+    pt::close_gate(&conn, "test", task, "proof", "file:proof.json", None, None).unwrap();
+    assert_exact_error(
+        pt::remove_open_gate(&conn, "test", task, "proof", "closed"),
+        &format!("no open gate 'proof' on #{task}"),
+    );
+    pt::reopen_gate(&conn, "test", task, "proof", "replace evidence").unwrap();
+
+    pt::add_task_blocker(&conn, "test", task, "input", "operator input").unwrap();
+    assert_exact_error(
+        pt::reopen_task_blocker(&conn, "test", task, "input", "already open"),
+        &format!("blocker 'input' on #{task} is already open"),
+    );
+    pt::resolve_task_blocker(&conn, "test", task, "input", "file:input.json", None, None).unwrap();
+    assert_exact_error(
+        pt::remove_open_task_blocker(&conn, "test", task, "input", "closed"),
+        &format!("no open blocker 'input' on #{task}"),
+    );
+    pt::reopen_task_blocker(&conn, "test", task, "input", "replace evidence").unwrap();
+    let blockers = pt::task_blockers(&conn, pt::get_task(&conn, task).unwrap().task_id).unwrap();
+    assert_eq!(blockers[0].status, "open");
+    assert_eq!(blockers[0].evidence_locator, None);
+    let event: String = conn
+        .query_row(
+            "SELECT kind FROM events WHERE kind='blocker_reopen' ORDER BY event_id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(event, "blocker_reopen");
+}
+
+#[test]
+fn evidence_verifier_classifies_unhashed_missing_escaping_and_unsupported_bindings() {
+    let root = unique_test_path("evidence-classification-root").with_extension("root");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs/proof.txt"), b"proof\n").unwrap();
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
+    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    for (name, locator) in [
+        ("unhashed", "file:docs/proof.txt"),
+        ("missing", "file:docs/missing.txt"),
+        ("escape", "file:../outside.txt"),
+        (
+            "unsupported",
+            "commit:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+    ] {
+        pt::add_gate(&conn, "test", task, name, "review", "retained evidence").unwrap();
+        pt::close_gate(&conn, "test", task, name, locator, None, None).unwrap();
+    }
+
+    let report = pt::verify_evidence(&conn, &root, Some(task)).unwrap();
+    let statuses = report
+        .bindings
+        .iter()
+        .map(|binding| (binding.name.as_str(), binding.status.as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(statuses["unhashed"], "unhashed");
+    assert_eq!(statuses["missing"], "missing");
+    assert_eq!(statuses["escape"], "path_escape");
+    assert_eq!(statuses["unsupported"], "unsupported_scheme");
+    assert_eq!(report.failure_count, 3);
+    assert_eq!(report.unverifiable_count, 1);
+    assert!(!report.complete);
+    assert!(
+        report
+            .bindings
+            .iter()
+            .filter(|binding| binding.status != "unsupported_scheme")
+            .all(|binding| !binding.corrective_commands.is_empty())
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn priority_orders_ready_queue() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
@@ -732,17 +1131,17 @@ fn export_import_roundtrip_preserves_graph() {
 #[test]
 fn dump_parser_accepts_windows_utf8_bom() {
     let dump = pt::parse_dump_json(
-        "\u{feff}{\"schema\":\"papertiger.dump.v6\",\"plans\":[],\"tasks\":[]}",
+        "\u{feff}{\"schema\":\"papertiger.dump.v7\",\"plans\":[],\"tasks\":[]}",
     )
     .unwrap();
-    assert_eq!(dump.schema, "papertiger.dump.v6");
+    assert_eq!(dump.schema, "papertiger.dump.v7");
 }
 
 #[test]
 fn import_refuses_closed_gate_without_evidence() {
     let mut conn = db();
     let dump: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v6",
+        r#"{"schema":"papertiger.dump.v7",
             "plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"t","status":"done",
                       "gates":[{"name":"g","kind":"test","requirement":"r","status":"closed"}]}]}"#,
@@ -750,6 +1149,136 @@ fn import_refuses_closed_gate_without_evidence() {
     .unwrap();
     let err = pt::import(&mut conn, "test", &dump).unwrap_err();
     assert!(err.to_string().contains("lacks evidence_locator"));
+}
+
+#[test]
+fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
+    for (fixture, expected) in [
+        (
+            r#"{
+                "schema":"papertiger.dump.v7",
+                "plans":[{"slug":"p","title":"P"}],
+                "tasks":[{"seq":1,"plan":"p","title":"task",
+                    "result":"  ","result_source":"agent"}]
+            }"#,
+            "result_source without a durable result",
+        ),
+        (
+            r#"{
+                "schema":"papertiger.dump.v7",
+                "plans":[{"slug":"p","title":"P"}],
+                "tasks":[{"seq":1,"plan":"p","title":"task","gates":[{
+                    "name":"proof","kind":"test","requirement":"prove it",
+                    "status":"closed","evidence_locator":"commit:notahash",
+                    "closed_at":"2026-08-23T12:00:00Z"
+                }]}]
+            }"#,
+            "invalid evidence_locator",
+        ),
+        (
+            r#"{
+                "schema":"papertiger.dump.v7",
+                "plans":[{"slug":"p","title":"P"}],
+                "tasks":[{"seq":1,"plan":"p","title":"task"}],
+                "events":[{
+                    "at":"2026-08-23T12:00:00Z","actor":"fixture",
+                    "entity":"task","entity_seq":1,"entity_plan":"p",
+                    "kind":"status","payload":{"to":"done","result_source":"fabricated"}
+                }]
+            }"#,
+            "invalid payload.result_source",
+        ),
+        (
+            r#"{
+                "schema":"papertiger.dump.v7",
+                "plans":[{"slug":"p","title":"P"}],
+                "tasks":[{"seq":1,"plan":"p","title":"task"}],
+                "events":[{
+                    "at":"2026-08-23T12:00:00Z","actor":"fixture",
+                    "entity":"task","entity_seq":1,"entity_plan":"p",
+                    "kind":"note","payload":{"meaning_source":7}
+                }]
+            }"#,
+            "payload.meaning_source must be a string or null",
+        ),
+    ] {
+        let mut conn = db();
+        let dump: pt::Dump = serde_json::from_str(fixture).unwrap();
+        let error = pt::import(&mut conn, "restore", &dump).unwrap_err();
+        assert!(error.to_string().contains(expected), "{error:#}");
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "a refused import must roll back every row"
+        );
+    }
+
+    let mut normalized = db();
+    let dump: pt::Dump = serde_json::from_str(
+        r#"{
+            "schema":"papertiger.dump.v7",
+            "plans":[{"slug":"p","title":"P"}],
+            "tasks":[{"seq":1,"plan":"p","title":"task","intent":"asked",
+                "intent_source":" user ","tags":[" alpha "]}]
+        }"#,
+    )
+    .unwrap();
+    pt::import(&mut normalized, "restore", &dump).unwrap();
+    let task = pt::get_task(&normalized, 1).unwrap();
+    assert_eq!(task.intent_source.as_deref(), Some("user"));
+    assert_eq!(
+        pt::task_context(&normalized, 1).unwrap().tags,
+        vec!["alpha"]
+    );
+    assert!(pt::audit(&normalized).unwrap().is_empty());
+}
+
+#[test]
+fn import_plan_events_are_dump_local_and_plan_reuse_requires_identical_definition() {
+    let mut destination = db();
+    pt::add_plan(
+        &destination,
+        "fixture",
+        "existing",
+        "Existing",
+        "destination definition",
+    )
+    .unwrap();
+    let external_event: pt::Dump = serde_json::from_str(
+        r#"{
+            "schema":"papertiger.dump.v7",
+            "plans":[{"slug":"incoming","title":"Incoming"}],
+            "tasks":[],
+            "events":[{
+                "at":"2026-08-23T12:00:00Z","actor":"fixture",
+                "entity":"plan","entity_plan":"existing","kind":"note"
+            }]
+        }"#,
+    )
+    .unwrap();
+    let error = pt::import(&mut destination, "restore", &external_event).unwrap_err();
+    assert!(
+        error.to_string().contains("absent from the dump"),
+        "{error:#}"
+    );
+    assert!(pt::resolve_plan(&destination, Some("incoming")).is_err());
+
+    let conflicting: pt::Dump = serde_json::from_str(
+        r#"{
+            "schema":"papertiger.dump.v7",
+            "plans":[{"slug":"existing","title":"Different",
+                "intent":"destination definition"}],
+            "tasks":[]
+        }"#,
+    )
+    .unwrap();
+    let error = pt::import(&mut destination, "restore", &conflicting).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("conflicts with the existing definition")
+    );
 }
 
 #[test]
@@ -762,7 +1291,7 @@ fn import_refuses_superseded_dump_with_a_complete_recovery_path() {
         .to_string();
     assert!(error.contains("release that produced it"));
     assert!(error.contains("papertiger --db <temporary-authority> init"));
-    assert!(error.contains("re-export `papertiger.dump.v6`"));
+    assert!(error.contains("re-export `papertiger.dump.v7`"));
 }
 
 #[test]
@@ -939,7 +1468,7 @@ fn failed_add_is_atomic() {
 fn import_rejects_cycles_missing_parents_and_done_open_gates() {
     let mut conn = db();
     let cycle: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v6","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v7","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"a","deps":[2]},
                      {"seq":2,"plan":"p","title":"b","deps":[1]}]}"#,
     )
@@ -947,14 +1476,14 @@ fn import_rejects_cycles_missing_parents_and_done_open_gates() {
     assert!(pt::import(&mut conn, "test", &cycle).is_err());
 
     let missing_parent: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v6","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v7","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":3,"plan":"p","title":"child","parent_seq":999}]}"#,
     )
     .unwrap();
     assert!(pt::import(&mut conn, "test", &missing_parent).is_err());
 
     let done_open: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v6","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v7","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":4,"plan":"p","title":"false done","status":"done",
                       "gates":[{"name":"g","kind":"test","requirement":"r"}]}]}"#,
     )
@@ -971,7 +1500,7 @@ fn import_rejects_cycles_missing_parents_and_done_open_gates() {
 fn import_allocates_omitted_sequences_before_linking() {
     let mut conn = db();
     let dump: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v6","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v7","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":7,"plan":"p","title":"parent"},
                      {"plan":"p","title":"child","parent_seq":7,"deps":[7]}]}"#,
     )
@@ -1109,7 +1638,12 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
     pt::start_task(&conn, "test", active_leaf, None).unwrap();
 
     let focus = pt::focus(&conn, plan, 20, true).unwrap();
-    let sequences = focus.iter().map(|entry| entry.task.seq).collect::<Vec<_>>();
+    let sequences = focus
+        .projection
+        .entries
+        .iter()
+        .map(|entry| entry.task.seq)
+        .collect::<Vec<_>>();
     assert!(!sequences.contains(&container));
     assert_eq!(sequences[0], active_leaf);
     assert!(
@@ -1118,12 +1652,16 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
         "explicit operator priority must outrank inferred graph breadth"
     );
     let prerequisite_entry = focus
+        .projection
+        .entries
         .iter()
         .find(|entry| entry.task.seq == prerequisite)
         .unwrap();
     assert_eq!(prerequisite_entry.immediate_unlock_count, 1);
     assert_eq!(prerequisite_entry.unfinished_downstream_count, 2);
     let dependent_entry = focus
+        .projection
+        .entries
         .iter()
         .find(|entry| entry.task.seq == dependent)
         .unwrap();
@@ -1221,9 +1759,17 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
     assert!(err.to_string().contains(&format!("dep:#{prerequisite}")));
     assert!(err.to_string().contains("blocker:operator input"));
     let default_focus = pt::focus(&conn, plan, 20, false).unwrap();
-    assert!(!default_focus.iter().any(|entry| entry.task.seq == decision));
+    assert!(
+        !default_focus
+            .projection
+            .entries
+            .iter()
+            .any(|entry| entry.task.seq == decision)
+    );
     let full_focus = pt::focus(&conn, plan, 20, true).unwrap();
     let entry = full_focus
+        .projection
+        .entries
         .iter()
         .find(|entry| entry.task.seq == decision)
         .unwrap();
@@ -1285,8 +1831,8 @@ fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
     .unwrap();
 
     let focus = pt::focus(&conn, plan, 10, false).unwrap();
-    assert_eq!(focus[0].task.seq, task);
-    assert_eq!(focus[0].readiness, "in_progress_blocked");
+    assert_eq!(focus.projection.entries[0].task.seq, task);
+    assert_eq!(focus.projection.entries[0].readiness, "in_progress_blocked");
     assert!(
         !pt::audit(&conn)
             .unwrap()
@@ -1522,7 +2068,7 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
     .unwrap();
 
     let dump = pt::export(&conn, Some("roundtrip-v2")).unwrap();
-    assert_eq!(dump.schema, "papertiger.dump.v6");
+    assert_eq!(dump.schema, "papertiger.dump.v7");
     let mut restored = db();
     pt::import(&mut restored, "test", &dump).unwrap();
     let restored_task = pt::get_task(&restored, task).unwrap();
@@ -1876,7 +2422,7 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
     for (fixture, expected) in [
         (
             r#"{
-                "schema":"papertiger.dump.v6",
+                "schema":"papertiger.dump.v7",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","gates":[{
                     "name":"proof","kind":"test","requirement":"prove it",
@@ -1887,7 +2433,7 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v6",
+                "schema":"papertiger.dump.v7",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","gates":[{
                     "name":"proof","kind":"test","requirement":"prove it",
@@ -1898,7 +2444,7 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v6",
+                "schema":"papertiger.dump.v7",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","blockers":[{
                     "name":"receipt","reason":"missing","status":"resolved",
@@ -1909,7 +2455,7 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v6",
+                "schema":"papertiger.dump.v7",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","blockers":[{
                     "name":"receipt","reason":"missing","status":"waived","note":"not needed"
@@ -1934,7 +2480,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
     for (fixture, expected) in [
         (
             r#"{
-                "schema":"papertiger.dump.v6",
+                "schema":"papertiger.dump.v7",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -1949,7 +2495,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v6",
+                "schema":"papertiger.dump.v7",
                 "plans":[{"slug":"p","title":"P"},{"slug":"q","title":"Q"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -1965,7 +2511,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v6",
+                "schema":"papertiger.dump.v7",
                 "plans":[{"slug":"p","title":"P"},{"slug":"q","title":"Q"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -1996,7 +2542,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
 fn import_refuses_invalid_task_status_event_targets_atomically() {
     let dump: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v6",
+            "schema":"papertiger.dump.v7",
             "plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"task"}],
             "events":[{
@@ -2046,7 +2592,7 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
 
     let external_event: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v6",
+            "schema":"papertiger.dump.v7",
             "plans":[{"slug":"incoming","title":"Incoming"}],
             "tasks":[{"seq":2,"plan":"incoming","title":"imported task"}],
             "events":[{
@@ -2078,7 +2624,7 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
 
     let collision: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v6",
+            "schema":"papertiger.dump.v7",
             "plans":[{"slug":"incoming","title":"Incoming"}],
             "tasks":[{"seq":1,"plan":"incoming","title":"colliding task"}]
         }"#,
@@ -2295,7 +2841,7 @@ fn audit_reports_corrupt_commit_association_identity_and_timestamp_fields() {
 }
 
 #[test]
-fn audit_reports_invalid_event_time_and_status_target_without_breaking_context_reads() {
+fn audit_reports_invalid_event_time_status_target_and_payload_corruption() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "history", "History", "").unwrap();
     let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
@@ -2319,6 +2865,21 @@ fn audit_reports_invalid_event_time_and_status_target_without_breaking_context_r
     assert!(kinds.contains(&"invalid_event_timestamp"), "{kinds:?}");
     assert!(kinds.contains(&"invalid_task_status_event"), "{kinds:?}");
     pt::task_context(&conn, task).expect("advisory history findings must not break context reads");
+
+    conn.execute(
+        "UPDATE events SET payload='{' WHERE entity_seq=?1 AND kind='status'",
+        [task],
+    )
+    .unwrap();
+    let findings = pt::audit(&conn).unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.kind == "invalid_event_payload")
+    );
+    let error = pt::task_context(&conn, task).unwrap_err();
+    assert!(error.to_string().contains("invalid stored JSON payload"));
+    assert!(error.to_string().contains("papertiger audit"));
 }
 
 #[test]
@@ -2608,7 +3169,7 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
         .unwrap();
 
         let dump = pt::export(&conn, plan_scope.then_some("main")).unwrap();
-        assert_eq!(dump.schema, "papertiger.dump.v6");
+        assert_eq!(dump.schema, "papertiger.dump.v7");
         let duplicate_dump = dump
             .tasks
             .iter()
@@ -2658,23 +3219,23 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
 fn import_refuses_invalid_replacement_graphs_atomically() {
     for (fixture, expected) in [
         (
-            r#"{"schema":"papertiger.dump.v6","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"live","replacement_seq":2},{"seq":2,"plan":"p","title":"target"}]}"#,
+            r#"{"schema":"papertiger.dump.v7","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"live","replacement_seq":2},{"seq":2,"plan":"p","title":"target"}]}"#,
             "is not retired",
         ),
         (
-            r#"{"schema":"papertiger.dump.v6","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":99}]}"#,
+            r#"{"schema":"papertiger.dump.v7","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":99}]}"#,
             "missing replacement #99",
         ),
         (
-            r#"{"schema":"papertiger.dump.v6","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"a","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"b","status":"retired","replacement_seq":1}]}"#,
+            r#"{"schema":"papertiger.dump.v7","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"a","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"b","status":"retired","replacement_seq":1}]}"#,
             "replacement cycle",
         ),
         (
-            r#"{"schema":"papertiger.dump.v6","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"rejected endpoint","status":"rejected"}]}"#,
+            r#"{"schema":"papertiger.dump.v7","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"rejected endpoint","status":"rejected"}]}"#,
             "replacement chain terminates",
         ),
         (
-            r#"{"schema":"papertiger.dump.v6","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"retired endpoint","status":"retired"}]}"#,
+            r#"{"schema":"papertiger.dump.v7","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"retired endpoint","status":"retired"}]}"#,
             "retired without its own replacement",
         ),
     ] {
@@ -2964,8 +3525,8 @@ fn audit_and_export_refuse_terminal_replacement_dead_ends() {
 }
 
 #[test]
-fn schema_v5_requires_explicit_init_before_adding_replacement_storage() {
-    let path = unique_test_path("explicit-v5-replacement-migration");
+fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
+    let path = unique_test_path("explicit-v5-through-v7-migration");
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.pragma_update(None, "foreign_keys", "ON").unwrap();
     pt::init(&conn).unwrap();
@@ -2984,7 +3545,9 @@ fn schema_v5_requires_explicit_init_before_adding_replacement_storage() {
     )
     .unwrap();
     conn.execute_batch(
-        "ALTER TABLE tasks DROP COLUMN replacement_task_id;
+        "ALTER TABLE tasks DROP COLUMN intent_source;
+         ALTER TABLE tasks DROP COLUMN result_source;
+         ALTER TABLE tasks DROP COLUMN replacement_task_id;
          UPDATE meta SET value='5' WHERE key='schema_version';",
     )
     .unwrap();
@@ -3005,6 +3568,16 @@ fn schema_v5_requires_explicit_init_before_adding_replacement_storage() {
         )
         .unwrap();
     assert!(has_replacement);
+    for column in ["intent_source", "result_source"] {
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tasks') WHERE name=?1)",
+                [column],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists, "missing v7 column {column}");
+    }
     drop(conn);
     std::fs::remove_file(path).unwrap();
 }
@@ -3070,6 +3643,28 @@ fn event_cursors_page_history_and_refuse_divergent_authorities() {
         vec![3, 4]
     );
     assert_eq!(after.continuation.unwrap().event_id, 4);
+
+    let head = pt::event_cursor(&conn, 4).unwrap();
+    let empty_poll = pt::event_log(&conn, None, 10, None, Some(&head.token)).unwrap();
+    assert!(empty_poll.events.is_empty());
+    assert_eq!(empty_poll.continuation.as_ref().unwrap().token, head.token);
+    pt::add_note(&conn, "writer", None, "arrived after the empty poll").unwrap();
+    let next_poll = pt::event_log(
+        &conn,
+        None,
+        10,
+        None,
+        Some(&empty_poll.continuation.unwrap().token),
+    )
+    .unwrap();
+    assert_eq!(
+        next_poll
+            .events
+            .iter()
+            .map(|event| event.event_id)
+            .collect::<Vec<_>>(),
+        vec![5]
+    );
 
     let task_only = pt::event_log(&conn, Some(first), 10, None, None).unwrap();
     assert_eq!(task_only.task_seq, Some(first));
@@ -3240,6 +3835,19 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         None,
     )
     .unwrap();
+    let cross_field_hit = pt::add_task(
+        &conn,
+        "planner",
+        primary,
+        "Restore object",
+        "store the recovered bytes",
+        None,
+        &[],
+        &[],
+        0,
+        None,
+    )
+    .unwrap();
 
     let ranked = pt::search_tasks(&conn, "object store", Some("primary"), None, 20).unwrap();
     assert_eq!(ranked.terms, vec!["object", "store"]);
@@ -3249,10 +3857,19 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
             .iter()
             .map(|hit| hit.task.seq)
             .collect::<Vec<_>>(),
-        vec![title_hit, intent_hit]
+        vec![title_hit, intent_hit, cross_field_hit]
     );
     assert_eq!(ranked.results[0].excerpt.field, "title");
     assert!(ranked.results[0].score > ranked.results[1].score);
+    let cross_field = ranked
+        .results
+        .iter()
+        .find(|hit| hit.task.seq == cross_field_hit)
+        .expect("cross-field exact token match");
+    assert_eq!(
+        cross_field.score, 34,
+        "restore must not earn a phrase bonus for store"
+    );
 
     let terminal = pt::search_tasks(&conn, "phantom checksum", None, None, 20).unwrap();
     assert_eq!(terminal.results[0].task.seq, rejected);
@@ -3285,6 +3902,64 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
 }
 
 #[test]
+fn search_refuses_an_unpageable_result_set_with_narrowing_commands() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "planner", "many", "Many", "").unwrap();
+    for index in 0..=200 {
+        pt::add_task(
+            &conn,
+            "planner",
+            plan,
+            &format!("common outcome {index}"),
+            "",
+            None,
+            &[],
+            &[],
+            0,
+            None,
+        )
+        .unwrap();
+    }
+    let error = pt::search_tasks(&conn, "common", Some("many"), None, 200).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("matched 201 tasks"), "{message}");
+    assert!(message.contains("--plan") && message.contains("--status"));
+}
+
+#[test]
+fn audit_advises_duplicate_live_titles_and_single_plan_export_keeps_global_events_global() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "planner", "work", "Work", "").unwrap();
+    for title in ["Same outcome", "same outcome"] {
+        pt::add_task(&conn, "planner", plan, title, "", None, &[], &[], 0, None).unwrap();
+    }
+    pt::add_note(&conn, "planner", None, "authority-global note").unwrap();
+    let findings = pt::audit(&conn).unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.kind == "duplicate_live_title")
+    );
+
+    let dump = pt::export(&conn, Some("work")).unwrap();
+    let global = dump
+        .events
+        .iter()
+        .find(|event| event.kind == "note" && event.entity_plan.is_none())
+        .expect("global note remains global in one-plan export");
+    assert!(global.entity_plan.is_none());
+    let mut restored = db();
+    pt::import(&mut restored, "restore", &dump).unwrap();
+    let restored_dump = pt::export(&restored, Some("work")).unwrap();
+    assert!(
+        restored_dump
+            .events
+            .iter()
+            .any(|event| event.kind == "note" && event.entity_plan.is_none())
+    );
+}
+
+#[test]
 fn recovery_export_file_is_atomic_hash_bound_and_refuses_unreviewed_replace() {
     let conn = db();
     let plan = pt::add_plan(&conn, "planner", "recovery", "Recovery", "").unwrap();
@@ -3306,7 +3981,7 @@ fn recovery_export_file_is_atomic_hash_bound_and_refuses_unreviewed_replace() {
     let receipt = pt::write_export_file(&path, &dump, false).unwrap();
     let first_bytes = std::fs::read(&path).unwrap();
     assert_eq!(receipt.schema, "papertiger.export_file.v1");
-    assert_eq!(receipt.dump_schema, "papertiger.dump.v6");
+    assert_eq!(receipt.dump_schema, "papertiger.dump.v7");
     assert_eq!(receipt.sha256, pt::sha256(&first_bytes));
     assert_eq!(receipt.bytes, first_bytes.len());
     assert!(first_bytes.ends_with(b"\n"));

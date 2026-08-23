@@ -120,8 +120,13 @@ fn candidate_record_validates_authority_before_creating_cas() {
         "absent authority must fail closed"
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("open existing papertiger-mise database"),
+        String::from_utf8_lossy(&output.stderr).contains("no papertiger-mise authority exists at"),
         "candidate record did not validate authority first: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("papertiger-mise --db"),
+        "missing-authority refusal omitted its corrective command: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!database.exists(), "candidate record created an authority");

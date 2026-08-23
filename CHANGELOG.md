@@ -6,8 +6,98 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-23
+
+### Added
+
+- `add --start` atomically creates and starts ready work with one rationale;
+  any start refusal rolls back the task and its events.
+- Intent, result, and note text can record a `user`, `agent`, or `external`
+  meaning source independently of the actor that performed the mutation. The
+  provenance is visible in task context and history and survives export/import.
+- `evidence verify` checks retained `file:` bindings from one stable read of a
+  project-contained regular file. It does not mutate the authority, refuses
+  missing, unhashed, escaped, symlinked, or changed evidence, and reports exact
+  corrective argument vectors.
+- `blocker reopen` provides an evented repair path when a resolved blocker must
+  be restored before rebinding evidence or completing work again.
+
 ### Changed
 
+- Planner and Mise authorities use schema v8 with distinct typed identities.
+  Each binary refuses the other's database before migration or mutation. A v7
+  authority requires its matching binary's explicit `init` command; transfer
+  remains compatible with `papertiger.dump.v7` because modeled dump data did
+  not change.
+- Installed agent guidance treats independently reviewable outcomes, separate
+  commits, and exact resume work as durable planning cases even when one
+  session can finish them. It also names bounded edits, read-only work,
+  intermediate steps, and domain-owned lifecycle as explicit skip cases.
+  Directly requested outcomes record `intent_source=user`, and commit-backed
+  outcomes receive an inward full-OID association before completion.
+- The installed contract defines a repository guidance discovery trigger with
+  those same boundaries. `setup-project` remains additive and never edits a
+  consuming repository's `AGENTS.md`, `CLAUDE.md`, or equivalent guidance.
+- Task titles are limited to 160 characters. Tags are trimmed, limited to 64
+  characters, and blank values are refused. Import applies the same canonical
+  validation, and replacing sourced intent requires explicitly replacing or
+  clearing its meaning source.
+- Every top-level Mise command namespace now describes its operational boundary
+  in `--help` instead of rendering as an unexplained noun.
+
+### Fixed
+
+- Import validates the complete dump before committing any rows, refuses event
+  references outside the dump, and requires a reused plan to have the same
+  definition as the destination plan.
+- `log --after-cursor` reads from one SQLite snapshot, and `focus --json`
+  reports scope, ordering, eligible, returned, omitted, completeness, and an
+  exact continuation command for bounded results.
+- Search refuses a result set too broad to return completely instead of
+  silently truncating it, and plan-scoped exports retain global events as
+  global rather than rebinding them to the selected plan.
+- Missing, empty, corrupt, legacy, and foreign SQLite files produce
+  authority-specific refusals with a corrective command or exact missing input.
+  Corrupt event payloads are reported or refused rather than silently omitted.
+
+## [0.8.1] - 2026-08-13
+
+### Added
+
+- The native planner binary now discovers the nearest tracked project-install
+  receipt by walking upward from the current directory, verifies the pinned
+  Papertiger version, and binds the receipt-selected authority itself.
+
+### Changed
+
+- Project skills and operating guidance now invoke the native Papertiger binary
+  directly. Contextmink's process bridge remains reserved for child-process and
+  argv relay; it is not part of planner execution.
+- `setup-project` now installs one runtime surface and safely retires prior
+  receipt-owned Bash and Windows launchers when their hashes still match.
+
+### Removed
+
+- Project-managed `scripts/papertiger` and `scripts/papertiger.cmd` launchers.
+  Project identity and database selection no longer depend on shell scripts.
+
+## [0.8.0] - 2026-08-13
+
+### Added
+
+- Status v2 distinguishes complete in-progress parent and leaf projections and
+  gives every bounded ready-work and recent-note projection exact scope,
+  ordering, eligible, returned, and omitted counts plus a continuation command.
+- Task edits now retain canonical before/after definition revisions in their
+  event payloads. Public history labels pre-revision edit events without
+  inventing snapshots, rejects no-op edits, and audits malformed new revisions.
+
+### Changed
+
+- Read commands now open the planning authority read-only by construction. The
+  installed skill provides a self-contained cold-read path, requires the full
+  authority contract only before mutation or advanced use, and prohibits
+  crossing shells merely to reach a launcher.
 - Release publication now unfolds source hard-wrapping before creating the
   GitHub description, keeping headings, paragraphs, and list items on semantic
   boundaries instead of retaining arbitrary mid-sentence newlines.
@@ -67,8 +157,8 @@ development version and has no public tag or release artifact.
 - Made task sequences explicitly authority-local and prohibited Papertiger task
   references in shared Git and release prose.
 - Made `task.seq` the sole authority-local task identity across schema, CLI,
-  API, and transfer. Current schema v6 accepts only the
-  `papertiger.dump.v6` contract; restoring an older dump requires its matching
+  API, and transfer. Schema v6 accepts only the `papertiger.dump.v6` contract;
+  restoring an older dump requires its matching
   release, authority migration, and re-export.
 - Standardized mutation subcommands on the single canonical `remove` spelling.
 - Gave every SQLite connection a fixed 500 ms lock grace while keeping command
@@ -141,7 +231,10 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/virtualonno/papertiger/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/virtualonno/papertiger/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/virtualonno/papertiger/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/virtualonno/papertiger/releases/tag/v0.7.1
 [0.7.0]: https://github.com/virtualonno/papertiger/releases/tag/v0.7.0
 [0.5.0]: https://github.com/virtualonno/papertiger/releases/tag/v0.5.0

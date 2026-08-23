@@ -1,6 +1,6 @@
 //! Stable, mutation-free projections for history-aware planner reads.
 
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
@@ -8,9 +8,9 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    Plan, SCHEMA_VERSION, TASK_STATUSES, Task, get_plan, get_task, leaf_tasks_with_status,
+    Plan, SCHEMA_VERSION, TASK_DEFINITION_REVISION_SCHEMA, TASK_STATUSES, Task, get_plan, get_task,
     list_tasks, list_tasks_by_activity, portable_absolute, ready_tasks, resolve_plan,
-    task_tags_by_id, validate_sha256,
+    task_tags_by_id, valid_task_definition_revision_payload, validate_sha256,
 };
 
 const EVENT_CURSOR_PREFIX: &str = "event-v1";
@@ -34,6 +34,8 @@ pub struct EventRecord {
     pub kind: String,
     pub why: Option<String>,
     pub payload: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_definition_revision_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -117,11 +119,57 @@ pub struct StatusReadyTask {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct StatusProjection<T> {
+    pub scope: String,
+    pub ordering: String,
+    pub eligible_count: usize,
+    pub returned_count: usize,
+    pub omitted_count: usize,
+    pub complete: bool,
+    pub continuation_command: Option<String>,
+    pub entries: Vec<T>,
+}
+
+impl<T> StatusProjection<T> {
+    pub(crate) fn new(
+        scope: impl Into<String>,
+        ordering: impl Into<String>,
+        eligible_count: usize,
+        entries: Vec<T>,
+        continuation_command: Option<String>,
+    ) -> Self {
+        let returned_count = entries.len();
+        let omitted_count = eligible_count.saturating_sub(returned_count);
+        Self {
+            scope: scope.into(),
+            ordering: ordering.into(),
+            eligible_count,
+            returned_count,
+            omitted_count,
+            complete: omitted_count == 0,
+            continuation_command: (omitted_count > 0)
+                .then_some(continuation_command)
+                .flatten(),
+            entries,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusInProgress {
+    pub all_count: usize,
+    pub parent_count: usize,
+    pub leaf_count: usize,
+    pub parents: StatusProjection<StatusTask>,
+    pub leaves: StatusProjection<StatusTask>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct PlanStatus {
     pub plan: Plan,
     pub counts: TaskCounts,
-    pub in_progress: Vec<StatusTask>,
-    pub ready: Vec<StatusReadyTask>,
+    pub in_progress: StatusInProgress,
+    pub ready: StatusProjection<StatusReadyTask>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,7 +177,7 @@ pub struct StatusResponse {
     pub schema: String,
     pub authority: AuthorityInfo,
     pub active_plans: Vec<PlanStatus>,
-    pub recent_notes: Vec<EventRecord>,
+    pub recent_notes: StatusProjection<EventRecord>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -166,6 +214,39 @@ struct StoredEvent {
 
 impl StoredEvent {
     fn public(self) -> Result<EventRecord> {
+        let payload: Option<serde_json::Value> = self
+            .payload
+            .map(|raw| {
+                serde_json::from_str::<serde_json::Value>(&raw).with_context(|| {
+                    format!(
+                        "event {} has invalid stored JSON payload; run `papertiger audit`",
+                        self.event_id
+                    )
+                })
+            })
+            .transpose()?;
+        let task_definition_revision_state = if self.entity == "task" && self.kind == "edit" {
+            Some(
+                match payload
+                    .as_ref()
+                    .and_then(|value| value.get("revision_schema"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    Some(TASK_DEFINITION_REVISION_SCHEMA)
+                        if payload
+                            .as_ref()
+                            .is_some_and(valid_task_definition_revision_payload) =>
+                    {
+                        "complete"
+                    }
+                    None => "legacy_without_snapshots",
+                    _ => "invalid",
+                }
+                .into(),
+            )
+        } else {
+            None
+        };
         Ok(EventRecord {
             event_id: self.event_id,
             at: self.at,
@@ -176,10 +257,8 @@ impl StoredEvent {
             gate: self.gate_name,
             kind: self.kind,
             why: self.why,
-            payload: self
-                .payload
-                .map(|raw| serde_json::from_str(&raw).context("invalid stored event payload"))
-                .transpose()?,
+            payload,
+            task_definition_revision_state,
         })
     }
 
@@ -374,7 +453,10 @@ pub fn event_log(
             .map(|event_id| event_cursor(conn, event_id))
             .transpose()?
     } else if ascending {
-        head.clone()
+        last_event_id
+            .map(|event_id| event_cursor(conn, event_id))
+            .transpose()?
+            .or(after.clone())
     } else {
         None
     };
@@ -417,17 +499,24 @@ pub fn task_activity(conn: &Connection, seq: i64) -> Result<TaskActivity> {
             created_event = Some(activity.clone());
         }
         if event.entity == "task" && event.kind == "status" {
-            status_event = Some(activity.clone());
-            let status = event
+            let payload = event
                 .payload
                 .as_deref()
-                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-                .and_then(|value| {
-                    value
-                        .get("to")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned)
-                });
+                .map(serde_json::from_str::<serde_json::Value>)
+                .transpose()
+                .with_context(|| {
+                    format!(
+                        "task #{seq} status event {} has invalid stored JSON payload; run `papertiger audit`",
+                        event.event_id
+                    )
+                })?;
+            status_event = Some(activity.clone());
+            let status = payload.and_then(|value| {
+                value
+                    .get("to")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            });
             match status.as_deref() {
                 Some("in_progress") => latest_started_event = Some(activity),
                 Some("done") => latest_completed_event = Some(activity),
@@ -490,21 +579,64 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
                 ),
             }
         }
-        let in_progress = leaf_tasks_with_status(conn, plan_id, "in_progress")?
+        let parent_ids = list_tasks(conn, plan_id, None, None)?
             .into_iter()
-            .map(|task| {
-                Ok(StatusTask {
-                    activity: task_activity(conn, task.seq)?,
-                    task: TaskSummary::from(&task),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let ready = ready_tasks(conn, plan_id, 5, false)?
+            .filter_map(|task| task.parent_id)
+            .collect::<HashSet<_>>();
+        let mut in_progress_parents = Vec::new();
+        let mut in_progress_leaves = Vec::new();
+        for task in list_tasks(conn, plan_id, Some("in_progress"), None)? {
+            let entry = StatusTask {
+                activity: task_activity(conn, task.seq)?,
+                task: TaskSummary::from(&task),
+            };
+            if parent_ids.contains(&task.task_id) {
+                in_progress_parents.push(entry);
+            } else {
+                in_progress_leaves.push(entry);
+            }
+        }
+        let parent_count = in_progress_parents.len();
+        let leaf_count = in_progress_leaves.len();
+        let in_progress = StatusInProgress {
+            all_count: parent_count + leaf_count,
+            parent_count,
+            leaf_count,
+            parents: StatusProjection::new(
+                "in_progress tasks with at least one child",
+                "task.seq ascending",
+                parent_count,
+                in_progress_parents,
+                None,
+            ),
+            leaves: StatusProjection::new(
+                "in_progress tasks without children",
+                "task.seq ascending",
+                leaf_count,
+                in_progress_leaves,
+                None,
+            ),
+        };
+        let ready_entries = ready_tasks(conn, plan_id, usize::MAX, false)?;
+        let ready_eligible = ready_entries.len();
+        let ready = ready_entries
             .into_iter()
+            .take(5)
             .map(|entry| StatusReadyTask {
                 task: TaskSummary::from(&entry.task),
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let focus_limit = leaf_count + ready_eligible;
+        let ready = StatusProjection::new(
+            "proposed leaf tasks with no open dependencies or blockers",
+            "priority descending, then task.seq ascending",
+            ready_eligible,
+            ready,
+            Some(format!(
+                "papertiger focus --plan {} --limit {focus_limit} --json",
+                plan.slug
+            )),
+        );
         active_plans.push(PlanStatus {
             plan,
             counts,
@@ -512,6 +644,11 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
             ready,
         });
     }
+    let recent_note_count =
+        conn.query_row("SELECT COUNT(*) FROM events WHERE kind='note'", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+    let recent_note_count = usize::try_from(recent_note_count)?;
     let mut note_statement = conn.prepare(
         "SELECT event_id, at, actor, entity, entity_id, entity_plan, entity_seq,
                 gate_name, kind, why, payload
@@ -526,8 +663,15 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
         .into_iter()
         .map(StoredEvent::public)
         .collect::<Result<Vec<_>>>()?;
+    let recent_notes = StatusProjection::new(
+        "note events across this planning authority",
+        "event_id descending",
+        recent_note_count,
+        recent_notes,
+        Some("papertiger log --json".into()),
+    );
     Ok(StatusResponse {
-        schema: "papertiger.status.v1".into(),
+        schema: "papertiger.status.v2".into(),
         authority: authority_info(conn, requested_path)?,
         active_plans,
         recent_notes,

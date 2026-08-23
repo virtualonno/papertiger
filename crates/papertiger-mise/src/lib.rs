@@ -124,10 +124,10 @@ pub use statistics::{
     paired_schedule_sha256, reserve_paired_analysis_slot,
 };
 pub use store::{
-    AdmissionOutcome, AuthorityStatus, CampaignRecord, CampaignSummary, EventRecord,
-    SCHEMA_VERSION, SuccessorAdmissionRecord, append_campaign_event, authority_status, campaign,
-    campaign_events, init, open_existing, open_existing_read_only, open_for_init,
-    successor_admission,
+    AdmissionOutcome, AuthorityInitOutcome, AuthorityStatus, CampaignRecord, CampaignSummary,
+    EventRecord, SCHEMA_VERSION, SuccessorAdmissionRecord, append_campaign_event, authority_status,
+    campaign, campaign_events, init, init_at, open_existing, open_existing_read_only,
+    open_for_init, successor_admission,
 };
 pub use successor::{
     PARENT_PROMOTION_PROOF_SCHEMA_V1, PARENT_PROMOTION_PROOF_SCHEMA_V2, ParentPromotionProof,

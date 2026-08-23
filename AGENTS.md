@@ -9,8 +9,9 @@ two separate SQLite authorities, one workspace.
 This file is the always-loaded contract. Load operational detail only when
 needed:
 
-- **Planner usage**: `agent_integration.md` (the one-page vendored
-  contract).
+- **Planner usage**: `agent_integration.md` (the vendored operating contract).
+- **Human changelogs**: `.agents/skills/changelog-writing/SKILL.md` (source,
+  reader, compatibility, and deletion standard).
 - **Mise campaigns**: `MISE.md` (generational model, evidence contract,
   promotion boundary). Ordinary planning work never needs it.
 - **Live truth**: `papertiger status` / `focus` / `show <N> --json`, never
@@ -18,7 +19,7 @@ needed:
 
 **Do not grow this file with operational detail.** New commands, flags, and
 contracts go to the document that owns them; this file gets at most a one-line
-trip-wire plus pointer. Keep `AGENTS.md` and `CLAUDE.md` byte-identical and
+discovery trigger plus pointer. Keep `AGENTS.md` and `CLAUDE.md` byte-identical and
 each under 32 KiB.
 
 ## Hard Rules
@@ -45,6 +46,14 @@ each under 32 KiB.
 
 ## Planning Use in This Repository
 
+- Before the first edit or commit on multi-outcome or separate-commit work, or
+  work matching an existing durable task, read
+  `.agents/skills/papertiger/SKILL.md` completely and follow it. Skip one
+  bounded edit, read-only review, intermediate steps inside one independently
+  reviewable outcome, and domain-owned or shared-team lifecycle.
+- Invoke the receipt-bound binary at
+  `tools/papertiger/bin/papertiger[.exe]`; do not guess from `target/` or rely
+  on an unrelated `papertiger` on `PATH`.
 - Enter from live truth: `status`, `focus`, `show <N> --json`. Roadmap prose,
   handoff notes, and memories are orientation only — if they disagree with the
   DB, the DB wins and the prose gets corrected.
@@ -56,7 +65,8 @@ each under 32 KiB.
   same-session checklist steps. Markdown carries doctrine, zero status.
 - Check `list --status rejected` before proposing a revival; read its `--why`.
 - Treat `task.seq` as authority-local: never put Papertiger task numbers in
-  shared Git/PR/changelog prose. Record optional commit associations inward.
+  shared Git/PR/changelog prose. Associate any commit-backed outcome inward by
+  full OID before completion; omit it only when no commit represents the task.
 - When validated deferred work, proof debt, or tooling friction should survive
   this session, use the Papertiger contract proactively; do not create
   same-session checklist tasks or interrupt authorized work unnecessarily.
@@ -67,7 +77,7 @@ each under 32 KiB.
   `cargo fmt --check`, `cargo clippy --workspace --all-targets` (warnings are
   defects), `cargo test --workspace`, and for Mise changes
   `cargo test -p papertiger-mise --test deterministic_dogfood -- --test-threads=1`.
-- **Fail-closed is the house style.** No error swallowing, no optimistic
+- **Fail-closed is the project standard.** No error swallowing, no optimistic
   defaults, no converting an integrity failure into a score or a skipped
   check. A refusal path is a feature with tests, not dead weight.
 - **Doc–code honesty rule.** `MISE.md` and `README.md` state capabilities in
@@ -88,7 +98,7 @@ each under 32 KiB.
 - Every public refusal message names the corrective command or the exact
   missing input. That standard already exists in the codebase; match it.
 
-## Mise Boundary (trip-wires)
+## Mise Integrity Boundaries
 
 - A nomination is evidence, never promotion. Nothing in this repo may close a
   Papertiger gate, advance a branch, or "deploy" from a Mise result; promotion

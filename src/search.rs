@@ -119,7 +119,7 @@ pub fn search_tasks(
             }
             matched_fields.push(field.name.to_owned());
             score += field.weight * i64::try_from(term_matches)?;
-            if field.normalized.contains(&phrase) {
+            if contains_phrase(&field.normalized, &phrase) {
                 score += field.phrase_bonus;
             }
         }
@@ -154,6 +154,11 @@ pub fn search_tasks(
             .then_with(|| left.task.seq.cmp(&right.task.seq))
     });
     let total_matches = hits.len();
+    if total_matches > MAX_SEARCH_RESULTS {
+        bail!(
+            "search matched {total_matches} tasks, exceeding the complete projection maximum of {MAX_SEARCH_RESULTS}; narrow the query with more terms, --plan, or --status"
+        );
+    }
     hits.truncate(limit);
     Ok(SearchResponse {
         schema: "papertiger.search.v1".into(),
@@ -230,10 +235,22 @@ fn contains_term(normalized: &str, term: &str) -> bool {
     normalized.split_whitespace().any(|token| token == term)
 }
 
+fn contains_phrase(normalized: &str, phrase: &str) -> bool {
+    let mut tokens = normalized.split_whitespace();
+    let phrase = phrase.split_whitespace().collect::<Vec<_>>();
+    if phrase.is_empty() {
+        return false;
+    }
+    let tokens = tokens.by_ref().collect::<Vec<_>>();
+    tokens
+        .windows(phrase.len())
+        .any(|window| window == phrase.as_slice())
+}
+
 fn select_excerpt(fields: &[SearchField], terms: &[String], phrase: &str) -> SearchExcerpt {
     let field = fields
         .iter()
-        .find(|field| field.normalized.contains(phrase))
+        .find(|field| contains_phrase(&field.normalized, phrase))
         .or_else(|| {
             fields.iter().find(|field| {
                 terms
@@ -292,6 +309,12 @@ mod tests {
     fn term_matching_does_not_expand_to_substrings() {
         assert!(contains_term("start activity", "start"));
         assert!(!contains_term("start activity", "art"));
+    }
+
+    #[test]
+    fn phrase_matching_requires_complete_adjacent_tokens() {
+        assert!(contains_phrase("store object bytes", "store object"));
+        assert!(!contains_phrase("restore object bytes", "store object"));
     }
 
     #[test]

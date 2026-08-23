@@ -3,7 +3,10 @@ use rusqlite::{
     Connection, ErrorCode, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 mod digest;
 pub use digest::{sha256, sha256_bytes, validate_sha256};
@@ -11,14 +14,16 @@ mod atomic_file;
 pub use atomic_file::{atomic_create_file, atomic_replace_file};
 mod export_file;
 pub use export_file::{ExportFileReceipt, write_export_file};
+mod evidence;
+pub use evidence::{EvidenceBindingVerification, EvidenceVerificationReport, verify_evidence};
 mod path_identity;
 pub use path_identity::portable_absolute;
 mod read_model;
 pub use read_model::{
-    ActivityEvent, AuthorityInfo, EventCursor, EventLog, EventRecord, PlanStatus, StatusReadyTask,
-    StatusResponse, StatusTask, TaskActivity, TaskCounts, TaskListItem, TaskListResponse,
-    TaskSummary, authority_info, event_cursor, event_head, event_log, status_response,
-    task_activity, task_list_response,
+    ActivityEvent, AuthorityInfo, EventCursor, EventLog, EventRecord, PlanStatus, StatusInProgress,
+    StatusProjection, StatusReadyTask, StatusResponse, StatusTask, TaskActivity, TaskCounts,
+    TaskListItem, TaskListResponse, TaskSummary, authority_info, event_cursor, event_head,
+    event_log, status_response, task_activity, task_list_response,
 };
 mod search;
 pub use search::{SearchExcerpt, SearchHit, SearchResponse, search_tasks};
@@ -40,11 +45,17 @@ pub use mise_projection_contract::{
     MiseSourceProjection,
 };
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 8;
+pub const AUTHORITY_IDENTITY: &str = "papertiger.planner";
+const AUTHORITY_IDENTITY_KEY: &str = "authority";
+pub const TASK_DEFINITION_REVISION_SCHEMA: &str = "papertiger.task_definition_revision.v1";
+pub const MAX_TASK_TITLE_CHARS: usize = 160;
+pub const MAX_TAG_CHARS: usize = 64;
 const SQLITE_LOCK_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 
 pub const TASK_STATUSES: [&str; 5] = ["proposed", "in_progress", "done", "retired", "rejected"];
 pub const TASK_KINDS: [&str; 3] = ["work", "probe", "decision"];
+pub const MEANING_SOURCES: [&str; 3] = ["user", "agent", "external"];
 pub const GATE_KINDS: [&str; 8] = [
     "test",
     "benchmark",
@@ -94,6 +105,7 @@ pub fn open_for_init(path: &str) -> Result<Connection> {
 }
 
 pub fn open_existing(path: &str) -> Result<Connection> {
+    require_existing_authority_path(path)?;
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
         .with_context(|| format!("open existing papertiger database {path}"))?;
     let conn = configure_connection(conn)?;
@@ -105,11 +117,76 @@ pub fn open_existing(path: &str) -> Result<Connection> {
 /// Evidence consumers such as papertiger-mise use this to verify an exact
 /// promotion gate while preserving Papertiger's independent ownership.
 pub fn open_existing_read_only(path: &str) -> Result<Connection> {
+    require_existing_authority_path(path)?;
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("open existing papertiger database read-only {path}"))?;
     let conn = configure_connection(conn)?;
     validate_existing(&conn, path)?;
     Ok(conn)
+}
+
+fn require_existing_authority_path(path: &str) -> Result<()> {
+    if !Path::new(path).exists() {
+        bail!(
+            "no Papertiger authority exists at {path}; run `papertiger --db {path} init` to create one, but if prior work existed, locate the original authority or restore an export instead of initializing"
+        );
+    }
+    Ok(())
+}
+
+fn has_table(conn: &Connection, name: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1",
+            params![name],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false))
+}
+
+fn authority_identity(conn: &Connection) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT value FROM meta WHERE key=?1",
+        params![AUTHORITY_IDENTITY_KEY],
+        |row| row.get(0),
+    )
+    .optional()
+    .context("read Papertiger authority identity from meta.authority")
+}
+
+fn require_planner_identity(conn: &Connection, path: &str, allow_legacy: bool) -> Result<()> {
+    if let Some(identity) = authority_identity(conn)? {
+        if identity == AUTHORITY_IDENTITY {
+            return Ok(());
+        }
+        if identity == "papertiger.mise" {
+            bail!(
+                "{path} is a papertiger-mise authority, not a Papertiger planning authority; use `papertiger-mise --db {path} status` or select the planning database with `papertiger --db <planner-authority>`"
+            );
+        }
+        bail!(
+            "{path} has foreign authority identity {identity:?}; select the Papertiger planning database with `papertiger --db <planner-authority>`"
+        );
+    }
+    if has_table(conn, "campaigns")? {
+        bail!(
+            "{path} is a legacy papertiger-mise authority without typed identity; migrate it only with `papertiger-mise --db {path} init`"
+        );
+    }
+    let planner_shape =
+        has_table(conn, "plans")? && has_table(conn, "tasks")? && has_table(conn, "events")?;
+    if allow_legacy && planner_shape {
+        return Ok(());
+    }
+    if planner_shape {
+        bail!(
+            "{path} is a legacy Papertiger planning authority without typed identity; run `papertiger --db {path} init` explicitly to migrate it to schema v{SCHEMA_VERSION}"
+        );
+    }
+    bail!(
+        "{path} has Papertiger-style metadata but no recognized authority identity; restore a verified export or select the planning database with `papertiger --db <planner-authority>`"
+    )
 }
 
 fn validate_existing(conn: &Connection, path: &str) -> Result<()> {
@@ -119,14 +196,36 @@ fn validate_existing(conn: &Connection, path: &str) -> Result<()> {
             [],
             |_| Ok(true),
         )
-        .optional()?
+        .optional()
+        .with_context(|| {
+            format!(
+                "{path} is not a readable SQLite database; select a Papertiger authority or create one with `papertiger --db <new-path> init`"
+            )
+        })?
         .unwrap_or(false);
     if !has_meta {
+        let object_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+                [],
+                |row| row.get(0),
+            )
+            .with_context(|| {
+                format!(
+                    "{path} is not a readable SQLite database; select a Papertiger authority or create one with `papertiger --db <new-path> init`"
+                )
+            })?;
+        if object_count > 0 {
+            bail!(
+                "{path} is a SQLite database with {object_count} non-Papertiger object(s) and no Papertiger authority metadata; select the planning database with `papertiger --db <planner-authority>`"
+            );
+        }
         bail!(
-            "{path} is not an initialized papertiger database; run `papertiger --db {path} init`"
+            "{path} is an empty SQLite database without a Papertiger authority; run `papertiger --db {path} init` to initialize it"
         );
     }
-    let version = schema_version(conn)?;
+    require_planner_identity(conn, path, false)?;
+    let version = schema_version(conn, path)?;
     if version != SCHEMA_VERSION {
         bail!(
             "{path} uses papertiger schema v{version}; run `papertiger --db {path} init` explicitly to upgrade to v{SCHEMA_VERSION}"
@@ -135,14 +234,30 @@ fn validate_existing(conn: &Connection, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn schema_version(conn: &Connection) -> Result<i64> {
-    let raw: String = conn.query_row(
+fn schema_version(conn: &Connection, path: &str) -> Result<i64> {
+    let raw: String = conn
+        .query_row(
         "SELECT value FROM meta WHERE key='schema_version'",
         [],
         |row| row.get(0),
-    )?;
-    raw.parse()
-        .map_err(|_| anyhow!("corrupt schema_version '{raw}'"))
+    )
+        .with_context(|| {
+            format!(
+                "{path} has no Papertiger meta.schema_version; restore a verified export or select the correct planning authority"
+            )
+        })?;
+    raw.parse().map_err(|_| {
+        anyhow!(
+            "{path} has corrupt Papertiger meta.schema_version {raw:?}; restore a verified export or select the correct planning authority"
+        )
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InitOutcome {
+    Created,
+    Migrated { from: i64, to: i64 },
+    Current,
 }
 
 /// Reserve SQLite's writer slot within the connection-wide lock grace. The
@@ -153,18 +268,40 @@ pub fn begin_mutation(conn: &Connection) -> Result<Transaction<'_>> {
         .context("begin papertiger mutation")
 }
 
-pub fn init(conn: &Connection) -> Result<()> {
+pub fn init(conn: &Connection) -> Result<InitOutcome> {
+    init_at(conn, "the selected database")
+}
+
+pub fn init_at(conn: &Connection, path: &str) -> Result<InitOutcome> {
     let has_meta: bool = conn
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'",
             [],
             |_| Ok(true),
         )
-        .optional()?
+        .optional()
+        .with_context(|| {
+            format!(
+                "{path} is not a readable SQLite database; select a Papertiger authority or replace it only after preserving the original bytes, then run `papertiger --db <new-path> init`"
+            )
+        })?
         .unwrap_or(false);
     if has_meta {
-        migrate(conn, schema_version(conn)?)?;
-        return Ok(());
+        require_planner_identity(conn, path, true)?;
+        let from = schema_version(conn, path)?;
+        if from == SCHEMA_VERSION {
+            if authority_identity(conn)?.as_deref() != Some(AUTHORITY_IDENTITY) {
+                bail!(
+                    "{path} is schema v{SCHEMA_VERSION} but lacks Papertiger authority identity; restore a verified export instead of repairing identity in place"
+                );
+            }
+            return Ok(InitOutcome::Current);
+        }
+        migrate(conn, from)?;
+        return Ok(InitOutcome::Migrated {
+            from,
+            to: SCHEMA_VERSION,
+        });
     }
     let initial_page_count: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
     let tx = begin_mutation(conn)?;
@@ -208,8 +345,10 @@ CREATE TABLE tasks (
   replacement_task_id INTEGER REFERENCES tasks(task_id),
   title TEXT NOT NULL,
   intent TEXT NOT NULL DEFAULT '',
+  intent_source TEXT CHECK (intent_source IN ('user','agent','external')),
   kind TEXT NOT NULL DEFAULT 'work' CHECK (kind IN ('work','probe','decision')),
   result TEXT,
+  result_source TEXT CHECK (result_source IN ('user','agent','external')),
   status TEXT NOT NULL DEFAULT 'proposed'
     CHECK (status IN ('proposed','in_progress','done','retired','rejected')),
   priority INTEGER NOT NULL DEFAULT 0,
@@ -286,8 +425,12 @@ CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, c
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
     )?;
+    tx.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+        params![AUTHORITY_IDENTITY_KEY, AUTHORITY_IDENTITY],
+    )?;
     tx.commit()?;
-    Ok(())
+    Ok(InitOutcome::Created)
 }
 
 fn migrate(conn: &Connection, from: i64) -> Result<()> {
@@ -396,6 +539,24 @@ ALTER TABLE tasks
         )?;
         version = 6;
     }
+    if version == 6 {
+        tx.execute_batch(
+            r#"
+ALTER TABLE tasks
+  ADD COLUMN intent_source TEXT CHECK (intent_source IN ('user','agent','external'));
+ALTER TABLE tasks
+  ADD COLUMN result_source TEXT CHECK (result_source IN ('user','agent','external'));
+"#,
+        )?;
+        version = 7;
+    }
+    if version == 7 {
+        tx.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, ?2)",
+            params![AUTHORITY_IDENTITY_KEY, AUTHORITY_IDENTITY],
+        )?;
+        version = 8;
+    }
     if version != SCHEMA_VERSION {
         bail!("no papertiger migration path from schema v{from} to v{SCHEMA_VERSION}");
     }
@@ -408,12 +569,32 @@ ALTER TABLE tasks
 }
 
 pub fn add_note(conn: &Connection, actor: &str, task_seq: Option<i64>, text: &str) -> Result<()> {
+    add_note_with_source(conn, actor, task_seq, text, None)
+}
+
+pub fn add_note_with_source(
+    conn: &Connection,
+    actor: &str,
+    task_seq: Option<i64>,
+    text: &str,
+    meaning_source: Option<&str>,
+) -> Result<()> {
+    let meaning_source = validate_meaning_source(meaning_source)?;
     let tx = begin_mutation(conn)?;
     let (entity, entity_id) = match task_seq {
         Some(seq) => ("task", Some(get_task(&tx, seq)?.task_id)),
         None => ("plan", None),
     };
-    record_event_in_mutation(&tx, actor, entity, entity_id, "note", Some(text), None)?;
+    let payload = meaning_source.map(|source| serde_json::json!({"meaning_source": source}));
+    record_event_in_mutation(
+        &tx,
+        actor,
+        entity,
+        entity_id,
+        "note",
+        Some(text),
+        payload.as_ref(),
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -493,8 +674,10 @@ pub struct Task {
     pub replacement_task_id: Option<i64>,
     pub title: String,
     pub intent: String,
+    pub intent_source: Option<String>,
     pub kind: String,
     pub result: Option<String>,
+    pub result_source: Option<String>,
     pub status: String,
     pub priority: i64,
 }
@@ -546,14 +729,16 @@ pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         replacement_task_id: r.get(4)?,
         title: r.get(5)?,
         intent: r.get(6)?,
-        kind: r.get(7)?,
-        result: r.get(8)?,
-        status: r.get(9)?,
-        priority: r.get(10)?,
+        intent_source: r.get(7)?,
+        kind: r.get(8)?,
+        result: r.get(9)?,
+        result_source: r.get(10)?,
+        status: r.get(11)?,
+        priority: r.get(12)?,
     })
 }
 
-pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, kind, result, status, priority";
+pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, intent_source, kind, result, result_source, status, priority";
 
 fn validate_task_kind(kind: &str) -> Result<()> {
     if !TASK_KINDS.contains(&kind) {
@@ -563,6 +748,44 @@ fn validate_task_kind(kind: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+pub fn validate_meaning_source(source: Option<&str>) -> Result<Option<&str>> {
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let source = source.trim();
+    if !MEANING_SOURCES.contains(&source) {
+        bail!(
+            "unknown meaning source '{source}' (expected {})",
+            MEANING_SOURCES.join("|")
+        );
+    }
+    Ok(Some(source))
+}
+
+fn meaning_source_requires_text(text: Option<&str>, source: Option<&str>) -> bool {
+    source.is_none() || text.is_some_and(|text| !text.trim().is_empty())
+}
+
+fn validate_task_title(title: &str) -> Result<&str> {
+    let title = require_nonblank("task title", title)?;
+    let characters = title.chars().count();
+    if characters > MAX_TASK_TITLE_CHARS {
+        bail!(
+            "task title has {characters} characters; shorten it to at most {MAX_TASK_TITLE_CHARS} characters"
+        );
+    }
+    Ok(title)
+}
+
+fn validate_tag(tag: &str) -> Result<&str> {
+    let tag = require_nonblank("tag", tag)?;
+    let characters = tag.chars().count();
+    if characters > MAX_TAG_CHARS {
+        bail!("tag has {characters} characters; shorten it to at most {MAX_TAG_CHARS} characters");
+    }
+    Ok(tag)
 }
 
 fn require_nonblank<'a>(field: &str, value: &'a str) -> Result<&'a str> {
@@ -840,6 +1063,19 @@ pub fn set_plan_status(
     Ok(())
 }
 
+pub struct TaskCreation<'a> {
+    pub title: &'a str,
+    pub intent: &'a str,
+    pub intent_source: Option<&'a str>,
+    pub kind: &'a str,
+    pub parent: Option<i64>,
+    pub deps: &'a [i64],
+    pub tags: &'a [String],
+    pub priority: i64,
+    pub why: Option<&'a str>,
+    pub start: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn add_task(
     conn: &Connection,
@@ -874,7 +1110,7 @@ pub fn add_task_with_kind(
 ) -> Result<i64> {
     let tx = begin_mutation(conn)?;
     let seq = add_task_in_mutation(
-        &tx, actor, plan_id, title, intent, kind, parent, deps, tags, priority, why,
+        &tx, actor, plan_id, title, intent, None, kind, parent, deps, tags, priority, why,
     )?;
     tx.commit()?;
     Ok(seq)
@@ -897,8 +1133,40 @@ pub fn add_task_for_plan(
     let tx = begin_mutation(conn)?;
     let (plan_id, slug) = resolve_plan(&tx, plan)?;
     let seq = add_task_in_mutation(
-        &tx, actor, plan_id, title, intent, kind, parent, deps, tags, priority, why,
+        &tx, actor, plan_id, title, intent, None, kind, parent, deps, tags, priority, why,
     )?;
+    tx.commit()?;
+    Ok((seq, slug))
+}
+
+pub fn add_task_for_plan_with_options(
+    conn: &Connection,
+    actor: &str,
+    plan: Option<&str>,
+    creation: TaskCreation<'_>,
+) -> Result<(i64, String)> {
+    if creation.start && creation.why.is_none_or(|why| why.trim().is_empty()) {
+        bail!("add --start requires --why or --why-file with a standalone rationale");
+    }
+    let tx = begin_mutation(conn)?;
+    let (plan_id, slug) = resolve_plan(&tx, plan)?;
+    let seq = add_task_in_mutation(
+        &tx,
+        actor,
+        plan_id,
+        creation.title,
+        creation.intent,
+        creation.intent_source,
+        creation.kind,
+        creation.parent,
+        creation.deps,
+        creation.tags,
+        creation.priority,
+        creation.why,
+    )?;
+    if creation.start {
+        start_task_in_mutation(&tx, actor, seq, creation.why, true)?;
+    }
     tx.commit()?;
     Ok((seq, slug))
 }
@@ -910,6 +1178,7 @@ fn add_task_in_mutation(
     plan_id: i64,
     title: &str,
     intent: &str,
+    intent_source: Option<&str>,
     kind: &str,
     parent: Option<i64>,
     deps: &[i64],
@@ -918,7 +1187,11 @@ fn add_task_in_mutation(
     why: Option<&str>,
 ) -> Result<i64> {
     validate_task_kind(kind)?;
-    let title = require_nonblank("task title", title)?;
+    let intent_source = validate_meaning_source(intent_source)?;
+    if !meaning_source_requires_text(Some(intent), intent_source) {
+        bail!("--intent-source requires --intent or --intent-file with nonblank stored meaning");
+    }
+    let title = validate_task_title(title)?;
     let status = plan_status(tx, plan_id)?;
     if matches!(status.as_str(), "done" | "retired") {
         bail!("plan is {status}; reactivate it before adding tasks");
@@ -943,9 +1216,19 @@ fn add_task_in_mutation(
     let t = now();
     tx.execute(
         "INSERT INTO tasks
-         (seq, plan_id, parent_id, title, intent, kind, status, priority, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'proposed', ?7, ?8, ?8)",
-        params![seq, plan_id, parent_id, title, intent, kind, priority, t],
+         (seq, plan_id, parent_id, title, intent, intent_source, kind, status, priority, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'proposed', ?8, ?9, ?9)",
+        params![
+            seq,
+            plan_id,
+            parent_id,
+            title,
+            intent,
+            intent_source,
+            kind,
+            priority,
+            t
+        ],
     )?;
     let id = tx.last_insert_rowid();
     record_event_in_mutation(
@@ -955,12 +1238,18 @@ fn add_task_in_mutation(
         Some(id),
         "create",
         why,
-        Some(&serde_json::json!({"seq": seq, "title": title, "kind": kind})),
+        Some(&serde_json::json!({
+            "seq": seq,
+            "title": title,
+            "kind": kind,
+            "intent_source": intent_source,
+        })),
     )?;
     for d in deps {
         add_dep_inner(tx, actor, seq, *d, true, why)?;
     }
     for tag in tags {
+        let tag = validate_tag(tag)?;
         tx.execute(
             "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?1, ?2)",
             params![id, tag],
@@ -972,9 +1261,87 @@ fn add_task_in_mutation(
 pub struct TaskEdit<'a> {
     pub title: Option<&'a str>,
     pub intent: Option<&'a str>,
+    pub intent_source: Option<Option<&'a str>>,
     pub parent: Option<Option<i64>>,
     pub kind: Option<&'a str>,
     pub priority: Option<i64>,
+}
+
+pub(crate) fn valid_task_definition_revision_payload(value: &serde_json::Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if object
+        .get("revision_schema")
+        .and_then(serde_json::Value::as_str)
+        != Some(TASK_DEFINITION_REVISION_SCHEMA)
+        || !object
+            .get("seq")
+            .and_then(serde_json::Value::as_i64)
+            .is_some_and(|seq| seq > 0)
+    {
+        return false;
+    }
+    let Some(fields) = object.get("fields").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    let Some(changes) = object.get("changes").and_then(serde_json::Value::as_object) else {
+        return false;
+    };
+    if fields.is_empty() || fields.len() != changes.len() {
+        return false;
+    }
+    let field_names = fields
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<HashSet<_>>();
+    if field_names.len() != fields.len()
+        || field_names.len() != changes.len()
+        || !changes
+            .keys()
+            .all(|field| field_names.contains(field.as_str()))
+    {
+        return false;
+    }
+    changes.iter().all(|(field, revision)| {
+        let Some(revision) = revision.as_object() else {
+            return false;
+        };
+        let (Some(before), Some(after)) = (revision.get("before"), revision.get("after")) else {
+            return false;
+        };
+        if before == after {
+            return false;
+        }
+        match field.as_str() {
+            "title" => {
+                before
+                    .as_str()
+                    .is_some_and(|value| !value.trim().is_empty())
+                    && after.as_str().is_some_and(|value| !value.trim().is_empty())
+            }
+            "intent" => before.is_string() && after.is_string(),
+            "intent_source" => [before, after].into_iter().all(|value| {
+                value.is_null()
+                    || value
+                        .as_str()
+                        .is_some_and(|source| MEANING_SOURCES.contains(&source))
+            }),
+            "kind" => {
+                before
+                    .as_str()
+                    .is_some_and(|value| TASK_KINDS.contains(&value))
+                    && after
+                        .as_str()
+                        .is_some_and(|value| TASK_KINDS.contains(&value))
+            }
+            "parent" => [before, after].into_iter().all(|value| {
+                value.is_null() || value.as_i64().is_some_and(|parent_seq| parent_seq > 0)
+            }),
+            "priority" => before.is_i64() && after.is_i64(),
+            _ => false,
+        }
+    })
 }
 
 pub fn edit_task(
@@ -989,12 +1356,13 @@ pub fn edit_task(
     }
     if edit.title.is_none()
         && edit.intent.is_none()
+        && edit.intent_source.is_none()
         && edit.parent.is_none()
         && edit.kind.is_none()
         && edit.priority.is_none()
     {
         bail!(
-            "task edit requires at least one of --title, --intent, --parent, --kind, or --priority"
+            "task edit requires at least one of --title, --intent, --intent-source, --clear-intent-source, --parent, --kind, or --priority"
         );
     }
     if let Some(kind) = edit.kind {
@@ -1002,31 +1370,95 @@ pub fn edit_task(
     }
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
-    let mut changed = Vec::new();
-    if let Some(new) = edit.title {
-        let new = require_nonblank("task title", new)?;
-        tx.execute(
-            "UPDATE tasks SET title=?1, updated_at=?2 WHERE task_id=?3",
-            params![new, now(), task.task_id],
-        )?;
-        changed.push("title");
+    let intent_source = edit
+        .intent_source
+        .map(validate_meaning_source)
+        .transpose()?
+        .flatten();
+    if edit.intent.is_some_and(|intent| intent != task.intent)
+        && task.intent_source.is_some()
+        && edit.intent_source.is_none()
+    {
+        bail!(
+            "replacing sourced intent requires --intent-source <user|agent|external> or --clear-intent-source"
+        );
     }
-    if let Some(new) = edit.intent {
+    let resulting_intent = edit.intent.unwrap_or(&task.intent);
+    let resulting_source = edit
+        .intent_source
+        .map(|_| intent_source)
+        .unwrap_or(task.intent_source.as_deref());
+    if !meaning_source_requires_text(Some(resulting_intent), resulting_source) {
+        bail!(
+            "intent source requires nonblank intent; supply --intent with stored meaning and --intent-source, or omit --intent-source"
+        );
+    }
+    let edited_at = now();
+    let mut changed = Vec::new();
+    let mut changes = serde_json::Map::new();
+    if let Some(new) = edit.title {
+        let new = validate_task_title(new)?;
+        if new != task.title {
+            tx.execute(
+                "UPDATE tasks SET title=?1, updated_at=?2 WHERE task_id=?3",
+                params![new, edited_at, task.task_id],
+            )?;
+            changed.push("title");
+            changes.insert(
+                "title".into(),
+                serde_json::json!({"before": task.title, "after": new}),
+            );
+        }
+    }
+    if let Some(new) = edit.intent
+        && new != task.intent
+    {
         tx.execute(
             "UPDATE tasks SET intent=?1, updated_at=?2 WHERE task_id=?3",
-            params![new, now(), task.task_id],
+            params![new, edited_at, task.task_id],
         )?;
         changed.push("intent");
+        changes.insert(
+            "intent".into(),
+            serde_json::json!({"before": task.intent, "after": new}),
+        );
     }
-    if let Some(new) = edit.kind {
+    if edit.intent_source.is_some() && intent_source != task.intent_source.as_deref() {
+        tx.execute(
+            "UPDATE tasks SET intent_source=?1, updated_at=?2 WHERE task_id=?3",
+            params![intent_source, edited_at, task.task_id],
+        )?;
+        changed.push("intent_source");
+        changes.insert(
+            "intent_source".into(),
+            serde_json::json!({"before": task.intent_source, "after": intent_source}),
+        );
+    }
+    if let Some(new) = edit.kind
+        && new != task.kind
+    {
         tx.execute(
             "UPDATE tasks SET kind=?1, updated_at=?2 WHERE task_id=?3",
-            params![new, now(), task.task_id],
+            params![new, edited_at, task.task_id],
         )?;
         changed.push("kind");
+        changes.insert(
+            "kind".into(),
+            serde_json::json!({"before": task.kind, "after": new}),
+        );
     }
     if let Some(parent) = edit.parent {
-        let parent_id = match parent {
+        let old_parent_seq = task
+            .parent_id
+            .map(|parent_id| {
+                tx.query_row(
+                    "SELECT seq FROM tasks WHERE task_id=?1",
+                    params![parent_id],
+                    |row| row.get::<_, i64>(0),
+                )
+            })
+            .transpose()?;
+        let (parent_id, parent_seq) = match parent {
             Some(parent_seq) => {
                 let new_parent = get_task(&tx, parent_seq)?;
                 if new_parent.task_id == task.task_id {
@@ -1043,35 +1475,50 @@ pub fn edit_task(
                         new_parent.status
                     );
                 }
-                Some(new_parent.task_id)
+                (Some(new_parent.task_id), Some(new_parent.seq))
             }
-            None => None,
+            None => (None, None),
         };
-        tx.execute(
-            "UPDATE tasks SET parent_id=?1, updated_at=?2 WHERE task_id=?3",
-            params![parent_id, now(), task.task_id],
-        )?;
-        if let Some(cycle) = find_cycle(
-            &tx,
-            "SELECT task_id, parent_id FROM tasks WHERE parent_id IS NOT NULL",
-        )? {
-            bail!(
-                "parent change would create cycle {}",
-                cycle
-                    .iter()
-                    .map(|task| format!("#{task}"))
-                    .collect::<Vec<_>>()
-                    .join(" -> ")
+        if parent_id != task.parent_id {
+            tx.execute(
+                "UPDATE tasks SET parent_id=?1, updated_at=?2 WHERE task_id=?3",
+                params![parent_id, edited_at, task.task_id],
+            )?;
+            if let Some(cycle) = find_cycle(
+                &tx,
+                "SELECT task_id, parent_id FROM tasks WHERE parent_id IS NOT NULL",
+            )? {
+                bail!(
+                    "parent change would create cycle {}",
+                    cycle
+                        .iter()
+                        .map(|task| format!("#{task}"))
+                        .collect::<Vec<_>>()
+                        .join(" -> ")
+                );
+            }
+            changed.push("parent");
+            changes.insert(
+                "parent".into(),
+                serde_json::json!({"before": old_parent_seq, "after": parent_seq}),
             );
         }
-        changed.push("parent");
     }
-    if let Some(new) = edit.priority {
+    if let Some(new) = edit.priority
+        && new != task.priority
+    {
         tx.execute(
             "UPDATE tasks SET priority=?1, updated_at=?2 WHERE task_id=?3",
-            params![new, now(), task.task_id],
+            params![new, edited_at, task.task_id],
         )?;
         changed.push("priority");
+        changes.insert(
+            "priority".into(),
+            serde_json::json!({"before": task.priority, "after": new}),
+        );
+    }
+    if changed.is_empty() {
+        bail!("#{seq} edit made no changes; omit unchanged values or choose different values");
     }
     let edited = get_task(&tx, seq)?;
     if edited.status == "done"
@@ -1094,17 +1541,19 @@ pub fn edit_task(
         Some(task.task_id),
         "edit",
         Some(why),
-        Some(&serde_json::json!({"seq": task.seq, "fields": changed})),
+        Some(&serde_json::json!({
+            "seq": task.seq,
+            "revision_schema": TASK_DEFINITION_REVISION_SCHEMA,
+            "fields": changed,
+            "changes": changes,
+        })),
     )?;
     tx.commit()?;
     Ok(changed)
 }
 
 pub fn add_tag(conn: &Connection, actor: &str, seq: i64, tag: &str, why: &str) -> Result<()> {
-    let tag = tag.trim();
-    if tag.is_empty() {
-        bail!("adding a tag requires a nonblank tag");
-    }
+    let tag = validate_tag(tag).context("adding a tag requires a valid tag")?;
     if why.trim().is_empty() {
         bail!("adding a tag requires a nonblank reason");
     }
@@ -1131,10 +1580,7 @@ pub fn add_tag(conn: &Connection, actor: &str, seq: i64, tag: &str, why: &str) -
 }
 
 pub fn remove_tag(conn: &Connection, actor: &str, seq: i64, tag: &str, why: &str) -> Result<()> {
-    let tag = tag.trim();
-    if tag.is_empty() {
-        bail!("removing a tag requires a nonblank tag");
-    }
+    let tag = validate_tag(tag).context("removing a tag requires a valid tag")?;
     if why.trim().is_empty() {
         bail!("removing a tag requires a nonblank reason");
     }
@@ -1282,32 +1728,82 @@ fn entry_blockers(conn: &Connection, task: &Task) -> Result<Vec<String>> {
 
 pub fn start_task(conn: &Connection, actor: &str, seq: i64, why: Option<&str>) -> Result<()> {
     let tx = begin_mutation(conn)?;
-    let task = get_task(&tx, seq)?;
+    start_task_in_mutation(&tx, actor, seq, why, false)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn start_task_in_mutation(
+    tx: &Transaction<'_>,
+    actor: &str,
+    seq: i64,
+    why: Option<&str>,
+    created_in_same_mutation: bool,
+) -> Result<()> {
+    let task = get_task(tx, seq)?;
+    let task_label = if created_in_same_mutation {
+        "the new task".to_owned()
+    } else {
+        format!("#{seq}")
+    };
     match task.status.as_str() {
         "proposed" => {}
-        "in_progress" => bail!("#{seq} is already in_progress"),
+        "in_progress" => bail!("{task_label} is already in_progress"),
         "done" | "retired" | "rejected" => {
-            bail!("#{seq} is {}; use `reopen` before starting it", task.status)
+            bail!(
+                "{task_label} is {}; use `reopen` before starting it",
+                task.status
+            )
         }
-        other => bail!("#{seq} has unknown status '{other}'"),
+        other => bail!("{task_label} has unknown status '{other}'"),
     }
-    let status = plan_status(&tx, task.plan_id)?;
+    let status = plan_status(tx, task.plan_id)?;
     if status != "active" {
+        if created_in_same_mutation {
+            bail!("task was not created: plan is {status}; set it active before using add --start");
+        }
         bail!("plan is {status}; set it active before starting task #{seq}");
     }
-    let blockers = entry_blockers(&tx, &task)?;
+    let blockers = entry_blockers(tx, &task)?;
     if !blockers.is_empty() {
+        if created_in_same_mutation {
+            bail!(
+                "task was not created: it is not ready; resolve {} before using add --start",
+                blockers.join(", ")
+            );
+        }
         bail!(
             "#{seq} is not ready; resolve {} before starting it",
             blockers.join(", ")
         );
     }
-    transition_task(&tx, actor, &task, "in_progress", why, None, None)?;
-    tx.commit()?;
+    transition_task(
+        tx,
+        actor,
+        &task,
+        TaskTransition {
+            status: "in_progress",
+            why,
+            result: None,
+            result_source: None,
+            replacement: None,
+        },
+    )?;
     Ok(())
 }
 
 pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&str>) -> Result<()> {
+    complete_task_with_source(conn, actor, seq, result, None)
+}
+
+pub fn complete_task_with_source(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    result: Option<&str>,
+    result_source: Option<&str>,
+) -> Result<()> {
+    let result_source = validate_meaning_source(result_source)?;
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     if matches!(task.status.as_str(), "done" | "retired" | "rejected") {
@@ -1343,13 +1839,27 @@ pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&s
         );
     }
     let result = result.map(str::trim).filter(|text| !text.is_empty());
+    if result.is_none() && result_source.is_some() {
+        bail!("--result-source requires --result or --result-file with a durable outcome");
+    }
     if matches!(task.kind.as_str(), "probe" | "decision") && result.is_none() {
         bail!(
             "completing {} task #{seq} requires --result or --result-file so the measured or selected outcome survives the session",
             task.kind
         );
     }
-    transition_task(&tx, actor, &task, "done", result, result, None)?;
+    transition_task(
+        &tx,
+        actor,
+        &task,
+        TaskTransition {
+            status: "done",
+            why: result,
+            result,
+            result_source,
+            replacement: None,
+        },
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -1395,7 +1905,18 @@ pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Resul
                 .join(", ")
         );
     }
-    transition_task(&tx, actor, &task, "proposed", Some(why), None, None)?;
+    transition_task(
+        &tx,
+        actor,
+        &task,
+        TaskTransition {
+            status: "proposed",
+            why: Some(why),
+            result: None,
+            result_source: None,
+            replacement: None,
+        },
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -1510,10 +2031,13 @@ fn terminate_task(
         &tx,
         actor,
         &task,
-        status,
-        Some(why),
-        Some(why),
-        replacement.as_ref(),
+        TaskTransition {
+            status,
+            why: Some(why),
+            result: Some(why),
+            result_source: None,
+            replacement: replacement.as_ref(),
+        },
     )?;
     if let Some(cycle) = find_cycle(
         &tx,
@@ -1532,22 +2056,35 @@ fn terminate_task(
     Ok(())
 }
 
+struct TaskTransition<'a> {
+    status: &'a str,
+    why: Option<&'a str>,
+    result: Option<&'a str>,
+    result_source: Option<&'a str>,
+    replacement: Option<&'a Task>,
+}
+
 fn transition_task(
     tx: &Transaction<'_>,
     actor: &str,
     task: &Task,
-    status: &str,
-    why: Option<&str>,
-    result: Option<&str>,
-    replacement: Option<&Task>,
+    transition: TaskTransition<'_>,
 ) -> Result<()> {
+    let TaskTransition {
+        status,
+        why,
+        result,
+        result_source,
+        replacement,
+    } = transition;
     tx.execute(
         "UPDATE tasks
-            SET status=?1, result=?2, replacement_task_id=?3, updated_at=?4
-          WHERE task_id=?5",
+            SET status=?1, result=?2, result_source=?3, replacement_task_id=?4, updated_at=?5
+          WHERE task_id=?6",
         params![
             status,
             result,
+            result_source,
             replacement.map(|task| task.task_id),
             now(),
             task.task_id
@@ -1558,6 +2095,7 @@ fn transition_task(
         "from": task.status,
         "to": status,
         "result": result,
+        "result_source": result_source,
     });
     if let Some(replacement) = replacement {
         payload["replacement_seq"] = serde_json::json!(replacement.seq);
@@ -1634,13 +2172,22 @@ pub fn add_gate(
     if matches!(task.status.as_str(), "done" | "retired" | "rejected") {
         bail!("#{seq} is {}; reopen it before adding gates", task.status);
     }
+    let exists = tx
+        .query_row(
+            "SELECT 1 FROM gates WHERE task_id=?1 AND name=?2",
+            params![task.task_id, name],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if exists {
+        bail!("gate '{name}' already exists on #{seq}; choose a different gate name");
+    }
     tx.execute(
         "INSERT INTO gates (task_id, name, kind, requirement) VALUES (?1, ?2, ?3, ?4)",
         params![task.task_id, name, kind, requirement],
     )
-    .with_context(|| {
-        format!("gate '{name}' already exists on #{seq}; choose a different gate name")
-    })?;
+    .with_context(|| format!("store gate '{name}' on #{seq}"))?;
     record_event_in_mutation(
         &tx,
         actor,
@@ -2012,6 +2559,60 @@ pub fn waive_task_blocker(
     )
 }
 
+pub fn reopen_task_blocker(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    name: &str,
+    why: &str,
+) -> Result<()> {
+    if why.trim().is_empty() {
+        bail!("reopening a blocker requires a nonblank reason");
+    }
+    let tx = begin_mutation(conn)?;
+    let task = get_task(&tx, seq)?;
+    if matches!(task.status.as_str(), "done" | "retired" | "rejected") {
+        bail!(
+            "#{seq} is {}; reopen the task before reopening blockers",
+            task.status
+        );
+    }
+    let blocker: Option<(i64, String)> = tx
+        .query_row(
+            "SELECT blocker_id, status FROM task_blockers
+              WHERE task_id=?1 AND name=?2",
+            params![task.task_id, name],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let (blocker_id, status) = blocker.ok_or_else(|| anyhow!("no blocker '{name}' on #{seq}"))?;
+    if status == "open" {
+        bail!("blocker '{name}' on #{seq} is already open");
+    }
+    tx.execute(
+        "UPDATE task_blockers
+            SET status='open', evidence_locator=NULL, evidence_sha256=NULL,
+                note=NULL, resolved_at=NULL
+          WHERE blocker_id=?1",
+        params![blocker_id],
+    )?;
+    record_event_in_mutation(
+        &tx,
+        actor,
+        "task",
+        Some(task.task_id),
+        "blocker_reopen",
+        Some(why.trim()),
+        Some(&serde_json::json!({
+            "seq": seq,
+            "name": name,
+            "from": status,
+        })),
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 struct BlockerResolution<'a> {
     status: &'a str,
     evidence: Option<&'a str>,
@@ -2231,7 +2832,7 @@ pub fn task_context(conn: &Connection, seq: i64) -> Result<TaskContext> {
     let recent_events = recent_event_log.events;
 
     Ok(TaskContext {
-        schema: "papertiger.task_context.v4".into(),
+        schema: "papertiger.task_context.v5".into(),
         plan,
         tags,
         parent,
@@ -2289,6 +2890,32 @@ pub struct FocusEntry {
     pub unfinished_downstream_count: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct FocusResponse {
+    pub schema: String,
+    pub selection_state: String,
+    pub plan: Option<Plan>,
+    #[serde(flatten)]
+    pub projection: StatusProjection<FocusEntry>,
+}
+
+impl FocusResponse {
+    pub fn no_active_plan() -> Self {
+        Self {
+            schema: "papertiger.focus.v5".into(),
+            selection_state: "no_active_plan".into(),
+            plan: None,
+            projection: StatusProjection::new(
+                "actionable leaf tasks in the selected active plan",
+                "readiness, priority descending, immediate unlocks descending, unfinished downstream descending, task.seq ascending",
+                0,
+                Vec::new(),
+                None,
+            ),
+        }
+    }
+}
+
 /// Actionable leaf tasks ordered by active work, explicit priority, and the
 /// amount of unfinished dependency graph they can unblock. Proposed blocked
 /// work is opt-in; active work that became blocked is always surfaced.
@@ -2297,7 +2924,11 @@ pub fn focus(
     plan_id: i64,
     limit: usize,
     include_blocked: bool,
-) -> Result<Vec<FocusEntry>> {
+) -> Result<FocusResponse> {
+    if limit == 0 {
+        bail!("focus --limit must be at least 1");
+    }
+    let plan = get_plan(conn, plan_id)?;
     let mut statement = conn.prepare(&format!(
         "SELECT {TASK_COLS} FROM tasks task
           WHERE task.plan_id=?1
@@ -2349,8 +2980,29 @@ pub fn focus(
             })
             .then_with(|| left.task.seq.cmp(&right.task.seq))
     });
+    let eligible_count = entries.len();
     entries.truncate(limit);
-    Ok(entries)
+    let blocked = if include_blocked { " --all" } else { "" };
+    let continuation_command = format!(
+        "papertiger focus --plan {} --limit {eligible_count}{blocked} --json",
+        plan.slug
+    );
+    Ok(FocusResponse {
+        schema: "papertiger.focus.v5".into(),
+        selection_state: "resolved".into(),
+        plan: Some(plan),
+        projection: StatusProjection::new(
+            if include_blocked {
+                "active and proposed actionable leaf tasks, including blocked proposed work"
+            } else {
+                "active and unblocked proposed actionable leaf tasks"
+            },
+            "readiness, priority descending, immediate unlocks descending, unfinished downstream descending, task.seq ascending",
+            eligible_count,
+            entries,
+            Some(continuation_command),
+        ),
+    })
 }
 
 fn focus_readiness_rank(readiness: &str) -> u8 {
@@ -2563,6 +3215,118 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     }
 
     let mut statement = conn.prepare(
+        "SELECT seq, intent, intent_source, result, result_source FROM tasks ORDER BY seq",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (seq, intent, intent_source, result, result_source) in rows {
+        for (field, source) in [
+            ("intent_source", intent_source.as_deref()),
+            ("result_source", result_source.as_deref()),
+        ] {
+            if let Some(source) = source
+                && !MEANING_SOURCES.contains(&source)
+            {
+                push(
+                    "invalid_meaning_source",
+                    format!("#{seq} has invalid {field} '{source}'"),
+                );
+            }
+        }
+        if !meaning_source_requires_text(Some(&intent), intent_source.as_deref()) {
+            push(
+                "meaning_source_without_text",
+                format!("#{seq} has intent_source without nonblank intent"),
+            );
+        }
+        if !meaning_source_requires_text(result.as_deref(), result_source.as_deref()) {
+            push(
+                "meaning_source_without_text",
+                format!("#{seq} has result_source without a durable result"),
+            );
+        }
+    }
+
+    let mut live_titles: HashMap<(String, String), Vec<i64>> = HashMap::new();
+    let mut statement = conn.prepare(
+        "SELECT plan.slug, task.seq, task.title
+           FROM tasks task
+           JOIN plans plan ON plan.plan_id=task.plan_id
+          WHERE task.status IN ('proposed','in_progress')
+          ORDER BY plan.slug, task.seq",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (plan, seq, title) in rows {
+        let characters = title.chars().count();
+        if characters > MAX_TASK_TITLE_CHARS {
+            push(
+                "oversized_task_title",
+                format!(
+                    "#{seq} in plan '{plan}' has {characters} title characters (maximum {MAX_TASK_TITLE_CHARS})"
+                ),
+            );
+        }
+        live_titles
+            .entry((plan, title.trim().to_lowercase()))
+            .or_default()
+            .push(seq);
+    }
+    for ((plan, title), sequences) in live_titles {
+        if sequences.len() > 1 {
+            push(
+                "duplicate_live_title",
+                format!(
+                    "plan '{plan}' has duplicate live title {title:?} on {}; inspect with `papertiger search {title:?} --plan {plan}`",
+                    sequences
+                        .iter()
+                        .map(|seq| format!("#{seq}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+        }
+    }
+
+    let mut statement = conn.prepare(
+        "SELECT task.seq, tag.tag
+           FROM task_tags tag
+           JOIN tasks task ON task.task_id=tag.task_id
+          ORDER BY task.seq, tag.tag",
+    )?;
+    let tags = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (seq, tag) in tags {
+        if tag != tag.trim() || tag.is_empty() || tag.chars().count() > MAX_TAG_CHARS {
+            push(
+                "noncanonical_tag",
+                format!(
+                    "#{seq} has noncanonical tag {tag:?}; remove it and add a trimmed tag of at most {MAX_TAG_CHARS} characters"
+                ),
+            );
+        }
+    }
+
+    let mut statement = conn.prepare(
         "SELECT task.seq, commit_association.repository, commit_association.commit_oid,
                 commit_association.recorded_at
            FROM commit_associations commit_association
@@ -2633,10 +3397,42 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                 format!("event {event_id} has non-RFC3339 timestamp '{at}'"),
             );
         }
+        let parsed_payload = match payload.as_deref() {
+            None => None,
+            Some(raw) => match serde_json::from_str::<serde_json::Value>(raw) {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    push(
+                        "invalid_event_payload",
+                        format!("event {event_id} payload is not valid JSON: {error}"),
+                    );
+                    None
+                }
+            },
+        };
+        let meaning_source_field = match (entity.as_str(), kind.as_str()) {
+            ("task", "create") => Some("intent_source"),
+            ("task", "status") => Some("result_source"),
+            (_, "note") => Some("meaning_source"),
+            _ => None,
+        };
+        if let Some(field) = meaning_source_field
+            && let Some(value) = parsed_payload
+                .as_ref()
+                .and_then(|payload| payload.get(field))
+            && !value.is_null()
+            && !value
+                .as_str()
+                .is_some_and(|source| MEANING_SOURCES.contains(&source))
+        {
+            push(
+                "invalid_meaning_source_event",
+                format!("event {event_id} has invalid payload.{field}"),
+            );
+        }
         if entity == "task" && kind == "status" {
-            let valid_target = payload
-                .as_deref()
-                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+            let valid_target = parsed_payload
+                .as_ref()
                 .and_then(|value| {
                     value
                         .get("to")
@@ -2651,6 +3447,23 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                 push(
                     "invalid_task_status_event",
                     format!("event {event_id} for {task} lacks a canonical task-status payload.to"),
+                );
+            }
+        }
+        if entity == "task" && kind == "edit" {
+            let parsed = parsed_payload.as_ref();
+            let declares_revision = parsed
+                .and_then(|value| value.get("revision_schema"))
+                .is_some();
+            if declares_revision && !parsed.is_some_and(valid_task_definition_revision_payload) {
+                let task = entity_seq
+                    .map(|seq| format!("task #{seq}"))
+                    .unwrap_or_else(|| "a task with no stable sequence".to_owned());
+                push(
+                    "invalid_task_definition_revision",
+                    format!(
+                        "event {event_id} for {task} has a malformed or unsupported task-definition revision payload"
+                    ),
                 );
             }
         }
@@ -3102,10 +3915,14 @@ pub struct TaskDump {
     pub title: String,
     #[serde(default)]
     pub intent: String,
+    #[serde(default)]
+    pub intent_source: Option<String>,
     #[serde(default = "default_work")]
     pub kind: String,
     #[serde(default)]
     pub result: Option<String>,
+    #[serde(default)]
+    pub result_source: Option<String>,
     #[serde(default = "default_proposed")]
     pub status: String,
     #[serde(default)]
@@ -3284,8 +4101,10 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                 plan: slug.clone(),
                 title: t.title,
                 intent: t.intent,
+                intent_source: t.intent_source,
                 kind: t.kind,
                 result: t.result,
+                result_source: t.result_source,
                 status: t.status,
                 priority: t.priority,
                 parent_seq,
@@ -3318,17 +4137,9 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
         ))
     })?;
     for row in rows {
-        let (at, actor, entity, mut entity_plan, entity_seq, gate_name, kind, why, payload) = row?;
+        let (at, actor, entity, entity_plan, entity_seq, gate_name, kind, why, payload) = row?;
         match entity.as_str() {
-            "plan" if entity_plan.is_none() => {
-                if plans.len() == 1 {
-                    entity_plan = Some(plans[0].slug.clone());
-                } else if plan.is_none() {
-                    // A database-global plan event remains global in a full export.
-                } else {
-                    continue;
-                }
-            }
+            "plan" if entity_plan.is_none() => {}
             "plan" | "task" | "dep" | "gate" => {}
             _ => continue,
         }
@@ -3369,7 +4180,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
         mise_projection::export_mise_projections(conn, &selected_task_sequences)?;
 
     Ok(Dump {
-        schema: "papertiger.dump.v6".into(),
+        schema: "papertiger.dump.v7".into(),
         plans,
         tasks,
         events,
@@ -3378,27 +4189,42 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
 }
 
 pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize, usize)> {
-    if dump.schema != "papertiger.dump.v6" {
+    if dump.schema != "papertiger.dump.v7" {
         bail!(
-            "unsupported dump schema '{}'; use the Papertiger release that produced it to import it into a temporary authority, run current `papertiger --db <temporary-authority> init`, then re-export `papertiger.dump.v6`",
+            "unsupported dump schema '{}'; use the Papertiger release that produced it to import it into a temporary authority, run current `papertiger --db <temporary-authority> init`, then re-export `papertiger.dump.v7`",
             dump.schema
         );
     }
     let tx = begin_mutation(conn)?;
+    let dump_plan_slugs = dump
+        .plans
+        .iter()
+        .map(|plan| plan.slug.as_str())
+        .collect::<HashSet<_>>();
+    if dump_plan_slugs.len() != dump.plans.len() {
+        bail!("import repeats a plan slug; keep exactly one definition for each dump plan");
+    }
     for p in &dump.plans {
         require_nonblank("import plan slug", &p.slug)?;
         require_nonblank("import plan title", &p.title)?;
         if !["active", "paused", "done", "retired"].contains(&p.status.as_str()) {
             bail!("import plan '{}' has unknown status '{}'", p.slug, p.status);
         }
-        let exists: Option<i64> = tx
+        let existing: Option<(i64, String, String, String)> = tx
             .query_row(
-                "SELECT plan_id FROM plans WHERE slug=?1",
+                "SELECT plan_id, title, intent, status FROM plans WHERE slug=?1",
                 params![p.slug],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()?;
-        if exists.is_none() {
+        if let Some((_, title, intent, status)) = existing {
+            if title != p.title || intent != p.intent || status != p.status {
+                bail!(
+                    "import plan '{}' conflicts with the existing definition; import into an authority without that slug or make title, intent, and status identical",
+                    p.slug
+                );
+            }
+        } else {
             let t = now();
             tx.execute(
                 "INSERT INTO plans (slug, title, intent, status, created_at, updated_at)
@@ -3466,7 +4292,7 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
     let mut created = 0usize;
     let mut imported_task_id_by_seq = HashMap::with_capacity(dump.tasks.len());
     for (td, seq) in dump.tasks.iter().zip(assigned.iter().copied()) {
-        require_nonblank("import task title", &td.title)?;
+        validate_task_title(&td.title).context("import task title is invalid")?;
         let plan_id: i64 = tx
             .query_row(
                 "SELECT plan_id FROM plans WHERE slug=?1",
@@ -3483,6 +4309,32 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
             bail!("task '{}' has unknown status '{}'", td.title, td.status);
         }
         validate_task_kind(&td.kind)?;
+        let intent_source =
+            validate_meaning_source(td.intent_source.as_deref()).with_context(|| {
+                format!(
+                    "import task '{}' has invalid intent_source {:?}",
+                    td.title, td.intent_source
+                )
+            })?;
+        let result_source =
+            validate_meaning_source(td.result_source.as_deref()).with_context(|| {
+                format!(
+                    "import task '{}' has invalid result_source {:?}",
+                    td.title, td.result_source
+                )
+            })?;
+        if !meaning_source_requires_text(Some(&td.intent), intent_source) {
+            bail!(
+                "import: task '{}' has intent_source without nonblank stored intent",
+                td.title
+            );
+        }
+        if !meaning_source_requires_text(td.result.as_deref(), result_source) {
+            bail!(
+                "import: task '{}' has result_source without a durable result",
+                td.title
+            );
+        }
         if td.status == "done" && td.gates.iter().any(|gate| gate.status == "open") {
             bail!("import: done task '{}' has an open gate", td.title);
         }
@@ -3506,15 +4358,17 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
         let t = now();
         tx.execute(
             "INSERT INTO tasks
-             (seq, plan_id, title, intent, kind, result, status, priority, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+             (seq, plan_id, title, intent, intent_source, kind, result, result_source, status, priority, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
             params![
                 seq,
                 plan_id,
                 td.title,
                 td.intent,
+                intent_source,
                 td.kind,
                 td.result,
+                result_source,
                 td.status,
                 td.priority,
                 t
@@ -3524,6 +4378,8 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
         let id = tx.last_insert_rowid();
         imported_task_id_by_seq.insert(seq, id);
         for tag in &td.tags {
+            let tag = validate_tag(tag)
+                .with_context(|| format!("import task '{}' has invalid tag {tag:?}", td.title))?;
             tx.execute(
                 "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?1, ?2)",
                 params![id, tag],
@@ -3569,7 +4425,12 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                             g.name, td.title
                         )
                     })?;
-                    validate_evidence_locator(locator)?;
+                    validate_new_evidence_locator(locator).with_context(|| {
+                        format!(
+                            "import closed gate '{}' on '{}' has invalid evidence_locator {locator:?}",
+                            g.name, td.title
+                        )
+                    })?;
                     validate_optional_sha256(g.evidence_sha256.as_deref())?;
                     let closed_at = g.closed_at.as_deref().with_context(|| {
                         format!(
@@ -3668,7 +4529,12 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                             blocker.name, td.title
                         )
                     })?;
-                    validate_evidence_locator(locator)?;
+                    validate_new_evidence_locator(locator).with_context(|| {
+                        format!(
+                            "import resolved blocker '{}' on '{}' has invalid evidence_locator {locator:?}",
+                            blocker.name, td.title
+                        )
+                    })?;
                     validate_optional_sha256(blocker.evidence_sha256.as_deref())?;
                     let resolved_at = blocker.resolved_at.as_deref().with_context(|| {
                         format!(
@@ -3904,6 +4770,11 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                 .entity_plan
                 .as_deref()
                 .map(|slug| {
+                    if !dump_plan_slugs.contains(slug) {
+                        bail!(
+                            "import plan event names plan '{slug}', which is absent from the dump"
+                        );
+                    }
                     tx.query_row(
                         "SELECT plan_id FROM plans WHERE slug=?1",
                         params![slug],
@@ -3979,6 +4850,26 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                     TASK_STATUSES.join("|")
                 );
             }
+        }
+        let meaning_source_field = match (event.entity.as_str(), event.kind.as_str()) {
+            ("task", "create") => Some("intent_source"),
+            ("task", "status") => Some("result_source"),
+            (_, "note") => Some("meaning_source"),
+            _ => None,
+        };
+        if let Some(field) = meaning_source_field
+            && let Some(value) = event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get(field))
+            && !value.is_null()
+        {
+            let source = value.as_str().with_context(|| {
+                format!("import event payload.{field} must be a string or null, got {value}")
+            })?;
+            validate_meaning_source(Some(source)).with_context(|| {
+                format!("import event has invalid payload.{field} value {source:?}")
+            })?;
         }
         tx.execute(
             "INSERT INTO events

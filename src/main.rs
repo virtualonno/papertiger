@@ -28,7 +28,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Install a project-local binary, launchers, ignore policy, and agent contract; does not accept --db or --actor
+    /// Install a project-local native binary, receipt, ignore policy, and agent contract; does not accept --db or --actor
     SetupProject {
         /// Existing consuming project directory
         project_root: std::path::PathBuf,
@@ -49,7 +49,7 @@ enum Cmd {
     Init,
     /// One-screen orientation: authority, active plans, current work, ready work, recent notes
     Status {
-        /// Emit papertiger.status.v1 JSON
+        /// Emit papertiger.status.v2 JSON
         #[arg(long)]
         json: bool,
     },
@@ -67,6 +67,9 @@ enum Cmd {
         plan: Option<String>,
         #[command(flatten)]
         intent: IntentArgs,
+        /// Who supplied the stored meaning: user, agent, or external
+        #[arg(long, value_name = "user|agent|external")]
+        intent_source: Option<String>,
         /// Work kind: work, probe, or decision
         #[arg(long, default_value = "work")]
         kind: String,
@@ -84,12 +87,15 @@ enum Cmd {
         priority: i64,
         #[command(flatten)]
         why: WhyArgs,
+        /// Atomically create and transition the task to in_progress; requires --why
+        #[arg(long)]
+        start: bool,
     },
     /// Show one task in full
     Show {
         /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
-        /// Emit papertiger.task_context.v4 JSON
+        /// Emit papertiger.task_context.v5 JSON
         #[arg(long)]
         json: bool,
     },
@@ -137,6 +143,12 @@ enum Cmd {
         title: Option<String>,
         #[command(flatten)]
         intent: IntentArgs,
+        /// Who supplied the replacement intent meaning: user, agent, or external
+        #[arg(long, value_name = "user|agent|external")]
+        intent_source: Option<String>,
+        /// Remove a previously recorded intent source
+        #[arg(long, conflicts_with = "intent_source")]
+        clear_intent_source: bool,
         /// Replace the parent with this task
         #[arg(long, conflicts_with = "clear_parent")]
         parent: Option<String>,
@@ -165,6 +177,9 @@ enum Cmd {
         task: String,
         #[command(flatten)]
         result: ResultArgs,
+        /// Who supplied the durable result: user, agent, or external
+        #[arg(long, value_name = "user|agent|external")]
+        result_source: Option<String>,
     },
     /// Reopen a finished task
     Reopen {
@@ -218,7 +233,7 @@ enum Cmd {
         /// Maximum tasks to return
         #[arg(long, default_value_t = 20)]
         limit: usize,
-        /// Emit papertiger.focus.v4 JSON
+        /// Emit papertiger.focus.v5 JSON
         #[arg(long)]
         json: bool,
         /// Include proposed work that is currently blocked
@@ -240,6 +255,9 @@ enum Cmd {
     Note {
         #[command(flatten)]
         text: NoteTextArgs,
+        /// Who supplied the note meaning: user, agent, or external
+        #[arg(long, value_name = "user|agent|external")]
+        source: Option<String>,
         /// Attach the note to this task sequence
         #[arg(long)]
         task: Option<String>,
@@ -264,6 +282,11 @@ enum Cmd {
     },
     /// Advisory integrity findings
     Audit,
+    /// Verify stored evidence bindings without changing authority state
+    Evidence {
+        #[command(subcommand)]
+        cmd: EvidenceCmd,
+    },
     /// Dump plans/tasks/gates as JSON
     Export {
         /// Export only this plan slug and its scoped history
@@ -276,7 +299,7 @@ enum Cmd {
         #[arg(long, requires = "output")]
         replace: bool,
     },
-    /// Import a papertiger.dump.v6 JSON file
+    /// Import a papertiger.dump.v7 JSON file
     Import {
         /// Dump file to validate and import atomically
         file: String,
@@ -285,6 +308,22 @@ enum Cmd {
     Mise {
         #[command(subcommand)]
         cmd: MiseCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum EvidenceCmd {
+    /// Resolve file: evidence under one project root and verify stored SHA-256 bindings
+    Verify {
+        /// Restrict verification to one task sequence
+        #[arg(long)]
+        task: Option<String>,
+        /// Project root used to resolve file: locators; defaults to the nearest install receipt
+        #[arg(long, value_name = "DIR")]
+        project_root: Option<std::path::PathBuf>,
+        /// Emit papertiger.evidence_verification.v1 JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -498,6 +537,15 @@ enum BlockerCmd {
         #[command(flatten)]
         why: WhyArgs,
     },
+    /// Reopen a resolved or waived blocker
+    Reopen {
+        /// Task sequence that owns the blocker
+        task: String,
+        /// Name of the terminal blocker
+        name: String,
+        #[command(flatten)]
+        why: WhyArgs,
+    },
     /// Remove an open blocker that no longer models reality
     Remove {
         /// Task sequence that owns the blocker
@@ -556,6 +604,37 @@ enum DepCmd {
         #[command(flatten)]
         why: WhyArgs,
     },
+}
+
+impl Cmd {
+    fn opens_authority_read_only(&self) -> bool {
+        matches!(
+            self,
+            Self::Status { .. }
+                | Self::Show { .. }
+                | Self::List { .. }
+                | Self::Search { .. }
+                | Self::Focus { .. }
+                | Self::Tree { .. }
+                | Self::Log { .. }
+                | Self::Audit
+                | Self::Evidence { .. }
+                | Self::Export { .. }
+                | Self::Plan { cmd: PlanCmd::List }
+                | Self::Gate {
+                    cmd: GateCmd::List { .. }
+                }
+                | Self::Blocker {
+                    cmd: BlockerCmd::List { .. }
+                }
+                | Self::Commit {
+                    cmd: CommitCmd::List { .. } | CommitCmd::Find { .. }
+                }
+                | Self::Mise {
+                    cmd: MiseCmd::List { .. } | MiseCmd::Show { .. }
+                }
+        )
+    }
 }
 
 fn status_glyph(s: &str) -> &'static str {
@@ -662,7 +741,20 @@ fn print_task_context(context: &pt::TaskContext) {
         extra
     );
     if !task.intent.is_empty() {
-        println!("  intent: {}", task.intent.replace('\n', "\n  "));
+        let label = task
+            .intent_source
+            .as_deref()
+            .map(|source| format!("intent [{source}]"))
+            .unwrap_or_else(|| "intent".to_owned());
+        println!("  {label}: {}", task.intent.replace('\n', "\n  "));
+    }
+    if let Some(result) = task.result.as_deref() {
+        let label = task
+            .result_source
+            .as_deref()
+            .map(|source| format!("result [{source}]"))
+            .unwrap_or_else(|| "result".to_owned());
+        println!("  {label}: {}", result.replace('\n', "\n  "));
     }
     println!("  kind: {}", task.kind);
     for (label, event) in [
@@ -677,9 +769,6 @@ fn print_task_context(context: &pt::TaskContext) {
                 event.at, event.actor, event.event_id
             );
         }
-    }
-    if let Some(result) = &task.result {
-        println!("  result: {}", result.replace('\n', "\n  "));
     }
     if let Some(parent) = &context.parent {
         println!(
@@ -875,10 +964,12 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    let db_path = cli
-        .db
-        .or_else(|| std::env::var("PAPERTIGER_DB").ok())
-        .unwrap_or_else(|| "state/papertiger.sqlite".into());
+    let db_path = match cli.db.or_else(|| std::env::var("PAPERTIGER_DB").ok()) {
+        Some(path) => path,
+        None => project_setup::discover_project_authority(&std::env::current_dir()?)?
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "state/papertiger.sqlite".into()),
+    };
     let actor = cli
         .actor
         .or_else(|| std::env::var("PAPERTIGER_ACTOR").ok())
@@ -891,12 +982,30 @@ fn run() -> Result<()> {
             std::fs::create_dir_all(dir)?;
         }
         let conn = pt::open_for_init(&db_path)?;
-        pt::init(&conn)?;
-        println!("initialized {db_path} (schema v{})", pt::SCHEMA_VERSION);
+        match pt::init_at(&conn, &db_path)? {
+            pt::InitOutcome::Created => {
+                println!("initialized {db_path} (schema v{})", pt::SCHEMA_VERSION)
+            }
+            pt::InitOutcome::Migrated { from, to } => {
+                println!("migrated {db_path} from schema v{from} to v{to}")
+            }
+            pt::InitOutcome::Current => println!(
+                "{db_path} is already a Papertiger authority at schema v{}; nothing changed",
+                pt::SCHEMA_VERSION
+            ),
+        }
         return Ok(());
     }
 
-    let mut conn = pt::open_existing(&db_path)?;
+    let mut conn = if cli.cmd.opens_authority_read_only() {
+        pt::open_existing_read_only(&db_path)?
+    } else {
+        pt::open_existing(&db_path)?
+    };
+    if cli.cmd.opens_authority_read_only() {
+        conn.execute_batch("BEGIN DEFERRED TRANSACTION")
+            .context("begin read-only Papertiger authority snapshot")?;
+    }
 
     match cli.cmd {
         Cmd::SetupProject { .. } => unreachable!(),
@@ -930,20 +1039,45 @@ fn run() -> Result<()> {
                     counts.retired,
                     counts.rejected
                 );
-                for entry in &active.in_progress {
-                    println!("> #{} {}", entry.task.seq, entry.task.title);
+                for entry in &active.in_progress.parents.entries {
+                    println!("> parent #{} {}", entry.task.seq, entry.task.title);
                 }
-                for entry in &active.ready {
+                for entry in &active.in_progress.leaves.entries {
+                    println!("> leaf #{} {}", entry.task.seq, entry.task.title);
+                }
+                for entry in &active.ready.entries {
                     println!("· #{} {}", entry.task.seq, entry.task.title);
                 }
+                if !active.ready.complete {
+                    println!(
+                        "  ... {} ready task(s) omitted; run `{}`",
+                        active.ready.omitted_count,
+                        active
+                            .ready
+                            .continuation_command
+                            .as_deref()
+                            .unwrap_or_default()
+                    );
+                }
             }
-            for note in &status.recent_notes {
+            for note in &status.recent_notes.entries {
                 println!(
                     "note @{} {} {}: {}",
                     note.event_id,
                     short_event_time(&note.at),
                     note.actor,
                     note.why.as_deref().unwrap_or_default()
+                );
+            }
+            if !status.recent_notes.complete {
+                println!(
+                    "... {} older note(s) omitted; run `{}` and follow its event cursor",
+                    status.recent_notes.omitted_count,
+                    status
+                        .recent_notes
+                        .continuation_command
+                        .as_deref()
+                        .unwrap_or_default()
                 );
             }
         }
@@ -999,12 +1133,14 @@ fn run() -> Result<()> {
             title,
             plan,
             intent,
+            intent_source,
             kind,
             parent,
             dep,
             tag,
             priority,
             why,
+            start,
         } => {
             reject_multiple_stdin(&[("intent", intent.reads_stdin()), ("why", why.reads_stdin())])?;
             let intent = intent.optional()?.unwrap_or_default();
@@ -1014,20 +1150,28 @@ fn run() -> Result<()> {
                 .iter()
                 .map(|d| pt::parse_task_ref(d))
                 .collect::<Result<_>>()?;
-            let (seq, slug) = pt::add_task_for_plan(
+            let (seq, slug) = pt::add_task_for_plan_with_options(
                 &conn,
                 &actor,
                 plan.as_deref(),
-                &title,
-                &intent,
-                &kind,
-                parent,
-                &deps,
-                &tag,
-                priority,
-                why.as_deref(),
+                pt::TaskCreation {
+                    title: &title,
+                    intent: &intent,
+                    intent_source: intent_source.as_deref(),
+                    kind: &kind,
+                    parent,
+                    deps: &deps,
+                    tags: &tag,
+                    priority,
+                    why: why.as_deref(),
+                    start,
+                },
             )?;
-            println!("#{seq} added to {slug}");
+            if start {
+                println!("#{seq} added to {slug} and in progress");
+            } else {
+                println!("#{seq} added to {slug}");
+            }
         }
         Cmd::Show { task, json } => {
             let context = pt::task_context(&conn, pt::parse_task_ref(&task)?)?;
@@ -1111,6 +1255,8 @@ fn run() -> Result<()> {
             task,
             title,
             intent,
+            intent_source,
+            clear_intent_source,
             parent,
             clear_parent,
             kind,
@@ -1128,6 +1274,11 @@ fn run() -> Result<()> {
                     .transpose()?
             };
             let seq = pt::parse_task_ref(&task)?;
+            let intent_source = if clear_intent_source {
+                Some(None)
+            } else {
+                intent_source.as_deref().map(Some)
+            };
             let changed = pt::edit_task(
                 &conn,
                 &actor,
@@ -1135,6 +1286,7 @@ fn run() -> Result<()> {
                 pt::TaskEdit {
                     title: title.as_deref(),
                     intent: intent.as_deref(),
+                    intent_source,
                     parent,
                     kind: kind.as_deref(),
                     priority,
@@ -1149,10 +1301,20 @@ fn run() -> Result<()> {
             pt::start_task(&conn, &actor, seq, why.as_deref())?;
             println!("#{seq} in progress");
         }
-        Cmd::Done { task, result } => {
+        Cmd::Done {
+            task,
+            result,
+            result_source,
+        } => {
             let result = result.optional()?;
             let seq = pt::parse_task_ref(&task)?;
-            pt::complete_task(&conn, &actor, seq, result.as_deref())?;
+            pt::complete_task_with_source(
+                &conn,
+                &actor,
+                seq,
+                result.as_deref(),
+                result_source.as_deref(),
+            )?;
             println!("#{seq} done");
         }
         Cmd::Reopen { task, why } => {
@@ -1271,6 +1433,12 @@ fn run() -> Result<()> {
                 let seq = pt::parse_task_ref(&task)?;
                 pt::waive_task_blocker(&conn, &actor, seq, &name, &why)?;
                 println!("blocker '{name}' on #{seq} waived");
+            }
+            BlockerCmd::Reopen { task, name, why } => {
+                let why = why.required()?;
+                let seq = pt::parse_task_ref(&task)?;
+                pt::reopen_task_blocker(&conn, &actor, seq, &name, &why)?;
+                println!("blocker '{name}' on #{seq} reopened");
             }
             BlockerCmd::Remove { task, name, why } => {
                 let why = why.required()?;
@@ -1393,33 +1561,19 @@ fn run() -> Result<()> {
             let Some((plan_id, slug)) = selected_plan else {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "schema": "papertiger.focus.v4",
-                        "selection_state": "no_active_plan",
-                        "plan": null,
-                        "entries": [],
-                    }))?
+                    serde_json::to_string_pretty(&pt::FocusResponse::no_active_plan())?
                 );
                 return Ok(());
             };
-            let entries = pt::focus(&conn, plan_id, limit, all)?;
+            let response = pt::focus(&conn, plan_id, limit, all)?;
             if json {
-                let plan = pt::get_plan(&conn, plan_id)?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "schema": "papertiger.focus.v4",
-                        "selection_state": "resolved",
-                        "plan": plan,
-                        "entries": entries,
-                    }))?
-                );
-            } else if entries.is_empty() {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else if response.projection.entries.is_empty() {
                 println!("nothing actionable");
             } else {
                 println!("focus {slug}");
                 let mut current = None::<String>;
-                for entry in entries {
+                for entry in response.projection.entries {
                     if current.as_deref() != Some(entry.readiness.as_str()) {
                         println!("{}:", entry.readiness);
                         current = Some(entry.readiness.clone());
@@ -1438,6 +1592,14 @@ fn run() -> Result<()> {
                         entry.unfinished_downstream_count,
                         entry.open_gate_count,
                         blockers,
+                    );
+                }
+                if response.projection.omitted_count > 0
+                    && let Some(command) = response.projection.continuation_command
+                {
+                    println!(
+                        "  ... {} actionable task(s) omitted; run `{command}`",
+                        response.projection.omitted_count
                     );
                 }
             }
@@ -1461,10 +1623,10 @@ fn run() -> Result<()> {
             println!("{slug}");
             print_tree(&conn, plan_id, None, 1)?;
         }
-        Cmd::Note { text, task } => {
+        Cmd::Note { text, source, task } => {
             let text = text.required()?;
             let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
-            pt::add_note(&conn, &actor, task_seq, &text)?;
+            pt::add_note_with_source(&conn, &actor, task_seq, &text, source.as_deref())?;
             println!("noted");
         }
         Cmd::Log {
@@ -1532,6 +1694,57 @@ fn run() -> Result<()> {
             }
             for f in findings {
                 println!("[{}] {}", f.kind, f.detail);
+            }
+        }
+        Cmd::Evidence {
+            cmd:
+                EvidenceCmd::Verify {
+                    task,
+                    project_root,
+                    json,
+                },
+        } => {
+            let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
+            let project_root = match project_root {
+                Some(root) => root,
+                None => project_setup::discover_project_root(&std::env::current_dir()?)?
+                    .context(
+                        "no project-install receipt was found; pass `papertiger evidence verify --project-root <project-root>`",
+                    )?,
+            };
+            let report = pt::verify_evidence(&conn, &project_root, task_seq)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "evidence verification: {} verified, {} failed, {} unsupported",
+                    report.verified_count, report.failure_count, report.unverifiable_count
+                );
+                for binding in &report.bindings {
+                    println!(
+                        "  #{} {} '{}' [{}] {}",
+                        binding.task_seq,
+                        binding.entity,
+                        binding.name,
+                        binding.status,
+                        binding.locator
+                    );
+                    if let Some(detail) = &binding.detail {
+                        println!("    {detail}");
+                    }
+                    for command in &binding.corrective_commands {
+                        println!(
+                            "    corrective argv: {} {}",
+                            command.program,
+                            serde_json::to_string(&command.arguments)?
+                        );
+                    }
+                }
+            }
+            if !report.complete {
+                bail!(
+                    "evidence verification is incomplete; follow each failed binding's corrective argv, or provide a scheme-specific verifier for unsupported bindings"
+                );
             }
         }
         Cmd::Export {
@@ -1680,4 +1893,68 @@ fn print_tree(conn: &Connection, plan_id: i64, parent: Option<i64>, depth: usize
         print_tree(conn, plan_id, Some(task_id), depth + 1)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod command_access_tests {
+    use super::*;
+
+    #[test]
+    fn read_surfaces_use_read_only_authority_admission() {
+        for command in [
+            Cmd::Status { json: true },
+            Cmd::Audit,
+            Cmd::Export {
+                plan: None,
+                output: None,
+                replace: false,
+            },
+            Cmd::Plan { cmd: PlanCmd::List },
+            Cmd::Gate {
+                cmd: GateCmd::List { task: "1".into() },
+            },
+            Cmd::Blocker {
+                cmd: BlockerCmd::List { task: "1".into() },
+            },
+            Cmd::Commit {
+                cmd: CommitCmd::Find {
+                    commit_oid: "a".repeat(40),
+                    repo: None,
+                    json: true,
+                },
+            },
+            Cmd::Mise {
+                cmd: MiseCmd::Show {
+                    projection_sha256: "a".repeat(64),
+                },
+            },
+        ] {
+            assert!(command.opens_authority_read_only());
+        }
+    }
+
+    #[test]
+    fn mutation_surfaces_default_to_read_write_authority_admission() {
+        assert!(!Cmd::Init.opens_authority_read_only());
+        assert!(
+            !Cmd::Commit {
+                cmd: CommitCmd::Add {
+                    task: "1".into(),
+                    commit_oid: "a".repeat(40),
+                    repo: ".".into(),
+                    note: None,
+                },
+            }
+            .opens_authority_read_only()
+        );
+        assert!(
+            !Cmd::Mise {
+                cmd: MiseCmd::Project {
+                    task: "1".into(),
+                    projection: "projection.json".into(),
+                },
+            }
+            .opens_authority_read_only()
+        );
+    }
 }

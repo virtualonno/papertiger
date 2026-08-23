@@ -105,10 +105,21 @@ fn atomic_write_file(
         }
         Ok(())
     })();
-    if result.is_err() {
-        let _ = fs::remove_file(&staged);
+    if let Err(error) = result {
+        match fs::remove_file(&staged) {
+            Ok(()) => return Err(error),
+            Err(cleanup) if cleanup.kind() == std::io::ErrorKind::NotFound => return Err(error),
+            Err(cleanup) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "cleanup also failed for staged {subject} {}: {cleanup}; remove that exact staged file after inspecting the original error",
+                        staged.display()
+                    )
+                });
+            }
+        }
     }
-    result
+    Ok(())
 }
 
 #[cfg(not(windows))]
@@ -168,4 +179,46 @@ fn replace_existing_file(staged: &Path, destination: &Path, subject: &str) -> Re
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_and_replace_refusals_bind_exact_corrective_messages() {
+        let temporary = std::env::temp_dir().join(format!(
+            "papertiger-atomic-file-test-{}-{}",
+            std::process::id(),
+            NEXT_STAGED_WRITE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&temporary).unwrap();
+        let existing = temporary.join("existing.json");
+        fs::write(&existing, b"original").unwrap();
+        let error = atomic_create_file(&existing, b"replacement", "receipt", "retry-create")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!(
+                "refusing to replace concurrently created receipt {}; inspect it, then run retry-create",
+                existing.display()
+            )
+        );
+        assert_eq!(fs::read(&existing).unwrap(), b"original");
+
+        let missing = temporary.join("missing.json");
+        let error = atomic_replace_file(&missing, b"replacement", "receipt", "retry-replace")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            format!(
+                "refusing to replace missing or non-file receipt {}; inspect it, then run retry-replace",
+                missing.display()
+            )
+        );
+        assert!(!missing.exists());
+        fs::remove_dir_all(temporary).unwrap();
+    }
 }

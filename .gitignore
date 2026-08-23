@@ -2,3 +2,16 @@
 /dist/
 /state/
 /.claude/
+
+# Papertiger project-local runtime and authorities
+/tools/papertiger/bin/
+/state/papertiger-mise.sqlite
+/state/papertiger-mise.sqlite-journal
+/state/papertiger-mise.sqlite-shm
+/state/papertiger-mise.sqlite-wal
+/state/papertiger-mise-objects/
+/state/papertiger.sqlite
+/state/papertiger.sqlite-journal
+/state/papertiger.sqlite-shm
+/state/papertiger.sqlite-wal
+# End Papertiger managed ignore block
