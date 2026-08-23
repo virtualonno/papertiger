@@ -6,7 +6,10 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-08-23
+## [0.9.0] - 2026-08-24
+
+This is the first public release after 0.7.1. Versions 0.8.0 and 0.8.1 were
+unpublished development versions and have no public tags or release artifacts.
 
 ### Added
 
@@ -21,6 +24,23 @@ All notable user-visible changes are documented here. Papertiger follows
   corrective argument vectors.
 - `blocker reopen` provides an evented repair path when a resolved blocker must
   be restored before rebinding evidence or completing work again.
+- Status v2 distinguishes complete in-progress parent and leaf projections and
+  gives every bounded ready-work and recent-note projection exact scope,
+  ordering, eligible, returned, and omitted counts plus a continuation command.
+- Task edits retain canonical before/after definition revisions in their event
+  payloads. Public history labels older edit events without inventing snapshots,
+  rejects no-op edits, and audits malformed new revisions.
+- The native planner discovers the nearest tracked project-install receipt by
+  walking upward, verifies its pinned Papertiger version, and binds the
+  receipt-selected authority without a shell launcher or process bridge.
+- `setup-project --skill-target auto|agents|claude|both|none` installs only the
+  selected thin skill envelopes. Auto follows existing harness markers and
+  selects none for an unmarked repository; omitted target selection preserves
+  an existing receipt choice.
+- `uninstall-project` previews and removes only exact receipt-owned integration
+  files with a matching external release binary. It retains planner and Mise
+  authorities, evidence objects, repository guidance, unrelated skills, and
+  `.gitignore` policy.
 
 ### Changed
 
@@ -36,14 +56,28 @@ All notable user-visible changes are documented here. Papertiger follows
   Directly requested outcomes record `intent_source=user`, and commit-backed
   outcomes receive an inward full-OID association before completion.
 - The installed contract defines a repository guidance discovery trigger with
-  those same boundaries. `setup-project` remains additive and never edits a
-  consuming repository's `AGENTS.md`, `CLAUDE.md`, or equivalent guidance.
+  those same boundaries. Project integration never edits a consuming
+  repository's `AGENTS.md`, `CLAUDE.md`, or equivalent guidance.
 - Task titles are limited to 160 characters. Tags are trimmed, limited to 64
   characters, and blank values are refused. Import applies the same canonical
   validation, and replacing sourced intent requires explicitly replacing or
   clearing its meaning source.
 - Every top-level Mise command namespace now describes its operational boundary
   in `--help` instead of rendering as an unexplained noun.
+- Read commands open the planning authority read-only by construction. The
+  installed skill provides a self-contained cold-read path, requires the full
+  authority contract only before mutation or advanced use, and never requires
+  crossing shells merely to reach the planner.
+- Project skills and operating guidance invoke the native planner directly.
+  Contextmink's process bridge remains reserved for child-process and argument
+  relay; it is not part of planner execution.
+- Release publication unfolds source hard-wrapping before creating the GitHub
+  description, preserving semantic headings, paragraphs, and list items.
+- Release verification compiles every workspace target with the declared Rust
+  1.95 minimum in addition to the pinned current toolchain gates.
+- Setup receipt v2 records the selected harness targets. Exact legacy receipts
+  remain readable, receipt-owned deselection retires only hash-matching skill
+  files, and modified retired files refuse before writes.
 
 ### Fixed
 
@@ -60,47 +94,10 @@ All notable user-visible changes are documented here. Papertiger follows
   authority-specific refusals with a corrective command or exact missing input.
   Corrupt event payloads are reported or refused rather than silently omitted.
 
-## [0.8.1] - 2026-08-13
-
-### Added
-
-- The native planner binary now discovers the nearest tracked project-install
-  receipt by walking upward from the current directory, verifies the pinned
-  Papertiger version, and binds the receipt-selected authority itself.
-
-### Changed
-
-- Project skills and operating guidance now invoke the native Papertiger binary
-  directly. Contextmink's process bridge remains reserved for child-process and
-  argv relay; it is not part of planner execution.
-- `setup-project` now installs one runtime surface and safely retires prior
-  receipt-owned Bash and Windows launchers when their hashes still match.
-
 ### Removed
 
 - Project-managed `scripts/papertiger` and `scripts/papertiger.cmd` launchers.
   Project identity and database selection no longer depend on shell scripts.
-
-## [0.8.0] - 2026-08-13
-
-### Added
-
-- Status v2 distinguishes complete in-progress parent and leaf projections and
-  gives every bounded ready-work and recent-note projection exact scope,
-  ordering, eligible, returned, and omitted counts plus a continuation command.
-- Task edits now retain canonical before/after definition revisions in their
-  event payloads. Public history labels pre-revision edit events without
-  inventing snapshots, rejects no-op edits, and audits malformed new revisions.
-
-### Changed
-
-- Read commands now open the planning authority read-only by construction. The
-  installed skill provides a self-contained cold-read path, requires the full
-  authority contract only before mutation or advanced use, and prohibits
-  crossing shells merely to reach a launcher.
-- Release publication now unfolds source hard-wrapping before creating the
-  GitHub description, keeping headings, paragraphs, and list items on semantic
-  boundaries instead of retaining arbitrary mid-sentence newlines.
 
 ## [0.7.1] - 2026-08-13
 
@@ -232,9 +229,7 @@ development version and has no public tag or release artifact.
   evaluator identity, and process-lifecycle refusal paths.
 
 [Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.9.0...HEAD
-[0.9.0]: https://github.com/virtualonno/papertiger/compare/v0.8.1...v0.9.0
-[0.8.1]: https://github.com/virtualonno/papertiger/compare/v0.8.0...v0.8.1
-[0.8.0]: https://github.com/virtualonno/papertiger/compare/v0.7.1...v0.8.0
+[0.9.0]: https://github.com/virtualonno/papertiger/compare/v0.7.1...v0.9.0
 [0.7.1]: https://github.com/virtualonno/papertiger/releases/tag/v0.7.1
 [0.7.0]: https://github.com/virtualonno/papertiger/releases/tag/v0.7.0
 [0.5.0]: https://github.com/virtualonno/papertiger/releases/tag/v0.5.0
