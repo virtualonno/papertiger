@@ -117,9 +117,12 @@ project="$fixture/consumer"
 mkdir -p "$project/nested/work"
 printf 'repository contract\n' > "$project/AGENTS.md"
 printf 'target/\n' > "$project/.gitignore"
+mkdir -p "$project/.agents/skills/unrelated"
+printf 'unrelated skill\n' > "$project/.agents/skills/unrelated/SKILL.md"
 
 "$planner" setup-project "$project" --dry-run --json > "$fixture/setup-dry-run.json"
-grep -q '"schema": "papertiger.project_setup.v2"' "$fixture/setup-dry-run.json"
+grep -q '"schema": "papertiger.project_setup.v3"' "$fixture/setup-dry-run.json"
+grep -q '"agents"' "$fixture/setup-dry-run.json"
 test ! -e "$project/scripts/papertiger"
 test ! -e "$project/scripts/papertiger.cmd"
 
@@ -127,7 +130,7 @@ test ! -e "$project/scripts/papertiger.cmd"
 test -f "$project/tools/papertiger/bin/papertiger$exe"
 test ! -e "$project/tools/papertiger/bin/papertiger-mise$exe"
 test -f "$project/tools/papertiger/project-install.json"
-grep -Fq '"schema": "papertiger.project_install.v1"' \
+grep -Fq '"schema": "papertiger.project_install.v2"' \
     "$project/tools/papertiger/project-install.json"
 grep -Fq "\"papertiger_version\": \"$planner_semver\"" \
     "$project/tools/papertiger/project-install.json"
@@ -138,9 +141,7 @@ test ! -e "$project/scripts/papertiger.cmd"
 cmp "$project/tools/papertiger/agent_integration.md" \
     "$root/agent_integration.md"
 test -f "$project/.agents/skills/papertiger/SKILL.md"
-test -f "$project/.claude/skills/papertiger/SKILL.md"
-cmp "$project/.agents/skills/papertiger/SKILL.md" \
-    "$project/.claude/skills/papertiger/SKILL.md"
+test ! -e "$project/.claude/skills/papertiger/SKILL.md"
 cmp "$project/.agents/skills/papertiger/SKILL.md" \
     "$root/templates/papertiger/SKILL.md"
 test "$(cat "$project/AGENTS.md")" = "repository contract"
@@ -189,5 +190,36 @@ if grep -Eq '"action": "(create|replace|update_gitignore)"' "$fixture/setup-seco
   echo "second setup-project run was not idempotent" >&2
   exit 1
 fi
+
+ignore_fingerprint="$(cksum "$project/.gitignore")"
+mise_fingerprint="$(cksum "$project/state/papertiger-mise.sqlite")"
+"$planner" uninstall-project "$project" --dry-run --json \
+  > "$fixture/uninstall-dry-run.json"
+grep -q '"schema": "papertiger.project_uninstall.v1"' \
+  "$fixture/uninstall-dry-run.json"
+grep -q '"operation": "remove"' "$fixture/uninstall-dry-run.json"
+test -f "$project/tools/papertiger/project-install.json"
+test -f "$installed_planner"
+
+"$planner" uninstall-project "$project" --json > "$fixture/uninstall.json"
+test ! -e "$project/tools/papertiger/project-install.json"
+test ! -e "$installed_planner"
+test ! -e "$project/tools/papertiger/agent_integration.md"
+test ! -e "$project/.agents/skills/papertiger/SKILL.md"
+test -f "$project/.agents/skills/unrelated/SKILL.md"
+test "$(cat "$project/AGENTS.md")" = "repository contract"
+test "$(cksum "$project/.gitignore")" = "$ignore_fingerprint"
+test "$(cksum "$project/state/papertiger.sqlite")" = "$authority_fingerprint"
+test "$(cksum "$project/state/papertiger-mise.sqlite")" = "$mise_fingerprint"
+
+unmarked="$fixture/unmarked"
+mkdir -p "$unmarked"
+"$planner" setup-project "$unmarked" --json > "$fixture/unmarked-setup.json"
+grep -Fq '"skill_targets": []' "$fixture/unmarked-setup.json"
+test ! -e "$unmarked/.agents/skills/papertiger/SKILL.md"
+test ! -e "$unmarked/.claude/skills/papertiger/SKILL.md"
+"$planner" uninstall-project "$unmarked" --json \
+  > "$fixture/unmarked-uninstall.json"
+test ! -e "$unmarked/tools/papertiger/project-install.json"
 
 echo "Papertiger cross-check passed: $planner_version / $mise_version"

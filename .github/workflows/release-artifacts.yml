@@ -32,6 +32,13 @@ jobs:
         shell: bash
         run: bash scripts/cross_check.sh
 
+      - name: Verify minimum supported Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.95.0 --profile minimal
+          cargo +1.95.0 check --locked --workspace --all-targets
+
   build:
     needs: source
     runs-on: ${{ matrix.os }}
@@ -112,7 +119,7 @@ jobs:
       - name: Test project setup integration
         run: >-
           cargo test --locked -p papertiger --bin papertiger --target ${{ matrix.target }}
-          project_setup::tests:: -- --test-threads=1
+          project_setup:: -- --test-threads=1
 
       - name: Lint native target
         run: >-
@@ -200,6 +207,7 @@ jobs:
           test "$("$bundle/papertiger" --version)" = "papertiger ${VERSION}"
           test "$("$bundle/papertiger-mise" --version)" = "papertiger-mise ${VERSION}"
           grep -q 'setup-project' < <("$bundle/papertiger" --help)
+          grep -q 'uninstall-project' < <("$bundle/papertiger" --help)
           grep -q -- '--project-root' < <("$bundle/papertiger-mise" --help)
           grep -Fq '"schema": "papertiger.release-manifest.v1"' "$bundle/manifest.json"
           grep -Fq '"name": "papertiger"' "$bundle/manifest.json"
@@ -221,30 +229,31 @@ jobs:
           printf 'repository contract\n' > "$project/AGENTS.md"
           printf 'target/\n' > "$project/.gitignore"
           "$bundle/papertiger" setup-project "$project" --json > "$verify/setup.json"
-          grep -Fq '"schema": "papertiger.project_setup.v2"' "$verify/setup.json"
+          grep -Fq '"schema": "papertiger.project_setup.v3"' "$verify/setup.json"
           test -f "$project/tools/papertiger/bin/papertiger"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise"
           test -f "$project/tools/papertiger/project-install.json"
-          grep -Fq '"schema": "papertiger.project_install.v1"' \
+          grep -Fq '"schema": "papertiger.project_install.v2"' \
               "$project/tools/papertiger/project-install.json"
           grep -Fq "\"papertiger_version\": \"${VERSION}\"" \
               "$project/tools/papertiger/project-install.json"
           grep -Fq '"authority_path": "state/papertiger.sqlite"' \
               "$project/tools/papertiger/project-install.json"
-          test -f "$project/scripts/papertiger.cmd"
+          grep -Fq '"agents"' "$project/tools/papertiger/project-install.json"
+          test ! -e "$project/scripts/papertiger"
+          test ! -e "$project/scripts/papertiger.cmd"
           cmp "$project/tools/papertiger/agent_integration.md" \
               "$bundle/agent_integration.md"
           test -f "$project/.agents/skills/papertiger/SKILL.md"
-          test -f "$project/.claude/skills/papertiger/SKILL.md"
-          cmp "$project/.agents/skills/papertiger/SKILL.md" \
-              "$project/.claude/skills/papertiger/SKILL.md"
+          test ! -e "$project/.claude/skills/papertiger/SKILL.md"
           cmp "$project/.agents/skills/papertiger/SKILL.md" \
               templates/papertiger/SKILL.md
           test "$(cat "$project/AGENTS.md")" = "repository contract"
-          test "$(cd "$project" && ./scripts/papertiger --version)" = "papertiger ${VERSION}"
-          (cd "$project/nested/work" && ../../scripts/papertiger init)
-          (cd "$project/nested/work" && ../../scripts/papertiger status) > "$verify/planner-status.txt"
-          (cd "$project/nested/work" && ../../scripts/papertiger audit)
+          installed_planner="$(cd "$project/tools/papertiger/bin" && pwd)/papertiger"
+          test "$(cd "$project" && "$installed_planner" --version)" = "papertiger ${VERSION}"
+          (cd "$project/nested/work" && "$installed_planner" init)
+          (cd "$project/nested/work" && "$installed_planner" status) > "$verify/planner-status.txt"
+          (cd "$project/nested/work" && "$installed_planner" audit)
           test -f "$project/state/papertiger.sqlite"
           test ! -e "$project/nested/work/state"
           "$bundle/papertiger-mise" --project-root "$project" status --json > "$verify/mise-before.json"
@@ -253,6 +262,21 @@ jobs:
           "$bundle/papertiger-mise" --project-root "$project" status --json > "$verify/mise-after.json"
           grep -q '"initialized": true' "$verify/mise-after.json"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise"
+          ignore_fingerprint="$(cksum "$project/.gitignore")"
+          planner_db_fingerprint="$(cksum "$project/state/papertiger.sqlite")"
+          mise_db_fingerprint="$(cksum "$project/state/papertiger-mise.sqlite")"
+          "$bundle/papertiger" uninstall-project "$project" --dry-run --json > "$verify/uninstall-dry-run.json"
+          grep -Fq '"schema": "papertiger.project_uninstall.v1"' "$verify/uninstall-dry-run.json"
+          test -f "$project/tools/papertiger/project-install.json"
+          "$bundle/papertiger" uninstall-project "$project" --json > "$verify/uninstall.json"
+          test ! -e "$project/tools/papertiger/project-install.json"
+          test ! -e "$installed_planner"
+          test ! -e "$project/tools/papertiger/agent_integration.md"
+          test ! -e "$project/.agents/skills/papertiger/SKILL.md"
+          test "$(cat "$project/AGENTS.md")" = "repository contract"
+          test "$(cksum "$project/.gitignore")" = "$ignore_fingerprint"
+          test "$(cksum "$project/state/papertiger.sqlite")" = "$planner_db_fingerprint"
+          test "$(cksum "$project/state/papertiger-mise.sqlite")" = "$mise_db_fingerprint"
 
       - name: Verify packaged release (Windows)
         if: runner.os == 'Windows'
@@ -271,6 +295,7 @@ jobs:
           test "$("$planner" --version)" = "papertiger ${VERSION}"
           test "$("$mise" --version)" = "papertiger-mise ${VERSION}"
           grep -q 'setup-project' < <("$planner" --help)
+          grep -q 'uninstall-project' < <("$planner" --help)
           grep -q -- '--project-root' < <("$mise" --help)
           grep -Fq '"schema": "papertiger.release-manifest.v1"' "$bundle/manifest.json"
           grep -Fq '"name": "papertiger"' "$bundle/manifest.json"
@@ -288,30 +313,31 @@ jobs:
           printf 'repository contract\n' > "$project/AGENTS.md"
           printf 'target/\n' > "$project/.gitignore"
           "$planner" setup-project "$project" --json > "$verify/setup.json"
-          grep -Fq '"schema": "papertiger.project_setup.v2"' "$verify/setup.json"
+          grep -Fq '"schema": "papertiger.project_setup.v3"' "$verify/setup.json"
           test -f "$project/tools/papertiger/bin/papertiger.exe"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise.exe"
           test -f "$project/tools/papertiger/project-install.json"
-          grep -Fq '"schema": "papertiger.project_install.v1"' \
+          grep -Fq '"schema": "papertiger.project_install.v2"' \
               "$project/tools/papertiger/project-install.json"
           grep -Fq "\"papertiger_version\": \"${VERSION}\"" \
               "$project/tools/papertiger/project-install.json"
           grep -Fq '"authority_path": "state/papertiger.sqlite"' \
               "$project/tools/papertiger/project-install.json"
-          test -f "$project/scripts/papertiger.cmd"
+          grep -Fq '"agents"' "$project/tools/papertiger/project-install.json"
+          test ! -e "$project/scripts/papertiger"
+          test ! -e "$project/scripts/papertiger.cmd"
           cmp "$project/tools/papertiger/agent_integration.md" \
               "$bundle/agent_integration.md"
           test -f "$project/.agents/skills/papertiger/SKILL.md"
-          test -f "$project/.claude/skills/papertiger/SKILL.md"
-          cmp "$project/.agents/skills/papertiger/SKILL.md" \
-              "$project/.claude/skills/papertiger/SKILL.md"
+          test ! -e "$project/.claude/skills/papertiger/SKILL.md"
           cmp "$project/.agents/skills/papertiger/SKILL.md" \
               templates/papertiger/SKILL.md
           test "$(cat "$project/AGENTS.md")" = "repository contract"
-          test "$(cd "$project" && ./scripts/papertiger --version)" = "papertiger ${VERSION}"
-          (cd "$project/nested/work" && ../../scripts/papertiger init)
-          (cd "$project/nested/work" && ../../scripts/papertiger status) > "$verify/planner-status.txt"
-          (cd "$project/nested/work" && ../../scripts/papertiger audit)
+          installed_planner="$(cd "$project/tools/papertiger/bin" && pwd)/papertiger.exe"
+          test "$(cd "$project" && "$installed_planner" --version)" = "papertiger ${VERSION}"
+          (cd "$project/nested/work" && "$installed_planner" init)
+          (cd "$project/nested/work" && "$installed_planner" status) > "$verify/planner-status.txt"
+          (cd "$project/nested/work" && "$installed_planner" audit)
           test -f "$project/state/papertiger.sqlite"
           test ! -e "$project/nested/work/state"
           "$mise" --project-root "$project" status --json > "$verify/mise-before.json"
@@ -321,33 +347,60 @@ jobs:
           grep -q '"initialized": true' "$verify/mise-after.json"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise.exe"
 
-      - name: Verify packaged Windows launcher from PowerShell
+      - name: Verify packaged Windows native lifecycle from PowerShell
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           VERSION: ${{ inputs.artifact_version }}
         run: |
-          $project = Join-Path "dist/verify-${{ matrix.platform }}" "consumer"
-          Push-Location $project
+          $project = (Resolve-Path (Join-Path "dist/verify-${{ matrix.platform }}" "consumer")).Path
+          $bundle = (Resolve-Path (Join-Path "dist/verify-${{ matrix.platform }}" "${{ steps.names.outputs.bundle }}")).Path
+          $planner = Join-Path $bundle "papertiger.exe"
+          $installedPlanner = Join-Path $project "tools/papertiger/bin/papertiger.exe"
+          Push-Location (Join-Path $project "nested/work")
           try {
-            $actualVersion = (& .\scripts\papertiger.cmd --version).Trim()
+            $actualVersion = (& $installedPlanner --version).Trim()
             if ($LASTEXITCODE -ne 0) {
-              throw "project-root papertiger.cmd invocation failed"
+              throw "project-local native Papertiger invocation failed"
             }
             if ($actualVersion -ne "papertiger $env:VERSION") {
-              throw "papertiger.cmd reported '$actualVersion', expected 'papertiger $env:VERSION'"
+              throw "project-local Papertiger reported '$actualVersion', expected 'papertiger $env:VERSION'"
+            }
+            & $installedPlanner status | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              throw "nested native Papertiger invocation failed"
             }
           } finally {
             Pop-Location
           }
-          Push-Location (Join-Path $project "nested/work")
-          try {
-            & ..\..\scripts\papertiger.cmd status | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-              throw "nested papertiger.cmd invocation failed"
+          $ignoreHash = (Get-FileHash -LiteralPath (Join-Path $project ".gitignore") -Algorithm SHA256).Hash
+          $plannerDbHash = (Get-FileHash -LiteralPath (Join-Path $project "state/papertiger.sqlite") -Algorithm SHA256).Hash
+          $miseDbHash = (Get-FileHash -LiteralPath (Join-Path $project "state/papertiger-mise.sqlite") -Algorithm SHA256).Hash
+          & $planner uninstall-project $project --dry-run --json | Out-Null
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $project "tools/papertiger/project-install.json"))) {
+            throw "uninstall dry-run changed the installation or failed"
+          }
+          & $planner uninstall-project $project --json | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "uninstall-project failed"
+          }
+          foreach ($removed in @(
+            "tools/papertiger/project-install.json",
+            "tools/papertiger/bin/papertiger.exe",
+            "tools/papertiger/agent_integration.md",
+            ".agents/skills/papertiger/SKILL.md"
+          )) {
+            if (Test-Path -LiteralPath (Join-Path $project $removed)) {
+              throw "uninstall retained receipt-owned path $removed"
             }
-          } finally {
-            Pop-Location
+          }
+          if ((Get-Content -LiteralPath (Join-Path $project "AGENTS.md") -Raw).Trim() -ne "repository contract") {
+            throw "uninstall changed AGENTS.md"
+          }
+          if ((Get-FileHash -LiteralPath (Join-Path $project ".gitignore") -Algorithm SHA256).Hash -ne $ignoreHash -or
+              (Get-FileHash -LiteralPath (Join-Path $project "state/papertiger.sqlite") -Algorithm SHA256).Hash -ne $plannerDbHash -or
+              (Get-FileHash -LiteralPath (Join-Path $project "state/papertiger-mise.sqlite") -Algorithm SHA256).Hash -ne $miseDbHash) {
+            throw "uninstall changed retained policy or authority data"
           }
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

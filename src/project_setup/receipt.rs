@@ -14,7 +14,31 @@ use super::{
     normalized_path,
 };
 
-pub(super) const INSTALL_RECEIPT_SCHEMA: &str = "papertiger.project_install.v1";
+pub(super) const INSTALL_RECEIPT_SCHEMA: &str = "papertiger.project_install.v2";
+const LEGACY_INSTALL_RECEIPT_SCHEMA: &str = "papertiger.project_install.v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SkillTarget {
+    Agents,
+    Claude,
+}
+
+impl SkillTarget {
+    pub(super) fn managed_path(self) -> &'static str {
+        match self {
+            Self::Agents => ".agents/skills/papertiger/SKILL.md",
+            Self::Claude => ".claude/skills/papertiger/SKILL.md",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Agents => "agents",
+            Self::Claude => "claude",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,7 +46,22 @@ pub(super) struct InstallReceipt {
     pub(super) schema: String,
     pub(super) papertiger_version: String,
     pub(super) authority_path: String,
+    pub(super) skill_targets: Vec<SkillTarget>,
     pub(super) managed_files: Vec<ManagedFileReceipt>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyInstallReceipt {
+    schema: String,
+    papertiger_version: String,
+    authority_path: String,
+    managed_files: Vec<ManagedFileReceipt>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReceiptHeader {
+    schema: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,12 +73,14 @@ pub(super) struct ManagedFileReceipt {
 
 pub(super) fn build_install_receipt(
     authority_path: &str,
+    skill_targets: &[SkillTarget],
     managed: &[ManagedFile],
 ) -> InstallReceipt {
     InstallReceipt {
         schema: INSTALL_RECEIPT_SCHEMA.to_owned(),
         papertiger_version: env!("CARGO_PKG_VERSION").to_owned(),
         authority_path: authority_path.to_owned(),
+        skill_targets: skill_targets.to_vec(),
         managed_files: managed
             .iter()
             .filter(|file| file.content_kind.is_receipt_text())
@@ -64,25 +105,58 @@ pub(super) fn load_install_receipt(path: &Path) -> Result<Option<InstallReceipt>
     }
     if !path.is_file() {
         return Err(anyhow!(
-            "setup-project install receipt is not a file: {}",
+            "project-install receipt is not a file: {}",
             path.display()
         ));
     }
     let bytes =
         fs::read(path).with_context(|| format!("read install receipt {}", path.display()))?;
-    let receipt: InstallReceipt = serde_json::from_slice(&bytes).with_context(|| {
+    let header: ReceiptHeader = serde_json::from_slice(&bytes).with_context(|| {
         format!(
-            "parse {}; restore a valid {} receipt or move it aside before setup-project",
+            "parse {}; restore a valid {} or {} receipt before changing project integration",
             path.display(),
+            LEGACY_INSTALL_RECEIPT_SCHEMA,
             INSTALL_RECEIPT_SCHEMA
         )
     })?;
+    let receipt = match header.schema.as_str() {
+        INSTALL_RECEIPT_SCHEMA => serde_json::from_slice(&bytes).with_context(|| {
+            format!(
+                "parse {}; restore a valid {} receipt before changing project integration",
+                path.display(),
+                INSTALL_RECEIPT_SCHEMA
+            )
+        })?,
+        LEGACY_INSTALL_RECEIPT_SCHEMA => {
+            let legacy: LegacyInstallReceipt =
+                serde_json::from_slice(&bytes).with_context(|| {
+                    format!(
+                        "parse {}; restore a valid {} receipt before changing project integration",
+                        path.display(),
+                        LEGACY_INSTALL_RECEIPT_SCHEMA
+                    )
+                })?;
+            let skill_targets = legacy_skill_targets(&legacy.managed_files);
+            InstallReceipt {
+                schema: legacy.schema,
+                papertiger_version: legacy.papertiger_version,
+                authority_path: legacy.authority_path,
+                skill_targets,
+                managed_files: legacy.managed_files,
+            }
+        }
+        other => {
+            return Err(anyhow!(
+                "unsupported project-install receipt schema {other:?}; use a Papertiger release that owns it or migrate the receipt deliberately"
+            ));
+        }
+    };
     validate_install_receipt(&receipt)?;
     Ok(Some(receipt))
 }
 
 fn validate_install_receipt(receipt: &InstallReceipt) -> Result<()> {
-    if receipt.schema != INSTALL_RECEIPT_SCHEMA {
+    if receipt.schema != INSTALL_RECEIPT_SCHEMA && receipt.schema != LEGACY_INSTALL_RECEIPT_SCHEMA {
         return Err(anyhow!(
             "unsupported project-install receipt schema {:?}; use a Papertiger release that owns it or migrate the receipt deliberately",
             receipt.schema
@@ -122,6 +196,66 @@ fn validate_install_receipt(receipt: &InstallReceipt) -> Result<()> {
             ));
         }
         papertiger::validate_sha256(&file.sha256, "project-install managed file sha256")?;
+    }
+    if receipt.schema == INSTALL_RECEIPT_SCHEMA {
+        validate_current_skill_layout(receipt, &paths)?;
+    }
+    Ok(())
+}
+
+fn legacy_skill_targets(managed_files: &[ManagedFileReceipt]) -> Vec<SkillTarget> {
+    [SkillTarget::Agents, SkillTarget::Claude]
+        .into_iter()
+        .filter(|target| {
+            managed_files
+                .iter()
+                .any(|file| file.path == target.managed_path())
+        })
+        .collect()
+}
+
+fn validate_current_skill_layout(
+    receipt: &InstallReceipt,
+    managed_paths: &HashSet<&str>,
+) -> Result<()> {
+    if !receipt
+        .skill_targets
+        .windows(2)
+        .all(|pair| pair[0] < pair[1])
+    {
+        return Err(anyhow!(
+            "project-install receipt skill_targets must be unique and ordered as agents, claude"
+        ));
+    }
+    let expected_paths = std::iter::once("tools/papertiger/agent_integration.md")
+        .chain(
+            receipt
+                .skill_targets
+                .iter()
+                .copied()
+                .map(SkillTarget::managed_path),
+        )
+        .collect::<Vec<_>>();
+    let actual_paths = receipt
+        .managed_files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<Vec<_>>();
+    if actual_paths != expected_paths {
+        return Err(anyhow!(
+            "project-install receipt managed_files must be exactly the canonical contract followed by the selected skill targets"
+        ));
+    }
+    for target in [SkillTarget::Agents, SkillTarget::Claude] {
+        let selected = receipt.skill_targets.contains(&target);
+        let recorded = managed_paths.contains(target.managed_path());
+        if selected != recorded {
+            return Err(anyhow!(
+                "project-install receipt skill target {} must match managed path {}",
+                target.label(),
+                target.managed_path()
+            ));
+        }
     }
     Ok(())
 }

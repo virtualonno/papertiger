@@ -593,13 +593,46 @@ fn setup_project_refuses_planning_globals_before_writing() {
         "--actor refusal must precede every setup write"
     );
 
+    for (flag, value, expected) in [
+        ("--db", ignored_db.as_os_str(), "does not accept --db"),
+        (
+            "--actor",
+            std::ffi::OsStr::new("test-agent"),
+            "records no planning events",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+            .arg(flag)
+            .arg(value)
+            .arg("uninstall-project")
+            .arg(&project)
+            .env_remove("PAPERTIGER_DB")
+            .env_remove("PAPERTIGER_ACTOR")
+            .output()
+            .expect("run uninstall-project with planning global");
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(expected), "{error}");
+    }
+
     std::fs::remove_dir(&project).expect("remove empty setup target");
 }
 
 #[test]
 fn planner_help_describes_nested_commands_and_important_arguments() {
     let setup = command_help(&["setup-project"]);
-    assert!(setup.contains("invalid with setup-project"), "{setup}");
+    assert!(
+        setup.contains("invalid with project integration"),
+        "{setup}"
+    );
+    assert!(setup.contains("--skill-target"), "{setup}");
+    assert!(setup.contains("auto|agents|claude|both|none"), "{setup}");
+
+    let uninstall = command_help(&["uninstall-project"]);
+    assert!(
+        uninstall.contains("preserves authority and repository policy"),
+        "{uninstall}"
+    );
 
     let plan = command_help(&["plan"]);
     for description in [

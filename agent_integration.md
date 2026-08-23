@@ -204,9 +204,13 @@ harnesses to ignore. Use this wording or an equivalent with the same boundaries:
 
 > Before the first edit or commit on multi-outcome or separate-commit work, or
 > work matching an existing durable task, read
-> `.agents/skills/papertiger/SKILL.md` completely and follow it. Skip one
+> `<selected-skill-path>/papertiger/SKILL.md` completely and follow it. Skip one
 > bounded edit, read-only review, intermediate steps inside one independently
 > reviewable outcome, and domain-owned or shared-team lifecycle.
+
+Replace `<selected-skill-path>` with `.agents/skills` or `.claude/skills` only
+when that path was deliberately selected. A repository using another harness
+can point directly to `tools/papertiger/agent_integration.md` instead.
 
 When a request does not name Papertiger, describe its use in the final summary
 as the local tasklog. Keep `papertiger` in executable corrective commands,
@@ -224,8 +228,9 @@ skill remains the canonical command and authority contract.
 - `tools/papertiger/agent_integration.md`
 - `tools/papertiger/project-install.json` (tracked version, authority path, and
   managed-text hashes; no platform-binary hash)
-- `.agents/skills/papertiger/SKILL.md`
-- `.claude/skills/papertiger/SKILL.md`
+- zero or more selected skill envelopes:
+  `.agents/skills/papertiger/SKILL.md` and
+  `.claude/skills/papertiger/SKILL.md`
 - additive Papertiger entries in `.gitignore`
 
 During a pre-receipt cutover, setup recognizes the prior vendor README only as
@@ -254,13 +259,21 @@ must be moved or deleted deliberately. An older release refuses to downgrade a
 newer receipt even with `--replace-managed`; use the recorded release or a
 newer verified binary.
 
-The receipt hashes the managed text surfaces: the canonical contract and both
-skill envelopes. It also owns the host-local binary but does
+On a first install, the default `auto` selection follows existing harness
+markers: `.agents` or `AGENTS.md` selects `agents`, `.claude` or `CLAUDE.md`
+selects `claude`, both select `both`, and an unmarked repository selects
+`none`. Explicit `agents`, `claude`, `both`, or `none` avoids detection;
+explicit `auto` reruns it. An upgrade with no `--skill-target` preserves the
+receipt's selected targets. Changing targets removes a deselected envelope only
+when its prior receipt hash still matches; local edits refuse retirement.
+
+The receipt hashes the managed text surfaces: the canonical contract and the
+selected skill envelopes. It also owns the host-local binary but does
 not put platform-specific binary bytes in that text hash list; each applied
 setup upgrades the binary to the exact bytes of the running release. Modified
 receipt-hashed text refuses unless the operator explicitly reviews replacement.
 
-The two skill paths are byte-identical thin discovery envelopes around this
+Selected skill paths are byte-identical thin discovery envelopes around this
 canonical contract. `.agents/skills` serves open Agent Skills-compatible
 harnesses including Codex, Pi, and OpenCode; `.claude/skills` serves Claude
 Code. Pi loads project skills only after project trust; for a noninteractive
@@ -273,6 +286,14 @@ same-named local Hermes skill takes precedence. Harnesses without Agent Skills
 should load a concise pointer from their project guidance. After setup changes
 a skill, start a fresh harness session if the active one does not rescan project
 skills. Do not fork the semantic body per harness.
+
+`uninstall-project` is the inverse receipt-owned lifecycle. Run it from an
+external binary matching the receipt version, preview it first, and review all
+paths. It removes only matching receipt-owned text, a native binary whose bytes
+equal that external release, and finally the receipt. It refuses modified
+content and project-local self-deletion. Planner and Mise authorities, SQLite
+sidecars, Mise objects, repository guidance, unrelated skills, and the entire
+`.gitignore` policy remain in place; data disposal is a separate decision.
 
 ## Mise is an episodic external driver
 

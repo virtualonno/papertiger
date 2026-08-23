@@ -3,10 +3,14 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
+use clap::ValueEnum;
 use serde::Serialize;
 
 mod filesystem;
 mod receipt;
+mod uninstall;
+
+pub(crate) use uninstall::{UninstallProjectRequest, uninstall_project};
 
 use filesystem::{
     PreReceiptInstall, ensure_executable, inspect_pre_receipt_install, preflight_managed_file,
@@ -15,9 +19,9 @@ use filesystem::{
 #[cfg(test)]
 use receipt::ManagedFileReceipt;
 use receipt::{
-    InstallReceipt, build_install_receipt, canonical_managed_text, load_install_receipt,
-    preflight_receipt, receipt_bytes, receipt_hashes, refuse_release_downgrade,
-    validate_receipt_managed_path,
+    InstallReceipt, SkillTarget, build_install_receipt, canonical_managed_text,
+    load_install_receipt, preflight_receipt, receipt_bytes, receipt_hashes,
+    refuse_release_downgrade, validate_receipt_managed_path,
 };
 
 const AGENT_INTEGRATION: &[u8] = include_bytes!("../../agent_integration.md");
@@ -59,6 +63,16 @@ pub(crate) struct SetupProjectRequest<'a> {
     pub(crate) dry_run: bool,
     pub(crate) replace_managed: bool,
     pub(crate) authority_path: Option<&'a Path>,
+    pub(crate) skill_target: Option<SkillTargetRequest>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum SkillTargetRequest {
+    Auto,
+    Agents,
+    Claude,
+    Both,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -96,6 +110,7 @@ pub(crate) struct SetupProjectResult {
     pub(crate) version: &'static str,
     pub(crate) project_root: String,
     pub(crate) authority_path: String,
+    pub(crate) skill_targets: Vec<SkillTarget>,
     pub(crate) dry_run: bool,
     pub(crate) operation: SetupOperation,
     pub(crate) actions: Vec<SetupAction>,
@@ -177,6 +192,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         None
     };
     let authority_path = select_authority_path(request.authority_path, prior_receipt.as_ref())?;
+    let skill_targets = select_skill_targets(&root, request.skill_target, prior_receipt.as_ref());
     validate_destination(&root, Path::new(&authority_path)).with_context(|| {
         format!(
             "validate receipt-selected authority path {authority_path}; choose a regular path wholly inside the project"
@@ -189,7 +205,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             authority_destination.display()
         ));
     }
-    let managed = vec![
+    let mut managed = vec![
         ManagedFile {
             relative_path: PathBuf::from(format!("tools/papertiger/bin/papertiger{suffix}")),
             content: binary,
@@ -202,21 +218,17 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             executable: false,
             content_kind: ManagedContentKind::ReceiptText,
         },
-        ManagedFile {
-            relative_path: PathBuf::from(".agents/skills/papertiger/SKILL.md"),
-            content: canonical_managed_text(AGENT_SKILL).into_owned(),
-            executable: false,
-            content_kind: ManagedContentKind::ReceiptText,
-        },
-        ManagedFile {
-            relative_path: PathBuf::from(".claude/skills/papertiger/SKILL.md"),
-            content: canonical_managed_text(AGENT_SKILL).into_owned(),
-            executable: false,
-            content_kind: ManagedContentKind::ReceiptText,
-        },
     ];
+    for target in &skill_targets {
+        managed.push(ManagedFile {
+            relative_path: PathBuf::from(target.managed_path()),
+            content: canonical_managed_text(AGENT_SKILL).into_owned(),
+            executable: false,
+            content_kind: ManagedContentKind::ReceiptText,
+        });
+    }
 
-    let desired_receipt = build_install_receipt(&authority_path, &managed);
+    let desired_receipt = build_install_receipt(&authority_path, &skill_targets, &managed);
     let desired_receipt_bytes = receipt_bytes(&desired_receipt)?;
     let mut prior_hashes = prior_receipt
         .as_ref()
@@ -428,6 +440,10 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         if request.replace_managed {
             apply_command.push_str(" --replace-managed");
         }
+        apply_command.push_str(&format!(
+            " --skill-target {}",
+            skill_target_label(&skill_targets)
+        ));
         if operation == SetupOperation::Unchanged {
             vec![
                 "Preview is unchanged; no setup-project apply is needed.".to_owned(),
@@ -466,13 +482,20 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             ]
         }
     } else {
-        let mut applied = vec![
-            format!(
-                "Invoke the installed native binary at tools/papertiger/bin/papertiger (papertiger.exe on Windows). It discovers this project receipt and binds {authority_path} when called from the project root or any nested directory; no shell launcher or process bridge is required."
-            ),
-            "Review the installed Papertiger skill envelope and add the concise repository guidance discovery trigger from tools/papertiger/agent_integration.md; a bare planning link is not equivalent, and setup-project never edits AGENTS.md or CLAUDE.md."
-                .to_owned(),
-        ];
+        let mut applied = vec![format!(
+            "Invoke the installed native binary at tools/papertiger/bin/papertiger (papertiger.exe on Windows). It discovers this project receipt and binds {authority_path} when called from the project root or any nested directory; no shell launcher or process bridge is required."
+        )];
+        if skill_targets.is_empty() {
+            applied.push(
+                "No skill envelope was selected. If an agent should discover Papertiger, add a concise repository-owned trigger that points to tools/papertiger/agent_integration.md; setup-project never edits AGENTS.md or CLAUDE.md."
+                    .to_owned(),
+            );
+        } else {
+            applied.push(format!(
+                "Review the installed Papertiger skill envelope for {} and add the concise repository guidance discovery trigger from tools/papertiger/agent_integration.md; a bare planning link is not equivalent, and setup-project never edits AGENTS.md or CLAUDE.md.",
+                skill_target_label(&skill_targets)
+            ));
+        }
         if authority_exists {
             applied.push(
                 "Run the installed Papertiger binary with status, focus, and audit; setup-project never migrates or replaces the existing authority."
@@ -485,16 +508,17 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             );
         }
         applied.push(format!(
-            "Commit the project-install receipt, integration contract, skill envelopes, and additive .gitignore policy. Keep tools/papertiger/bin and {authority_path} host-local and outside Git; setup-project writes ignore rules but never changes existing index entries."
+            "Commit the project-install receipt, integration contract, selected skill envelopes, and additive .gitignore policy. Keep tools/papertiger/bin and {authority_path} host-local and outside Git; setup-project writes ignore rules but never changes existing index entries."
         ));
         applied
     };
 
     Ok(SetupProjectResult {
-        schema: "papertiger.project_setup.v2",
+        schema: "papertiger.project_setup.v3",
         version: env!("CARGO_PKG_VERSION"),
         project_root: normalized_path(&root),
         authority_path,
+        skill_targets,
         dry_run: request.dry_run,
         operation,
         actions,
@@ -520,6 +544,44 @@ fn select_authority_path(
         return Ok(prior.authority_path.clone());
     }
     normalize_authority_path(requested.unwrap_or_else(|| Path::new(DEFAULT_AUTHORITY_PATH)))
+}
+
+fn select_skill_targets(
+    root: &Path,
+    requested: Option<SkillTargetRequest>,
+    prior_receipt: Option<&InstallReceipt>,
+) -> Vec<SkillTarget> {
+    match requested {
+        None => prior_receipt
+            .map(|receipt| receipt.skill_targets.clone())
+            .unwrap_or_else(|| detect_skill_targets(root)),
+        Some(SkillTargetRequest::Auto) => detect_skill_targets(root),
+        Some(SkillTargetRequest::Agents) => vec![SkillTarget::Agents],
+        Some(SkillTargetRequest::Claude) => vec![SkillTarget::Claude],
+        Some(SkillTargetRequest::Both) => vec![SkillTarget::Agents, SkillTarget::Claude],
+        Some(SkillTargetRequest::None) => Vec::new(),
+    }
+}
+
+fn detect_skill_targets(root: &Path) -> Vec<SkillTarget> {
+    let has_agents = root.join("AGENTS.md").is_file() || root.join(".agents").is_dir();
+    let has_claude = root.join("CLAUDE.md").is_file() || root.join(".claude").is_dir();
+    match (has_agents, has_claude) {
+        (true, true) => vec![SkillTarget::Agents, SkillTarget::Claude],
+        (true, false) => vec![SkillTarget::Agents],
+        (false, true) => vec![SkillTarget::Claude],
+        (false, false) => Vec::new(),
+    }
+}
+
+fn skill_target_label(skill_targets: &[SkillTarget]) -> &'static str {
+    match skill_targets {
+        [] => "none",
+        [SkillTarget::Agents] => "agents",
+        [SkillTarget::Claude] => "claude",
+        [SkillTarget::Agents, SkillTarget::Claude] => "both",
+        _ => unreachable!("validated skill target selection has canonical order"),
+    }
 }
 
 fn normalize_authority_path(path: &Path) -> Result<String> {
@@ -898,11 +960,21 @@ mod tests {
             dry_run: false,
             replace_managed: false,
             authority_path: None,
+            skill_target: Some(SkillTargetRequest::Both),
         }
     }
 
     fn cleanup(project: &Path) {
         fs::remove_dir_all(project.parent().unwrap()).unwrap();
+    }
+
+    fn legacy_receipt_bytes(receipt: &InstallReceipt) -> Vec<u8> {
+        let mut value = serde_json::to_value(receipt).unwrap();
+        value["schema"] = serde_json::Value::String("papertiger.project_install.v1".to_owned());
+        value.as_object_mut().unwrap().remove("skill_targets");
+        let mut bytes = serde_json::to_vec_pretty(&value).unwrap();
+        bytes.push(b'\n');
+        bytes
     }
 
     fn write_pre_receipt_install(project: &Path) {
@@ -966,7 +1038,7 @@ mod tests {
         assert!(preview.next_actions.iter().any(|action| {
             action
                 == &format!(
-                    "Preview is ready; apply with: papertiger setup-project \"{}\" --authority-path plans/papertiger.sqlite --replace-managed",
+                    "Preview is ready; apply with: papertiger setup-project \"{}\" --authority-path plans/papertiger.sqlite --replace-managed --skill-target both",
                     normalized_path(&project)
                 )
         }));
@@ -999,6 +1071,151 @@ mod tests {
     }
 
     #[test]
+    fn auto_skill_targets_follow_existing_harness_markers_without_guessing() {
+        let cases = [
+            ("unmarked", false, false, Vec::new()),
+            ("agents", true, false, vec![SkillTarget::Agents]),
+            ("claude", false, true, vec![SkillTarget::Claude]),
+            (
+                "both",
+                true,
+                true,
+                vec![SkillTarget::Agents, SkillTarget::Claude],
+            ),
+        ];
+        for (name, agents, claude, expected) in cases {
+            let (project, binary) = fixture(&format!("auto-{name}"));
+            if agents {
+                fs::write(project.join("AGENTS.md"), "repository contract\n").unwrap();
+            }
+            if claude {
+                fs::write(project.join("CLAUDE.md"), "repository contract\n").unwrap();
+            }
+            let mut auto = request(&project, &binary);
+            auto.skill_target = None;
+            let result = setup_project(auto).unwrap();
+            assert_eq!(result.skill_targets, expected, "case {name}");
+            assert_eq!(
+                project.join(".agents/skills/papertiger/SKILL.md").exists(),
+                agents,
+                "case {name}"
+            );
+            assert_eq!(
+                project.join(".claude/skills/papertiger/SKILL.md").exists(),
+                claude,
+                "case {name}"
+            );
+            cleanup(&project);
+        }
+    }
+
+    #[test]
+    fn omitted_target_preserves_receipt_choice_and_explicit_reselection_retires_owned_skill() {
+        let (project, binary) = fixture("target-migration");
+        setup_project(request(&project, &binary)).unwrap();
+        fs::remove_dir_all(project.join(".claude")).unwrap();
+
+        let mut preserve = request(&project, &binary);
+        preserve.skill_target = None;
+        let preserved = setup_project(preserve).unwrap();
+        assert_eq!(
+            preserved.skill_targets,
+            vec![SkillTarget::Agents, SkillTarget::Claude]
+        );
+        assert!(project.join(".claude/skills/papertiger/SKILL.md").is_file());
+
+        let mut agents_only = request(&project, &binary);
+        agents_only.skill_target = Some(SkillTargetRequest::Agents);
+        let reselected = setup_project(agents_only).unwrap();
+        assert_eq!(reselected.skill_targets, vec![SkillTarget::Agents]);
+        assert!(!project.join(".claude/skills/papertiger/SKILL.md").exists());
+        cleanup(&project);
+    }
+
+    #[test]
+    fn explicit_auto_redetects_while_none_overrides_present_harness_markers() {
+        let (project, binary) = fixture("target-explicit-auto");
+        fs::write(project.join("AGENTS.md"), "repository contract\n").unwrap();
+        fs::write(project.join("CLAUDE.md"), "repository contract\n").unwrap();
+        setup_project(request(&project, &binary)).unwrap();
+        fs::remove_file(project.join("CLAUDE.md")).unwrap();
+        fs::remove_dir_all(project.join(".claude")).unwrap();
+
+        let mut redetect = request(&project, &binary);
+        redetect.skill_target = Some(SkillTargetRequest::Auto);
+        let redetected = setup_project(redetect).unwrap();
+        assert_eq!(redetected.skill_targets, vec![SkillTarget::Agents]);
+
+        let mut none = request(&project, &binary);
+        none.skill_target = Some(SkillTargetRequest::None);
+        let none = setup_project(none).unwrap();
+        assert!(none.skill_targets.is_empty());
+        assert!(!project.join(".agents/skills/papertiger/SKILL.md").exists());
+        assert_eq!(
+            fs::read_to_string(project.join("AGENTS.md")).unwrap(),
+            "repository contract\n"
+        );
+        cleanup(&project);
+    }
+
+    #[test]
+    fn modified_deselected_skill_blocks_reselection_before_writes() {
+        let (project, binary) = fixture("target-modified-retirement");
+        setup_project(request(&project, &binary)).unwrap();
+        let claude_skill = project.join(".claude/skills/papertiger/SKILL.md");
+        fs::write(&claude_skill, "repository-owned edit\n").unwrap();
+        let receipt_before = fs::read(project.join(INSTALL_RECEIPT_PATH)).unwrap();
+
+        let mut preview = request(&project, &binary);
+        preview.skill_target = Some(SkillTargetRequest::Agents);
+        preview.dry_run = true;
+        let preview = setup_project(preview).unwrap();
+        assert_eq!(preview.operation, SetupOperation::Blocked);
+        assert!(preview.actions.iter().any(|action| {
+            action.path == ".claude/skills/papertiger/SKILL.md"
+                && action.action == SetupActionKind::ModifiedRefusal
+        }));
+
+        let mut apply = request(&project, &binary);
+        apply.skill_target = Some(SkillTargetRequest::Agents);
+        assert!(setup_project(apply).is_err());
+        assert_eq!(
+            fs::read(project.join(INSTALL_RECEIPT_PATH)).unwrap(),
+            receipt_before
+        );
+        assert_eq!(
+            fs::read_to_string(claude_skill).unwrap(),
+            "repository-owned edit\n"
+        );
+        cleanup(&project);
+    }
+
+    #[test]
+    fn legacy_receipt_infers_and_freezes_its_recorded_skill_targets() {
+        let (project, binary) = fixture("legacy-targets");
+        setup_project(request(&project, &binary)).unwrap();
+        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
+        let receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
+        fs::write(&receipt_path, legacy_receipt_bytes(&receipt)).unwrap();
+
+        let mut upgrade = request(&project, &binary);
+        upgrade.skill_target = None;
+        let result = setup_project(upgrade).unwrap();
+        assert_eq!(result.operation, SetupOperation::Upgrade);
+        assert_eq!(
+            result.skill_targets,
+            vec![SkillTarget::Agents, SkillTarget::Claude]
+        );
+        let receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
+        assert_eq!(receipt.schema, receipt::INSTALL_RECEIPT_SCHEMA);
+        assert_eq!(
+            receipt.skill_targets,
+            vec![SkillTarget::Agents, SkillTarget::Claude]
+        );
+        cleanup(&project);
+    }
+
+    #[test]
     fn install_is_idempotent_and_preserves_repository_owned_files_and_authority() {
         let (project, binary) = fixture("idempotent");
         fs::write(project.join("AGENTS.md"), "repository contract\n").unwrap();
@@ -1012,7 +1229,7 @@ mod tests {
         .unwrap();
 
         let first = setup_project(request(&project, &binary)).unwrap();
-        assert_eq!(first.schema, "papertiger.project_setup.v2");
+        assert_eq!(first.schema, "papertiger.project_setup.v3");
         assert_eq!(first.operation, SetupOperation::Install);
         assert_eq!(first.authority_path, DEFAULT_AUTHORITY_PATH);
         assert_eq!(first.agent_guidance_files_found.len(), 2);
@@ -1257,7 +1474,7 @@ mod tests {
             path: PRE_RECEIPT_MANIFEST_PATH.to_owned(),
             sha256: papertiger::sha256(retired),
         });
-        fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
+        fs::write(&receipt_path, legacy_receipt_bytes(&receipt)).unwrap();
 
         let upgraded = setup_project(request(&project, &binary)).unwrap();
         assert_eq!(upgraded.operation, SetupOperation::Upgrade);
@@ -1281,7 +1498,7 @@ mod tests {
             path: PRE_RECEIPT_MANIFEST_PATH.to_owned(),
             sha256: papertiger::sha256(b"older release content\n"),
         });
-        fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
+        fs::write(&receipt_path, legacy_receipt_bytes(&receipt)).unwrap();
 
         let mut dry_run = request(&project, &binary);
         dry_run.dry_run = true;
@@ -1791,8 +2008,11 @@ mod tests {
         let contract = std::str::from_utf8(AGENT_INTEGRATION).expect("managed text is UTF-8");
         assert!(
             contract.contains("Before the first edit or commit")
-                && contract.contains("`.agents/skills/papertiger/SKILL.md` completely"),
-            "repository guidance trigger must give exact pre-mutation ordering and skill identity"
+                && contract.contains("`<selected-skill-path>/papertiger/SKILL.md` completely")
+                && contract.contains("`.agents/skills`")
+                && contract.contains("`.claude/skills`")
+                && contract.contains("tools/papertiger/agent_integration.md"),
+            "repository guidance trigger must give exact pre-mutation ordering and harness-neutral routing"
         );
         for (name, bytes) in [
             ("agent integration contract", AGENT_INTEGRATION),

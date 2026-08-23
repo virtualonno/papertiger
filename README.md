@@ -91,6 +91,22 @@ Preview the installation:
 papertiger setup-project /path/to/project --dry-run --json
 ```
 
+On a first install, the default `auto` selection follows existing harness
+markers: `.agents` or `AGENTS.md` selects `agents`, `.claude` or `CLAUDE.md`
+selects `claude`, both select `both`, and an unmarked repository selects
+`none`. It never creates a harness convention by guessing. Select a target
+explicitly when needed:
+
+```bash
+papertiger setup-project /path/to/project \
+  --skill-target agents --dry-run --json
+```
+
+Explicit selections are `agents`, `claude`, `both`, and `none`; `auto` reruns
+marker detection. An upgrade with no `--skill-target` preserves
+the receipt's existing selection, even if a harness directory is temporarily
+absent. The dry-run prints an apply command with the resolved target frozen.
+
 For an existing project whose canonical authority is not the default, declare
 the project-relative path on the first receipt-backed cutover:
 
@@ -114,10 +130,11 @@ papertiger setup-project /path/to/project \
   --authority-path plans/papertiger.sqlite --json
 ```
 
-Setup installs the native planner binary, the agent contract, and byte-identical
-open Agent Skills discovery envelopes for `.agents/skills` and
-`.claude/skills`. The tracked receipt binds the release and authority path, and
-hashes the managed text: the canonical contract and both skill envelopes. The
+Setup installs the native planner binary, the harness-neutral agent contract,
+and only the selected thin skill envelope: `.agents/skills` for the open Agent
+Skills convention, `.claude/skills` for Claude, both, or neither. The tracked
+receipt binds the release, authority path, resolved skill targets, and hashes
+the managed text: the canonical contract and selected skill envelopes. The
 receipt also owns the host-local binary, but deliberately omits
 its platform-specific bytes from that text hash list; every applied setup
 upgrades it to the exact bytes of the running release binary. The receipt
@@ -143,8 +160,26 @@ Setup never invokes Git, and ignore rules do not untrack an existing path. If
 the host binary or selected authority is already tracked, review it and remove
 only its index entry with `git rm --cached -- <path>`, preserving the local
 file.
-This source repository retains the single skill template; the two discovery
-copies exist only in projects managed by `setup-project`.
+This source repository retains the single skill template; selected discovery
+copies in consuming projects stay byte-identical to it. Harnesses that do not
+load either skill location can use the canonical contract through concise
+repository-owned guidance without installing a generic resident skill.
+
+To remove the integration, use the same verified release from outside the
+consuming project:
+
+```bash
+papertiger uninstall-project /path/to/project --dry-run --json
+papertiger uninstall-project /path/to/project --json
+```
+
+Uninstall requires a matching-version receipt and removes only receipt-owned
+contract and skill files, the native binary when its bytes equal the external
+release binary, and finally the receipt. It refuses modified files, a differing
+binary, and project-local self-deletion before writing. It deliberately retains
+the planner authority and SQLite sidecars, Mise authority and evidence store,
+repository guidance, unrelated skills, and the complete `.gitignore` policy.
+Removing or archiving retained authority is a separate data-lifecycle decision.
 
 ## Start planning
 

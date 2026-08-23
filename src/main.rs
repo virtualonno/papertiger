@@ -16,10 +16,10 @@ use text_input::{IntentArgs, NoteTextArgs, ResultArgs, WhyArgs, reject_multiple_
     about = "Local task planning for cross-session engineering work"
 )]
 struct Cli {
-    /// Planning database path (default: PAPERTIGER_DB or state/papertiger.sqlite); invalid with setup-project
+    /// Planning database path (default: PAPERTIGER_DB or state/papertiger.sqlite); invalid with project integration commands
     #[arg(long, global = true)]
     db: Option<String>,
-    /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator'); invalid with setup-project
+    /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator'); invalid with project integration commands
     #[arg(long, global = true)]
     actor: Option<String>,
     #[command(subcommand)]
@@ -41,7 +41,21 @@ enum Cmd {
         /// Project-relative canonical authority path (preserved by later upgrades)
         #[arg(long, value_name = "PATH")]
         authority_path: Option<std::path::PathBuf>,
-        /// Emit papertiger.project_setup.v2 JSON
+        /// Skill target selection; omitted upgrades preserve the receipt selection
+        #[arg(long, value_enum, value_name = "auto|agents|claude|both|none")]
+        skill_target: Option<project_setup::SkillTargetRequest>,
+        /// Emit papertiger.project_setup.v3 JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove only receipt-owned project integration files; preserves authority and repository policy
+    UninstallProject {
+        /// Existing consuming project directory
+        project_root: std::path::PathBuf,
+        /// Report the complete removal plan without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit papertiger.project_uninstall.v1 JSON
         #[arg(long)]
         json: bool,
     },
@@ -914,6 +928,7 @@ fn run() -> Result<()> {
         dry_run,
         replace_managed,
         authority_path,
+        skill_target,
         json,
     } = &cli.cmd
     {
@@ -933,6 +948,7 @@ fn run() -> Result<()> {
             dry_run: *dry_run,
             replace_managed: *replace_managed,
             authority_path: authority_path.as_deref(),
+            skill_target: *skill_target,
         })?;
         if *json {
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -955,6 +971,50 @@ fn run() -> Result<()> {
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
+            }
+            println!("next:");
+            for action in &result.next_actions {
+                println!("  - {action}");
+            }
+        }
+        return Ok(());
+    }
+
+    if let Cmd::UninstallProject {
+        project_root,
+        dry_run,
+        json,
+    } = &cli.cmd
+    {
+        if cli.db.is_some() {
+            bail!(
+                "uninstall-project does not accept --db; the project-install receipt selects the preserved authority"
+            );
+        }
+        if cli.actor.is_some() {
+            bail!(
+                "uninstall-project does not accept --actor because removal records no planning events; omit --actor"
+            );
+        }
+        let result = project_setup::uninstall_project(project_setup::UninstallProjectRequest {
+            project_root,
+            source_binary: None,
+            dry_run: *dry_run,
+        })?;
+        if *json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            let mode = if result.dry_run { "planned" } else { "applied" };
+            println!(
+                "papertiger {} project uninstall at {}",
+                mode, result.project_root
+            );
+            for action in &result.actions {
+                println!("  {:?} {}", action.action, action.path);
+            }
+            println!("retained:");
+            for retained in &result.retained {
+                println!("  - {retained}");
             }
             println!("next:");
             for action in &result.next_actions {
@@ -1009,6 +1069,7 @@ fn run() -> Result<()> {
 
     match cli.cmd {
         Cmd::SetupProject { .. } => unreachable!(),
+        Cmd::UninstallProject { .. } => unreachable!(),
         Cmd::Init => unreachable!(),
         Cmd::Status { json } => {
             let status = pt::status_response(&conn, &db_path)?;

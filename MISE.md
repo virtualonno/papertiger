@@ -583,8 +583,9 @@ root regardless of the agent's caller directory. The consumer owns
 read-only. `init` is the only authority creation or migration step.
 
 This is intentionally asymmetric with the durable planner: `papertiger
-setup-project` vendors only the planner binary and its launchers. A project
-does not add or later uninstall Mise merely because it wants one campaign. The
+setup-project` installs the planner binary, its harness-neutral operating
+contract, a receipt, and only the selected thin skill envelopes. A project does
+not install or later uninstall Mise merely because it wants one campaign. The
 release binary remains outside the consumer and is frozen by absolute path and
 hash as the outer judge; its project-owned SQLite/CAS evidence remains after
 active RSI work ends so later review can rederive claims.
