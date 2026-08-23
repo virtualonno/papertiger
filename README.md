@@ -92,10 +92,12 @@ papertiger setup-project /path/to/project --dry-run --json
 ```
 
 On a first install, the default `auto` selection follows existing harness
-markers: `.agents` or `AGENTS.md` selects `agents`, `.claude` or `CLAUDE.md`
-selects `claude`, both select `both`, and an unmarked repository selects
-`none`. It never creates a harness convention by guessing. Select a target
-explicitly when needed:
+markers. `.agents`, `.codex`, `.pi`, `.omp`, `.opencode`, `AGENTS.md`, or an
+OpenCode `opencode.json` / `opencode.jsonc` file selects the shared `agents`
+residence; `.claude` or `CLAUDE.md` selects `claude`; both marker families
+select `both`; and an unmarked repository selects `none`. These are bootstrap
+hints for `.agents/skills`, not harness-specific installation targets. Select
+a target explicitly when needed:
 
 ```bash
 papertiger setup-project /path/to/project \

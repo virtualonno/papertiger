@@ -260,12 +260,15 @@ newer receipt even with `--replace-managed`; use the recorded release or a
 newer verified binary.
 
 On a first install, the default `auto` selection follows existing harness
-markers: `.agents` or `AGENTS.md` selects `agents`, `.claude` or `CLAUDE.md`
-selects `claude`, both select `both`, and an unmarked repository selects
-`none`. Explicit `agents`, `claude`, `both`, or `none` avoids detection;
-explicit `auto` reruns it. An upgrade with no `--skill-target` preserves the
-receipt's selected targets. Changing targets removes a deselected envelope only
-when its prior receipt hash still matches; local edits refuse retirement.
+markers. `.agents`, `.codex`, `.pi`, `.omp`, `.opencode`, `AGENTS.md`, or an
+OpenCode `opencode.json` / `opencode.jsonc` file selects the shared `agents`
+residence; `.claude` or `CLAUDE.md` selects `claude`; both marker families
+select `both`; and an unmarked repository selects `none`. These markers only
+bootstrap common consumers before `.agents` exists. Explicit `agents`,
+`claude`, `both`, or `none` avoids detection; explicit `auto` reruns it. An
+upgrade with no `--skill-target` preserves the receipt's selected targets.
+Changing targets removes a deselected envelope only when its prior receipt hash
+still matches; local edits refuse retirement.
 
 The receipt hashes the managed text surfaces: the canonical contract and the
 selected skill envelopes. It also owns the host-local binary but does
@@ -275,17 +278,18 @@ receipt-hashed text refuses unless the operator explicitly reviews replacement.
 
 Selected skill paths are byte-identical thin discovery envelopes around this
 canonical contract. `.agents/skills` serves open Agent Skills-compatible
-harnesses including Codex, Pi, and OpenCode; `.claude/skills` serves Claude
-Code. Pi loads project skills only after project trust; for a noninteractive
-run, save that trust or pass `--approve`, otherwise project resources are
-ignored. Hermes requires an explicit `skills.external_dirs` entry for the
-project's `.agents/skills` directory. Filesystem permissions are its protection
-boundary: Hermes skill management may change or delete writable external
-skills, which a later receipt-checked setup will report as divergence. A
-same-named local Hermes skill takes precedence. Harnesses without Agent Skills
-should load a concise pointer from their project guidance. After setup changes
-a skill, start a fresh harness session if the active one does not rescan project
-skills. Do not fork the semantic body per harness.
+harnesses including Codex, Pi, OMP, and OpenCode; `.claude/skills` serves
+Claude Code. Auto detection never creates `.codex`, `.pi`, `.omp`, or
+`.opencode` skill copies. Pi loads project skills only after project trust; for
+a noninteractive run, save that trust or pass `--approve`, otherwise project
+resources are ignored. Hermes requires an explicit `skills.external_dirs`
+entry for the project's `.agents/skills` directory. Filesystem permissions are
+its protection boundary: Hermes skill management may change or delete writable
+external skills, which a later receipt-checked setup will report as
+divergence. A same-named local Hermes skill takes precedence. Harnesses without
+Agent Skills should load a concise pointer from their project guidance. After
+setup changes a skill, start a fresh harness session if the active one does not
+rescan project skills. Do not fork the semantic body per harness.
 
 `uninstall-project` is the inverse receipt-owned lifecycle. Run it from an
 external binary matching the receipt version, preview it first, and review all

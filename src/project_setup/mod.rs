@@ -28,6 +28,15 @@ const AGENT_INTEGRATION: &[u8] = include_bytes!("../../agent_integration.md");
 const AGENT_SKILL: &[u8] = include_bytes!("../../templates/papertiger/SKILL.md");
 const INSTALL_RECEIPT_PATH: &str = "tools/papertiger/project-install.json";
 const DEFAULT_AUTHORITY_PATH: &str = "state/papertiger.sqlite";
+// Compatibility is anchored in the shared `.agents/skills` contract. The
+// bootstrap catalog only selects that shared residence for common compatible
+// harnesses before `.agents` exists; it never creates harness-native copies.
+const SHARED_AGENT_SKILLS_DIRECTORIES: &[&str] = &[".agents"];
+const COMMON_AGENT_SKILLS_BOOTSTRAP_DIRECTORIES: &[&str] = &[".codex", ".pi", ".omp", ".opencode"];
+const COMMON_AGENT_SKILLS_BOOTSTRAP_FILES: &[&str] =
+    &["AGENTS.md", "opencode.json", "opencode.jsonc"];
+const CLAUDE_HARNESS_DIRECTORIES: &[&str] = &[".claude"];
+const CLAUDE_HARNESS_FILES: &[&str] = &["CLAUDE.md"];
 pub(super) const PRE_RECEIPT_MANIFEST_PATH: &str = "tools/papertiger/README.md";
 pub(super) const PRE_RECEIPT_BINARY_PATH: &str = "tools/papertiger/papertiger.exe";
 pub(super) const PRE_RECEIPT_MISE_PATH: &str = "tools/papertiger/MISE.md";
@@ -564,14 +573,25 @@ fn select_skill_targets(
 }
 
 fn detect_skill_targets(root: &Path) -> Vec<SkillTarget> {
-    let has_agents = root.join("AGENTS.md").is_file() || root.join(".agents").is_dir();
-    let has_claude = root.join("CLAUDE.md").is_file() || root.join(".claude").is_dir();
+    let has_agents = has_directory_marker(root, SHARED_AGENT_SKILLS_DIRECTORIES)
+        || has_directory_marker(root, COMMON_AGENT_SKILLS_BOOTSTRAP_DIRECTORIES)
+        || has_file_marker(root, COMMON_AGENT_SKILLS_BOOTSTRAP_FILES);
+    let has_claude = has_directory_marker(root, CLAUDE_HARNESS_DIRECTORIES)
+        || has_file_marker(root, CLAUDE_HARNESS_FILES);
     match (has_agents, has_claude) {
         (true, true) => vec![SkillTarget::Agents, SkillTarget::Claude],
         (true, false) => vec![SkillTarget::Agents],
         (false, true) => vec![SkillTarget::Claude],
         (false, false) => Vec::new(),
     }
+}
+
+fn has_directory_marker(root: &Path, markers: &[&str]) -> bool {
+    markers.iter().any(|marker| root.join(marker).is_dir())
+}
+
+fn has_file_marker(root: &Path, markers: &[&str]) -> bool {
+    markers.iter().any(|marker| root.join(marker).is_file())
 }
 
 fn skill_target_label(skill_targets: &[SkillTarget]) -> &'static str {
@@ -1072,41 +1092,88 @@ mod tests {
 
     #[test]
     fn auto_skill_targets_follow_existing_harness_markers_without_guessing() {
-        let cases = [
-            ("unmarked", false, false, Vec::new()),
-            ("agents", true, false, vec![SkillTarget::Agents]),
-            ("claude", false, true, vec![SkillTarget::Claude]),
+        let cases: &[(&str, &[&str], Vec<SkillTarget>)] = &[
+            ("unmarked", &[], Vec::new()),
+            ("agents-guidance", &["AGENTS.md"], vec![SkillTarget::Agents]),
+            ("agent-skills", &[".agents/"], vec![SkillTarget::Agents]),
+            ("codex", &[".codex/"], vec![SkillTarget::Agents]),
+            ("pi", &[".pi/"], vec![SkillTarget::Agents]),
+            ("omp", &[".omp/"], vec![SkillTarget::Agents]),
+            (
+                "opencode-directory",
+                &[".opencode/"],
+                vec![SkillTarget::Agents],
+            ),
+            (
+                "opencode-json",
+                &["opencode.json"],
+                vec![SkillTarget::Agents],
+            ),
+            (
+                "opencode-jsonc",
+                &["opencode.jsonc"],
+                vec![SkillTarget::Agents],
+            ),
+            ("claude", &["CLAUDE.md"], vec![SkillTarget::Claude]),
             (
                 "both",
-                true,
-                true,
+                &["AGENTS.md", "CLAUDE.md"],
                 vec![SkillTarget::Agents, SkillTarget::Claude],
             ),
         ];
-        for (name, agents, claude, expected) in cases {
+        for (name, markers, expected) in cases {
             let (project, binary) = fixture(&format!("auto-{name}"));
-            if agents {
-                fs::write(project.join("AGENTS.md"), "repository contract\n").unwrap();
-            }
-            if claude {
-                fs::write(project.join("CLAUDE.md"), "repository contract\n").unwrap();
+            for marker in *markers {
+                if let Some(directory) = marker.strip_suffix('/') {
+                    fs::create_dir_all(project.join(directory)).unwrap();
+                } else {
+                    fs::write(project.join(marker), "repository harness marker\n").unwrap();
+                }
             }
             let mut auto = request(&project, &binary);
             auto.skill_target = None;
             let result = setup_project(auto).unwrap();
-            assert_eq!(result.skill_targets, expected, "case {name}");
+            assert_eq!(&result.skill_targets, expected, "case {name}");
             assert_eq!(
                 project.join(".agents/skills/papertiger/SKILL.md").exists(),
-                agents,
+                expected.contains(&SkillTarget::Agents),
                 "case {name}"
             );
             assert_eq!(
                 project.join(".claude/skills/papertiger/SKILL.md").exists(),
-                claude,
+                expected.contains(&SkillTarget::Claude),
                 "case {name}"
             );
+            for duplicate in [
+                ".codex/skills/papertiger/SKILL.md",
+                ".pi/skills/papertiger/SKILL.md",
+                ".omp/skills/papertiger/SKILL.md",
+                ".opencode/skills/papertiger/SKILL.md",
+            ] {
+                assert!(
+                    !project.join(duplicate).exists(),
+                    "auto detection must not create a duplicate harness-native skill at {duplicate}"
+                );
+            }
             cleanup(&project);
         }
+    }
+
+    #[test]
+    fn auto_skill_targets_require_marker_file_types() {
+        let (project, binary) = fixture("auto-marker-types");
+        fs::write(project.join(".pi"), "not a harness directory\n").unwrap();
+        fs::create_dir(project.join("opencode.json")).unwrap();
+        fs::write(project.join(".claude"), "not a harness directory\n").unwrap();
+        fs::create_dir(project.join("CLAUDE.md")).unwrap();
+
+        let mut auto = request(&project, &binary);
+        auto.skill_target = None;
+        let result = setup_project(auto).unwrap();
+        assert!(result.skill_targets.is_empty());
+        assert!(!project.join(".agents/skills/papertiger/SKILL.md").exists());
+        assert!(!project.join(".claude/skills/papertiger/SKILL.md").exists());
+        cleanup(&project);
     }
 
     #[test]

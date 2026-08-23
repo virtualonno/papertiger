@@ -34,9 +34,10 @@ unpublished development versions and have no public tags or release artifacts.
   walking upward, verifies its pinned Papertiger version, and binds the
   receipt-selected authority without a shell launcher or process bridge.
 - `setup-project --skill-target auto|agents|claude|both|none` installs only the
-  selected thin skill envelopes. Auto follows existing harness markers and
-  selects none for an unmarked repository; omitted target selection preserves
-  an existing receipt choice.
+  selected thin skill envelopes. Auto recognizes Codex, Pi, OMP, and OpenCode
+  markers as bootstrap hints for the shared `.agents/skills` residence, never
+  creates harness-native copies, and selects none for an unmarked repository;
+  omitted target selection preserves an existing receipt choice.
 - `uninstall-project` previews and removes only exact receipt-owned integration
   files with a matching external release binary. It retains planner and Mise
   authorities, evidence objects, repository guidance, unrelated skills, and
