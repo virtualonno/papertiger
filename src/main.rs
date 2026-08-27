@@ -19,7 +19,7 @@ struct Cli {
     /// Planning database path (default: PAPERTIGER_DB or receipt discovery); invalid with project integration commands
     #[arg(long, global = true)]
     db: Option<String>,
-    /// Receipt-bound project root used to select the planning authority; evidence verify also uses it for file: locators
+    /// Receipt-bound project root used for authority selection or project inspection; evidence verify also uses it for file: locators
     #[arg(long = "project-root", global = true, value_name = "DIR")]
     authority_project_root: Option<std::path::PathBuf>,
     /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator'); invalid with project integration commands
@@ -47,7 +47,13 @@ enum Cmd {
         /// Skill target selection; omitted upgrades preserve the receipt selection
         #[arg(long, value_enum, value_name = "auto|agents|claude|both|none")]
         skill_target: Option<project_setup::SkillTargetRequest>,
-        /// Emit papertiger.project_setup.v4 JSON, including exact host-binary identity
+        /// Emit papertiger.project_setup.v5 JSON, including exact host-binary identity and bounded guidance inspection
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect repository-owned AGENTS.md and CLAUDE.md without editing them or opening the planning authority
+    InspectProjectGuidance {
+        /// Emit deterministic papertiger.project_guidance.v1 JSON
         #[arg(long)]
         json: bool,
     },
@@ -978,20 +984,62 @@ fn run() -> Result<()> {
             for action in &result.actions {
                 println!("  {:?} {}", action.action, action.path);
             }
-            if !result.agent_guidance_files_found.is_empty() {
-                println!(
-                    "  preserved agent guidance: {}",
-                    result
-                        .agent_guidance_files_found
-                        .iter()
-                        .map(|path| path.display().to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
+            println!("  repository guidance (observed only; never managed):");
+            for file in &result.project_guidance.files {
+                println!("    {}: {}", file.path, file.classification.as_str());
             }
             println!("next:");
             for action in &result.next_actions {
                 println!("  - {action}");
+            }
+        }
+        return Ok(());
+    }
+
+    if let Cmd::InspectProjectGuidance { json } = &cli.cmd {
+        if cli.db.is_some() {
+            bail!(
+                "inspect-project-guidance does not accept --db because it never opens the planning authority; omit --db"
+            );
+        }
+        if cli.actor.is_some() {
+            bail!(
+                "inspect-project-guidance does not accept --actor because it records no planning events; omit --actor"
+            );
+        }
+        let root = if let Some(root) = cli.authority_project_root.as_deref() {
+            root.to_path_buf()
+        } else {
+            let current = std::env::current_dir().context("resolve current directory")?;
+            project_setup::discover_project_root(&current)?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no project-install receipt was discovered from {}; run from an installed project or pass --project-root <DIR>. For a first installation, inspect setup without writing with: papertiger setup-project \"{}\" --dry-run --json",
+                    current.display(),
+                    current.display()
+                )
+            })?
+        };
+        let result = project_setup::inspect_installed_project_guidance(&root)?;
+        if *json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            println!("papertiger repository guidance at {}", result.project_root);
+            println!(
+                "scope: {} ({} bytes per file)",
+                result.scope, result.max_file_bytes
+            );
+            for file in &result.files {
+                println!("  {}: {}", file.path, file.classification.as_str());
+                println!("    {}", file.detail);
+                println!(
+                    "    repository-owned trigger example: {}",
+                    file.corrective_trigger
+                );
+            }
+            println!("pair: {}", result.pair.detail);
+            println!("limitations:");
+            for limitation in &result.limitations {
+                println!("  - {limitation}");
             }
         }
         return Ok(());
@@ -1108,6 +1156,7 @@ fn run() -> Result<()> {
 
     match cli.cmd {
         Cmd::SetupProject { .. } => unreachable!(),
+        Cmd::InspectProjectGuidance { .. } => unreachable!(),
         Cmd::UninstallProject { .. } => unreachable!(),
         Cmd::Init => unreachable!(),
         Cmd::Status { json } => {

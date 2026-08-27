@@ -142,8 +142,11 @@ deliberately omits platform-specific binary bytes so clones stay portable.
 Instead, the ignored sibling
 `tools/papertiger/bin/papertiger[.exe].runtime-install.json` records the exact
 installed path, byte count, and SHA-256. `setup-project --dry-run --json`
-exposes that identity in `runtime_install` without an ad hoc hash command, and
-the host receipt is written atomically as the final installation commit marker.
+exposes that identity in `runtime_install` without an ad hoc hash command. Its
+`papertiger.project_setup.v5` result also includes `project_guidance`, a bounded
+read-only observation of repository-root `AGENTS.md` and `CLAUDE.md`; setup
+still never edits or owns either file. The host receipt is written atomically
+as the final installation commit marker.
 Ordinary receipt discovery refuses a missing, malformed, or mismatched host
 receipt with the repair command. This identity is an observable local fact,
 not a claim that separate platform builds reproduce identical bytes. The
@@ -174,6 +177,24 @@ This source repository retains the single skill template; selected discovery
 copies in consuming projects stay byte-identical to it. Harnesses that do not
 load either skill location can use the canonical contract through concise
 repository-owned guidance without installing a generic resident skill.
+
+After installation, inspect that repository-owned discovery surface from the
+project root or any nested directory:
+
+```bash
+tools/papertiger/bin/papertiger inspect-project-guidance --json
+papertiger --project-root /path/to/project inspect-project-guidance --json
+```
+
+The command validates the project receipt and host runtime but never opens the
+planning authority. It reads only regular, non-symlink repository-root
+`AGENTS.md` and `CLAUDE.md`, with a fixed 64 KiB cap per file. Deterministic JSON
+distinguishes an exact selected-skill trigger, a generic Papertiger-skill
+trigger, `CLAUDE.md` indirection to `AGENTS.md`, an integration pointer, a bare
+mention, stale positive shell-launcher wording, absence, and bounded refusal.
+It also reports exact byte identity when both files were read. These are lexical
+observations, not proof that a harness discovers or follows the guidance;
+nested guidance and imported semantics remain outside the result.
 
 To remove the integration, use the same verified release from outside the
 consuming project:
@@ -280,7 +301,8 @@ project. After reviewing it, incorporate its concise repository-guidance
 discovery trigger into the project's existing agent guidance. A bare link is
 not equivalent: the trigger names both the multi-outcome/exact-resume cases and
 the bounded/read-only/domain-lifecycle skips. Setup never edits repository-owned
-guidance itself.
+guidance itself. Use `inspect-project-guidance --json` to audit the bounded
+repository-root surface without transferring ownership to setup.
 
 ## Add Mise when a campaign is warranted
 

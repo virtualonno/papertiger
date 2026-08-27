@@ -783,6 +783,106 @@ fn setup_project_refuses_planning_globals_before_writing() {
 }
 
 #[test]
+fn inspect_project_guidance_is_bounded_deterministic_and_authority_free() {
+    let sandbox = TestDirectory::new("inspect-project-guidance");
+    let project = sandbox.0.join("project");
+    let outside = sandbox.0.join("outside");
+    let nested = project.join("nested/deeper");
+    std::fs::create_dir(&project).expect("create guidance project");
+    std::fs::create_dir(&outside).expect("create outside directory");
+    std::fs::create_dir_all(&nested).expect("create nested project directory");
+    std::fs::write(
+        project.join("AGENTS.md"),
+        "Before the first edit on multi-outcome work, read `.agents/skills/papertiger/SKILL.md` completely and follow it.\n",
+    )
+    .expect("write AGENTS guidance");
+    std::fs::write(project.join("CLAUDE.md"), "Follow `AGENTS.md`.\n")
+        .expect("write CLAUDE guidance");
+
+    let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .arg("setup-project")
+        .arg(&project)
+        .args(["--skill-target", "both"])
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("install guidance fixture");
+    assert_success(&setup);
+    let binary = installed_papertiger(&project);
+
+    let nested_result = Command::new(&binary)
+        .args(["inspect-project-guidance", "--json"])
+        .current_dir(&nested)
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("inspect guidance from nested directory");
+    assert_success(&nested_result);
+    let result: serde_json::Value =
+        serde_json::from_slice(&nested_result.stdout).expect("parse guidance inspection");
+    assert_eq!(result["schema"], "papertiger.project_guidance.v1");
+    assert_eq!(
+        result["scope"],
+        "repository-root AGENTS.md and CLAUDE.md only"
+    );
+    assert_eq!(result["max_file_bytes"], 65_536);
+    assert_eq!(result["inspection_complete"], true);
+    assert_eq!(result["files"][0]["path"], "AGENTS.md");
+    assert_eq!(
+        result["files"][0]["classification"],
+        "selected_skill_trigger"
+    );
+    assert_eq!(
+        result["files"][0]["matched_selected_skill_paths"][0],
+        ".agents/skills/papertiger/SKILL.md"
+    );
+    assert_eq!(result["files"][1]["path"], "CLAUDE.md");
+    assert_eq!(
+        result["files"][1]["classification"],
+        "agents_guidance_reference"
+    );
+    assert_eq!(result["pair"]["byte_identical"], false);
+
+    let explicit_result = Command::new(&binary)
+        .arg("--project-root")
+        .arg(&project)
+        .args(["inspect-project-guidance", "--json"])
+        .current_dir(&outside)
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("inspect guidance through exact project root");
+    assert_success(&explicit_result);
+    assert_eq!(nested_result.stdout, explicit_result.stdout);
+    assert!(!project.join("state/papertiger.sqlite").exists());
+
+    for (flag, value, expected) in [
+        (
+            "--db",
+            "ignored.sqlite",
+            "never opens the planning authority",
+        ),
+        ("--actor", "test-agent", "records no planning events"),
+    ] {
+        let refusal = Command::new(&binary)
+            .arg(flag)
+            .arg(value)
+            .arg("--project-root")
+            .arg(&project)
+            .arg("inspect-project-guidance")
+            .current_dir(&outside)
+            .env_remove("PAPERTIGER_DB")
+            .env_remove("PAPERTIGER_ACTOR")
+            .output()
+            .expect("run guidance inspection with invalid planning global");
+        assert!(!refusal.status.success());
+        let error = String::from_utf8_lossy(&refusal.stderr);
+        assert!(error.contains(expected), "{error}");
+    }
+    assert!(!outside.join("ignored.sqlite").exists());
+}
+
+#[test]
 fn explicit_project_root_preserves_one_authority_across_installed_projects() {
     let sandbox = TestDirectory::new("explicit-project-root");
     let canonical = sandbox.0.join("canonical");
@@ -985,7 +1085,9 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     let root = command_help(&[]);
     assert!(root.contains("--project-root <DIR>"), "{root}");
     assert!(
-        root.contains("Receipt-bound project root used to select the planning authority"),
+        root.contains(
+            "Receipt-bound project root used for authority selection or project inspection"
+        ),
         "{root}"
     );
 
@@ -996,6 +1098,18 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     );
     assert!(setup.contains("--skill-target"), "{setup}");
     assert!(setup.contains("auto|agents|claude|both|none"), "{setup}");
+    assert!(setup.contains("papertiger.project_setup.v5"), "{setup}");
+
+    let guidance = command_help(&["inspect-project-guidance"]);
+    assert!(
+        guidance.contains("papertiger.project_guidance.v1"),
+        "{guidance}"
+    );
+    assert!(
+        guidance.contains("project inspection")
+            && guidance.contains("invalid with project integration"),
+        "{guidance}"
+    );
 
     let uninstall = command_help(&["uninstall-project"]);
     assert!(
