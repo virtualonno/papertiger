@@ -202,12 +202,27 @@ The binary walks upward from the current directory to find the nearest tracked
 `tools/papertiger/project-install.json`, verifies that the receipt version
 matches, and resolves its authority against that project root. This works from
 nested directories without a launcher, shell transition, or process bridge.
+For an intentional command issued from a different repository, select the
+canonical installed project explicitly:
+
+```bash
+papertiger --project-root /path/to/canonical-project status
+```
+
+`--project-root` requires the exact root's receipt and version; it never walks
+upward into another project or falls back to a new default database. Choose
+that root by the initiative or outcome that owns the work, not by every
+repository containing edited files. Keep a cross-repository outcome in one
+authority and record external commits there with stable `--repo` labels.
 
 Set `PAPERTIGER_ACTOR` to a concise author label before mutations. It describes
 who wrote an event, not who owns the task now. The native binary defaults to
 the receipt-selected database at the project root. `PAPERTIGER_DB`
 or an explicit global `--db` deliberately overrides that default for
-operational use. Run `init` only when no prior authority should exist; on an
+operational use. Ordinary commands refuse combining those raw database
+overrides with `--project-root`; `evidence verify` alone retains the combination
+so an explicitly selected database can resolve `file:` locators beneath the
+supplied root. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 
 The current authority schema is v8. Before migrating an older authority, use
@@ -228,8 +243,10 @@ papertiger evidence verify --task <task.seq> --project-root /path/to/project
 ```
 
 When receipt discovery can identify the project root, `--project-root` is
-optional. A failed binding reports ordered `program` and `arguments` arrays for
-the explicit reopen, close or resolve, and re-completion workflow.
+optional. The global option both selects that receipt's authority and supplies
+the evidence root. With an explicit `--db`, it supplies only the evidence root.
+A failed binding reports ordered `program` and `arguments` arrays for the
+explicit reopen, close or resolve, and re-completion workflow.
 
 The installer copies [agent_integration.md](agent_integration.md) into the
 project. After reviewing it, incorporate its concise repository-guidance

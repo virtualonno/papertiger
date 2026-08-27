@@ -6,6 +6,22 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Added
+
+- Global `--project-root <DIR>` selects the authority from the exact project's
+  version-checked installation receipt, allowing commands issued from another
+  repository to retain one canonical planning authority. Missing receipts and
+  ambiguous use with `--db` or `PAPERTIGER_DB` refuse before opening a database;
+  `evidence verify` retains the prior database-plus-evidence-root combination.
+
+### Fixed
+
+- Installed guidance distinguishes the repository being edited from the
+  initiative that owns planning. Cross-repository outcomes stay in one
+  authority, separately committed changes can be separate tasks in that
+  authority, and external commit associations use stable `--repo` labels
+  instead of duplicating tasks across unsynchronized project databases.
+
 ## [0.9.0] - 2026-08-24
 
 This is the first public release after 0.7.1. Versions 0.8.0 and 0.8.1 were

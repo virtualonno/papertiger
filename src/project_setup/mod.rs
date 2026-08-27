@@ -693,51 +693,78 @@ pub(crate) fn discover_project_authority(start: &Path) -> Result<Option<PathBuf>
     let start = fs::canonicalize(start)
         .with_context(|| format!("resolve current directory {}", start.display()))?;
     for root in start.ancestors() {
-        let receipt_path = root.join(INSTALL_RECEIPT_PATH);
-        let Some(receipt) = load_install_receipt(&receipt_path)? else {
+        let Some(receipt) = load_running_project_receipt(root)? else {
             continue;
         };
-        let running = env!("CARGO_PKG_VERSION");
-        if receipt.papertiger_version != running {
-            return Err(anyhow!(
-                "project-install receipt at {} requires Papertiger {}, but the running binary is {running}; upgrade the project deliberately with: papertiger setup-project \"{}\"",
-                receipt_path.display(),
-                receipt.papertiger_version,
-                root.display()
-            ));
-        }
-        let authority = Path::new(&receipt.authority_path);
-        validate_destination(root, authority).with_context(|| {
-            format!(
-                "validate authority {} selected by project-install receipt {}",
-                receipt.authority_path,
-                receipt_path.display()
-            )
-        })?;
-        return Ok(Some(root.join(authority)));
+        return receipt_authority(root, &receipt).map(Some);
     }
     Ok(None)
+}
+
+/// Resolve the authority selected by the receipt at one exact project root.
+/// Unlike nearest-receipt discovery, this never walks into a parent project:
+/// callers use it to preserve one intentional authority while operating from
+/// another repository.
+pub(crate) fn project_authority(project_root: &Path) -> Result<PathBuf> {
+    let root = fs::canonicalize(project_root)
+        .with_context(|| format!("resolve explicit project root {}", project_root.display()))?;
+    if !root.is_dir() {
+        return Err(anyhow!(
+            "explicit project root is not a directory: {}; pass the installed project directory",
+            root.display()
+        ));
+    }
+
+    let receipt_path = root.join(INSTALL_RECEIPT_PATH);
+    let receipt = load_running_project_receipt(&root)?.ok_or_else(|| {
+        anyhow!(
+            "no project-install receipt was found at {}; pass the exact installed project root, restore its receipt if prior planning existed, or inspect a first installation with: papertiger setup-project \"{}\" --dry-run --json",
+            receipt_path.display(),
+            root.display()
+        )
+    })?;
+    receipt_authority(&root, &receipt)
 }
 
 pub(crate) fn discover_project_root(start: &Path) -> Result<Option<PathBuf>> {
     let start = fs::canonicalize(start)
         .with_context(|| format!("resolve current directory {}", start.display()))?;
     for root in start.ancestors() {
-        let receipt_path = root.join(INSTALL_RECEIPT_PATH);
-        if let Some(receipt) = load_install_receipt(&receipt_path)? {
-            let running = env!("CARGO_PKG_VERSION");
-            if receipt.papertiger_version != running {
-                return Err(anyhow!(
-                    "project-install receipt at {} requires Papertiger {}, but the running binary is {running}; upgrade the project deliberately with: papertiger setup-project \"{}\"",
-                    receipt_path.display(),
-                    receipt.papertiger_version,
-                    root.display()
-                ));
-            }
+        if load_running_project_receipt(root)?.is_some() {
             return Ok(Some(root.to_path_buf()));
         }
     }
     Ok(None)
+}
+
+fn load_running_project_receipt(root: &Path) -> Result<Option<InstallReceipt>> {
+    let receipt_path = root.join(INSTALL_RECEIPT_PATH);
+    let Some(receipt) = load_install_receipt(&receipt_path)? else {
+        return Ok(None);
+    };
+    let running = env!("CARGO_PKG_VERSION");
+    if receipt.papertiger_version != running {
+        return Err(anyhow!(
+            "project-install receipt at {} requires Papertiger {}, but the running binary is {running}; upgrade the project deliberately with: papertiger setup-project \"{}\"",
+            receipt_path.display(),
+            receipt.papertiger_version,
+            root.display()
+        ));
+    }
+    Ok(Some(receipt))
+}
+
+fn receipt_authority(root: &Path, receipt: &InstallReceipt) -> Result<PathBuf> {
+    let receipt_path = root.join(INSTALL_RECEIPT_PATH);
+    let authority = Path::new(&receipt.authority_path);
+    validate_destination(root, authority).with_context(|| {
+        format!(
+            "validate authority {} selected by project-install receipt {}",
+            receipt.authority_path,
+            receipt_path.display()
+        )
+    })?;
+    Ok(root.join(authority))
 }
 
 fn setup_operation(
@@ -1745,6 +1772,13 @@ mod tests {
         fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
 
         let error = discover_project_authority(&project).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("requires Papertiger 0.7.1"));
+        assert!(message.contains("running binary is"));
+        assert!(message.contains("papertiger setup-project"));
+        assert!(message.contains("demo-project"));
+
+        let error = project_authority(&project).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("requires Papertiger 0.7.1"));
         assert!(message.contains("running binary is"));

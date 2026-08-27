@@ -18,6 +18,39 @@ impl TestDatabase {
     }
 }
 
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn new(label: &str) -> Self {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before Unix epoch")
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("papertiger-{label}-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&path).expect("create test directory");
+        Self(path)
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        match std::fs::remove_dir_all(&self.0) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("remove Papertiger test directory: {error}"),
+        }
+    }
+}
+
+fn installed_papertiger(project: &Path) -> PathBuf {
+    project.join("tools/papertiger/bin").join(if cfg!(windows) {
+        "papertiger.exe"
+    } else {
+        "papertiger"
+    })
+}
+
 #[test]
 fn add_start_is_atomic_and_rolls_back_every_refusal() {
     let db = TestDatabase::new("atomic-add-start");
@@ -619,7 +652,212 @@ fn setup_project_refuses_planning_globals_before_writing() {
 }
 
 #[test]
+fn explicit_project_root_preserves_one_authority_across_installed_projects() {
+    let sandbox = TestDirectory::new("explicit-project-root");
+    let canonical = sandbox.0.join("canonical");
+    let foreign = sandbox.0.join("foreign");
+    std::fs::create_dir(&canonical).expect("create canonical project");
+    std::fs::create_dir(&foreign).expect("create foreign project");
+
+    for project in [&canonical, &foreign] {
+        let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+            .arg("setup-project")
+            .arg(project)
+            .args(["--skill-target", "none"])
+            .env_remove("PAPERTIGER_DB")
+            .env_remove("PAPERTIGER_ACTOR")
+            .output()
+            .expect("install Papertiger consumer");
+        assert_success(&setup);
+
+        let init = Command::new(installed_papertiger(project))
+            .arg("init")
+            .current_dir(project)
+            .env_remove("PAPERTIGER_DB")
+            .env_remove("PAPERTIGER_ACTOR")
+            .output()
+            .expect("initialize consumer authority");
+        assert_success(&init);
+
+        let slug = if project == &canonical {
+            "canonical"
+        } else {
+            "foreign"
+        };
+        let plan = Command::new(installed_papertiger(project))
+            .args(["plan", "add", slug, "Consumer plan"])
+            .current_dir(project)
+            .env_remove("PAPERTIGER_DB")
+            .env_remove("PAPERTIGER_ACTOR")
+            .output()
+            .expect("add consumer plan");
+        assert_success(&plan);
+    }
+
+    let foreign_before = Command::new(installed_papertiger(&foreign))
+        .args(["status", "--json"])
+        .current_dir(&foreign)
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("read foreign authority before cross-project mutation");
+    assert_success(&foreign_before);
+    let foreign_before: serde_json::Value =
+        serde_json::from_slice(&foreign_before.stdout).expect("parse foreign status");
+
+    let add = Command::new(installed_papertiger(&canonical))
+        .arg("--project-root")
+        .arg(&canonical)
+        .args([
+            "--actor",
+            "cross-project-test",
+            "add",
+            "Canonical cross-project outcome",
+            "--plan",
+            "canonical",
+            "--start",
+            "--intent",
+            "One outcome remains in its initiating authority while implementation enters another repository.",
+            "--intent-source",
+            "user",
+            "--why",
+            "Exercise explicit receipt-bound authority selection from a foreign installed project.",
+        ])
+        .current_dir(&foreign)
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("add canonical task from foreign project");
+    assert_success(&add);
+
+    let canonical_task = Command::new(installed_papertiger(&canonical))
+        .args(["show", "1", "--json"])
+        .current_dir(&canonical)
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("read canonical task");
+    assert_success(&canonical_task);
+    let canonical_task: serde_json::Value =
+        serde_json::from_slice(&canonical_task.stdout).expect("parse canonical task");
+    assert_eq!(
+        canonical_task["task"]["title"],
+        "Canonical cross-project outcome"
+    );
+
+    let foreign_after = Command::new(installed_papertiger(&foreign))
+        .args(["status", "--json"])
+        .current_dir(&foreign)
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("read foreign authority after cross-project mutation");
+    assert_success(&foreign_after);
+    let foreign_after: serde_json::Value =
+        serde_json::from_slice(&foreign_after.stdout).expect("parse foreign status");
+    assert_eq!(
+        foreign_after["authority"]["event_head"],
+        foreign_before["authority"]["event_head"]
+    );
+    assert_eq!(foreign_after["active_plans"][0]["counts"]["in_progress"], 0);
+}
+
+#[test]
+fn explicit_project_root_refuses_missing_receipt_and_ambiguous_database_selection() {
+    let sandbox = TestDirectory::new("project-root-refusals");
+    let missing = sandbox.0.join("missing-receipt");
+    std::fs::create_dir(&missing).expect("create uninstalled project");
+
+    let missing_receipt = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .arg("--project-root")
+        .arg(&missing)
+        .arg("status")
+        .current_dir(&sandbox.0)
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("run with missing project receipt");
+    assert!(!missing_receipt.status.success());
+    let error = String::from_utf8_lossy(&missing_receipt.stderr);
+    assert!(
+        error.contains("no project-install receipt was found"),
+        "{error}"
+    );
+    assert!(error.contains("setup-project"), "{error}");
+    assert!(!missing.join("state/papertiger.sqlite").exists());
+
+    let installed = sandbox.0.join("installed");
+    std::fs::create_dir(&installed).expect("create installed project");
+    let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .arg("setup-project")
+        .arg(&installed)
+        .args(["--skill-target", "none"])
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("install Papertiger consumer");
+    assert_success(&setup);
+
+    let nested = installed.join("nested");
+    std::fs::create_dir(&nested).expect("create nested project directory");
+    let nested_root = Command::new(installed_papertiger(&installed))
+        .arg("--project-root")
+        .arg(&nested)
+        .arg("status")
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("run exact selector against nested directory");
+    assert!(!nested_root.status.success());
+    let error = String::from_utf8_lossy(&nested_root.stderr);
+    assert!(
+        error.contains("no project-install receipt was found"),
+        "{error}"
+    );
+    assert!(
+        error.contains("pass the exact installed project root"),
+        "{error}"
+    );
+
+    let override_db = sandbox.0.join("override.sqlite");
+    let explicit_override = Command::new(installed_papertiger(&installed))
+        .arg("--db")
+        .arg(&override_db)
+        .arg("--project-root")
+        .arg(&installed)
+        .arg("status")
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("run ambiguous explicit database selection");
+    assert!(!explicit_override.status.success());
+    let error = String::from_utf8_lossy(&explicit_override.stderr);
+    assert!(error.contains("one canonical authority"), "{error}");
+    assert!(!override_db.exists());
+
+    let environment_override = Command::new(installed_papertiger(&installed))
+        .arg("--project-root")
+        .arg(&installed)
+        .arg("status")
+        .env("PAPERTIGER_DB", &override_db)
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .expect("run ambiguous environment database selection");
+    assert!(!environment_override.status.success());
+    let error = String::from_utf8_lossy(&environment_override.stderr);
+    assert!(error.contains("PAPERTIGER_DB"), "{error}");
+    assert!(!override_db.exists());
+}
+
+#[test]
 fn planner_help_describes_nested_commands_and_important_arguments() {
+    let root = command_help(&[]);
+    assert!(root.contains("--project-root <DIR>"), "{root}");
+    assert!(
+        root.contains("Receipt-bound project root used to select the planning authority"),
+        "{root}"
+    );
+
     let setup = command_help(&["setup-project"]);
     assert!(
         setup.contains("invalid with project integration"),

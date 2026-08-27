@@ -16,9 +16,12 @@ use text_input::{IntentArgs, NoteTextArgs, ResultArgs, WhyArgs, reject_multiple_
     about = "Local task planning for cross-session engineering work"
 )]
 struct Cli {
-    /// Planning database path (default: PAPERTIGER_DB or state/papertiger.sqlite); invalid with project integration commands
+    /// Planning database path (default: PAPERTIGER_DB or receipt discovery); invalid with project integration commands
     #[arg(long, global = true)]
     db: Option<String>,
+    /// Receipt-bound project root used to select the planning authority; evidence verify also uses it for file: locators
+    #[arg(long = "project-root", global = true, value_name = "DIR")]
+    authority_project_root: Option<std::path::PathBuf>,
     /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator'); invalid with project integration commands
     #[arg(long, global = true)]
     actor: Option<String>,
@@ -332,9 +335,6 @@ enum EvidenceCmd {
         /// Restrict verification to one task sequence
         #[arg(long)]
         task: Option<String>,
-        /// Project root used to resolve file: locators; defaults to the nearest install receipt
-        #[arg(long, value_name = "DIR")]
-        project_root: Option<std::path::PathBuf>,
         /// Emit papertiger.evidence_verification.v1 JSON
         #[arg(long)]
         json: bool,
@@ -942,6 +942,11 @@ fn run() -> Result<()> {
                 "setup-project does not accept --actor because installation records no planning events; omit --actor"
             );
         }
+        if cli.authority_project_root.is_some() {
+            bail!(
+                "setup-project does not accept global --project-root; pass the consuming project root as its positional <PROJECT_ROOT> argument"
+            );
+        }
         let result = project_setup::setup_project(project_setup::SetupProjectRequest {
             project_root,
             source_binary: None,
@@ -996,6 +1001,11 @@ fn run() -> Result<()> {
                 "uninstall-project does not accept --actor because removal records no planning events; omit --actor"
             );
         }
+        if cli.authority_project_root.is_some() {
+            bail!(
+                "uninstall-project does not accept global --project-root; pass the installed project root as its positional <PROJECT_ROOT> argument"
+            );
+        }
         let result = project_setup::uninstall_project(project_setup::UninstallProjectRequest {
             project_root,
             source_binary: None,
@@ -1024,9 +1034,25 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    let db_path = match cli.db.or_else(|| std::env::var("PAPERTIGER_DB").ok()) {
-        Some(path) => path,
-        None => project_setup::discover_project_authority(&std::env::current_dir()?)?
+    let project_root = cli.authority_project_root.clone();
+    let db_override = cli.db.or_else(|| std::env::var("PAPERTIGER_DB").ok());
+    let evidence_verify = matches!(
+        &cli.cmd,
+        Cmd::Evidence {
+            cmd: EvidenceCmd::Verify { .. }
+        }
+    );
+    if project_root.is_some() && db_override.is_some() && !evidence_verify {
+        bail!(
+            "ordinary planner commands do not accept --project-root together with --db or PAPERTIGER_DB; remove the database override so the project-install receipt selects one canonical authority. `evidence verify` alone retains this combination so an explicitly selected database can verify file: locators beneath a supplied project root"
+        );
+    }
+    let db_path = match (db_override, project_root.as_deref()) {
+        (Some(path), _) => path,
+        (None, Some(root)) => project_setup::project_authority(root)?
+            .to_string_lossy()
+            .into_owned(),
+        (None, None) => project_setup::discover_project_authority(&std::env::current_dir()?)?
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(|| "state/papertiger.sqlite".into()),
     };
@@ -1758,12 +1784,7 @@ fn run() -> Result<()> {
             }
         }
         Cmd::Evidence {
-            cmd:
-                EvidenceCmd::Verify {
-                    task,
-                    project_root,
-                    json,
-                },
+            cmd: EvidenceCmd::Verify { task, json },
         } => {
             let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
             let project_root = match project_root {
