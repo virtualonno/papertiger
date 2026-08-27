@@ -155,6 +155,13 @@ text hash list. A normal upgrade automatically replaces only receipt-matching
 prior managed text and repairs missing files; modified managed text refuses
 with a corrective action, and receipt-retired paths are removed only when prior
 ownership is hash-proven.
+For a host receipt that must change, a current tracked receipt plus a valid
+prior runtime receipt that exactly matches the installed native binary proves
+ownership even when the release version or integration contract changes. A
+non-identical existing host receipt whose ownership is malformed, mismatched,
+legacy, or otherwise unproved is reported in the dry-run and requires reviewed
+`--replace-managed`; a missing host receipt is repaired without claiming an
+existing file.
 An older release also refuses to downgrade a newer receipt, even with
 `--replace-managed`; rerun setup with the recorded release or a newer one.
 A pre-receipt vendor manifest at `tools/papertiger/README.md` is accepted as a

@@ -75,6 +75,7 @@ pub(super) fn preflight_runtime_receipt(
     path: &Path,
     desired: &[u8],
     current_contract_owns_path: bool,
+    ownership_failure: Option<&str>,
     dry_run: bool,
     replace_managed: bool,
 ) -> Result<(SetupActionKind, bool)> {
@@ -100,8 +101,9 @@ pub(super) fn preflight_runtime_receipt(
         return Ok((SetupActionKind::ModifiedRefusal, true));
     }
     Err(anyhow!(
-        "setup-project found an unowned file at {}; preserve or move repository-owned content, or review and rerun with --replace-managed",
-        path.display()
+        "setup-project could not prove ownership of the runtime-install receipt at {}: {}. Preserve or move unexpected content, or review and rerun with --replace-managed",
+        path.display(),
+        ownership_failure.unwrap_or("no prior runtime ownership proof was available")
     ))
 }
 
@@ -138,6 +140,13 @@ pub(super) fn write_runtime_receipt(
 }
 
 pub(super) fn load_runtime_install_receipt(path: &Path) -> Result<RuntimeInstallReceipt> {
+    load_runtime_install_receipt_for_version(path, env!("CARGO_PKG_VERSION"))
+}
+
+fn load_runtime_install_receipt_for_version(
+    path: &Path,
+    expected_version: &str,
+) -> Result<RuntimeInstallReceipt> {
     let bytes = fs::read(path).with_context(|| {
         format!(
             "read runtime-install receipt {}; repair the host-local installation with `papertiger setup-project <project-root>`",
@@ -150,7 +159,7 @@ pub(super) fn load_runtime_install_receipt(path: &Path) -> Result<RuntimeInstall
             path.display()
         )
     })?;
-    validate_runtime_install_receipt(&receipt)?;
+    validate_runtime_install_receipt(&receipt, expected_version)?;
     Ok(receipt)
 }
 
@@ -158,7 +167,44 @@ pub(super) fn verify_runtime_installation(
     root: &Path,
     receipt: &RuntimeInstallReceipt,
 ) -> Result<()> {
-    validate_runtime_install_receipt(receipt)?;
+    verify_runtime_installation_for_version(
+        root,
+        receipt,
+        env!("CARGO_PKG_VERSION"),
+        &current_host_binary_path(),
+    )
+}
+
+pub(super) fn prove_runtime_receipt_ownership(
+    root: &Path,
+    receipt_path: &Path,
+    prior_version: &str,
+) -> Result<()> {
+    let receipt = load_runtime_install_receipt_for_version(receipt_path, prior_version)
+        .context("load the prior runtime receipt")?;
+    verify_runtime_installation_for_version(
+        root,
+        &receipt,
+        prior_version,
+        &current_host_binary_path(),
+    )
+    .context("match the prior runtime receipt to the installed native binary")
+}
+
+fn verify_runtime_installation_for_version(
+    root: &Path,
+    receipt: &RuntimeInstallReceipt,
+    expected_version: &str,
+    expected_binary_path: &Path,
+) -> Result<()> {
+    validate_runtime_install_receipt(receipt, expected_version)?;
+    let expected_binary_path = normalized_path(expected_binary_path);
+    if receipt.binary.path != expected_binary_path {
+        return Err(anyhow!(
+            "runtime-install receipt binary path must match this host installation: expected {expected_binary_path:?}, found {:?}; repair it with `papertiger setup-project <project-root>`",
+            receipt.binary.path
+        ));
+    }
     let relative = Path::new(&receipt.binary.path);
     validate_destination(root, relative)?;
     let path = root.join(relative);
@@ -190,7 +236,10 @@ pub(super) fn verify_runtime_installation(
     Ok(())
 }
 
-fn validate_runtime_install_receipt(receipt: &RuntimeInstallReceipt) -> Result<()> {
+fn validate_runtime_install_receipt(
+    receipt: &RuntimeInstallReceipt,
+    expected_version: &str,
+) -> Result<()> {
     if receipt.schema != RUNTIME_INSTALL_RECEIPT_SCHEMA {
         return Err(anyhow!(
             "unsupported runtime-install receipt schema {:?}; repair the host-local installation with `papertiger setup-project <project-root>`",
@@ -208,11 +257,11 @@ fn validate_runtime_install_receipt(receipt: &RuntimeInstallReceipt) -> Result<(
             "runtime-install receipt papertiger_version must be canonical: expected {version}; repair it with `papertiger setup-project <project-root>`"
         ));
     }
-    if receipt.papertiger_version != env!("CARGO_PKG_VERSION") {
+    if receipt.papertiger_version != expected_version {
         return Err(anyhow!(
-            "runtime-install receipt requires Papertiger {}, but the running binary is {}; upgrade the project deliberately with `papertiger setup-project <project-root>`",
+            "runtime-install receipt requires Papertiger {}, but the expected installation version is {}; upgrade the project deliberately with `papertiger setup-project <project-root>`",
             receipt.papertiger_version,
-            env!("CARGO_PKG_VERSION")
+            expected_version
         ));
     }
     let binary_path = PathBuf::from(&receipt.binary.path);
@@ -271,7 +320,7 @@ mod tests {
         assert_eq!(receipt.schema, RUNTIME_INSTALL_RECEIPT_SCHEMA);
         assert_eq!(receipt.binary.bytes, 11);
         assert_eq!(receipt.binary.sha256, papertiger::sha256(b"host binary"));
-        validate_runtime_install_receipt(&receipt).unwrap();
+        validate_runtime_install_receipt(&receipt, env!("CARGO_PKG_VERSION")).unwrap();
         assert_eq!(
             runtime_receipt_relative_path(Path::new("tools/papertiger/bin/papertiger.exe"))
                 .unwrap(),

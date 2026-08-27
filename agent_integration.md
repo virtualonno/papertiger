@@ -341,6 +341,13 @@ malformed, or mismatched host receipt and directs the operator to run
 claim that independently linked Windows or other platform builds reproduce the
 same bytes. Modified receipt-hashed text still refuses unless the operator
 explicitly reviews replacement.
+During an upgrade, a current tracked receipt plus a valid prior runtime receipt
+that exactly matches the installed native binary proves ownership when the
+host receipt must change across release-version or contract changes. A
+non-identical existing host receipt whose ownership is malformed, mismatched,
+legacy, or otherwise unproved is reported in dry-run and requires a reviewed
+`--replace-managed`; a missing host receipt can be recreated without claiming
+an existing file.
 
 Selected skill paths are byte-identical thin discovery envelopes around this
 canonical contract. `.agents/skills` serves open Agent Skills-compatible

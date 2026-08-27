@@ -22,14 +22,15 @@ use filesystem::{
 #[cfg(test)]
 use receipt::ManagedFileReceipt;
 use receipt::{
-    InstallReceipt, SkillTarget, build_install_receipt, canonical_managed_text,
-    load_install_receipt, preflight_receipt, receipt_bytes, receipt_hashes,
+    INSTALL_RECEIPT_SCHEMA, InstallReceipt, SkillTarget, build_install_receipt,
+    canonical_managed_text, load_install_receipt, preflight_receipt, receipt_bytes, receipt_hashes,
     refuse_release_downgrade, validate_receipt_managed_path,
 };
 use runtime_receipt::{
     RuntimeInstallReceipt, build_runtime_install_receipt, current_host_binary_path,
-    load_runtime_install_receipt, preflight_runtime_receipt, runtime_receipt_bytes,
-    runtime_receipt_relative_path, verify_runtime_installation, write_runtime_receipt,
+    load_runtime_install_receipt, preflight_runtime_receipt, prove_runtime_receipt_ownership,
+    runtime_receipt_bytes, runtime_receipt_relative_path, verify_runtime_installation,
+    write_runtime_receipt,
 };
 
 const AGENT_INTEGRATION: &[u8] = include_bytes!("../../agent_integration.md");
@@ -255,19 +256,31 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
 
     let desired_receipt = build_install_receipt(&authority_path, &skill_targets, &managed);
     let desired_receipt_bytes = receipt_bytes(&desired_receipt)?;
-    let current_contract_owns_runtime_receipt = prior_receipt.as_ref().is_some_and(|prior| {
-        let desired_contract_hash = desired_receipt
-            .managed_files
-            .iter()
-            .find(|file| file.path == "tools/papertiger/agent_integration.md")
-            .map(|file| file.sha256.as_str());
-        prior
-            .managed_files
-            .iter()
-            .find(|file| file.path == "tools/papertiger/agent_integration.md")
-            .map(|file| file.sha256.as_str())
-            == desired_contract_hash
-    });
+    let runtime_receipt_ownership = prior_receipt.as_ref().map_or_else(
+        || {
+            Err(anyhow!(
+                "no current project-install receipt owns the host runtime receipt"
+            ))
+        },
+        |prior| {
+            if prior.schema != INSTALL_RECEIPT_SCHEMA {
+                return Err(anyhow!(
+                    "legacy project-install receipt schema {:?} did not create a host runtime receipt",
+                    prior.schema
+                ));
+            }
+            prove_runtime_receipt_ownership(
+                &root,
+                &runtime_receipt_path,
+                &prior.papertiger_version,
+            )
+        },
+    );
+    let current_contract_owns_runtime_receipt = runtime_receipt_ownership.is_ok();
+    let runtime_receipt_ownership_failure = runtime_receipt_ownership
+        .as_ref()
+        .err()
+        .map(|error| format!("{error:#}"));
     let mut prior_hashes = prior_receipt
         .as_ref()
         .map(receipt_hashes)
@@ -415,6 +428,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         &runtime_receipt_path,
         &desired_runtime_receipt_bytes,
         current_contract_owns_runtime_receipt,
+        runtime_receipt_ownership_failure.as_deref(),
         request.dry_run,
         request.replace_managed,
     )?;
@@ -519,6 +533,15 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
                 };
                 blocked.push(format!(
                     "After reviewing every requires_replace_managed action, apply with: {reviewed_apply_command}"
+                ));
+            }
+            if actions.iter().any(|action| {
+                action.path == normalized_path(&runtime_receipt_relative)
+                    && action.requires_replace_managed
+            }) && let Some(reason) = runtime_receipt_ownership_failure.as_deref()
+            {
+                blocked.push(format!(
+                    "Runtime receipt ownership was not proved: {reason}. Preserve unexpected content or use the reviewed --replace-managed apply command above to repair this exact host-local receipt."
                 ));
             }
             if actions.iter().any(|action| {
@@ -1412,6 +1435,39 @@ mod tests {
     }
 
     #[test]
+    fn legacy_receipt_cannot_claim_a_host_runtime_receipt_during_binary_upgrade() {
+        let (project, binary) = fixture("legacy-runtime-ownership");
+        let installed = setup_project(request(&project, &binary)).unwrap();
+        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
+        let receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
+        fs::write(&receipt_path, legacy_receipt_bytes(&receipt)).unwrap();
+        fs::write(&binary, b"new-papertiger-binary").unwrap();
+
+        let mut preview = request(&project, &binary);
+        preview.dry_run = true;
+        let preview = setup_project(preview).unwrap();
+        assert_eq!(preview.operation, SetupOperation::Blocked);
+        assert!(preview.actions.iter().any(|action| {
+            action.path == installed.runtime_receipt_path
+                && action.action == SetupActionKind::ModifiedRefusal
+                && action.requires_replace_managed
+        }));
+        assert!(preview.next_actions.iter().any(|action| {
+            action.contains("legacy project-install receipt schema")
+                && action.contains("--replace-managed")
+        }));
+
+        let error = setup_project(request(&project, &binary)).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("could not prove ownership"), "{message}");
+        assert!(
+            message.contains("legacy project-install receipt schema"),
+            "{message}"
+        );
+        cleanup(&project);
+    }
+
+    #[test]
     fn install_is_idempotent_and_preserves_repository_owned_files_and_authority() {
         let (project, binary) = fixture("idempotent");
         fs::write(project.join("AGENTS.md"), "repository contract\n").unwrap();
@@ -1559,7 +1615,7 @@ mod tests {
     #[test]
     fn receipt_owned_content_upgrades_without_requiring_a_replacement_flag() {
         let (project, binary) = fixture("receipt-upgrade");
-        setup_project(request(&project, &binary)).unwrap();
+        let initial = setup_project(request(&project, &binary)).unwrap();
         let old_contract = b"old release contract\n";
         fs::write(
             project.join("tools/papertiger/agent_integration.md"),
@@ -1577,10 +1633,26 @@ mod tests {
             .sha256 = papertiger::sha256(old_contract);
         fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
 
+        let runtime_receipt_path = project.join(&initial.runtime_receipt_path);
+        let mut runtime_receipt: RuntimeInstallReceipt =
+            serde_json::from_slice(&fs::read(&runtime_receipt_path).unwrap()).unwrap();
+        runtime_receipt.papertiger_version = "0.4.0".to_owned();
+        fs::write(
+            &runtime_receipt_path,
+            runtime_receipt_bytes(&runtime_receipt).unwrap(),
+        )
+        .unwrap();
+        fs::write(&binary, b"new-papertiger-binary").unwrap();
+
         let upgraded = setup_project(request(&project, &binary)).unwrap();
         assert_eq!(upgraded.operation, SetupOperation::Upgrade);
         assert!(upgraded.actions.iter().any(|action| {
             action.path == "tools/papertiger/agent_integration.md"
+                && action.action == SetupActionKind::Replace
+                && !action.requires_replace_managed
+        }));
+        assert!(upgraded.actions.iter().any(|action| {
+            action.path == upgraded.runtime_receipt_path
                 && action.action == SetupActionKind::Replace
                 && !action.requires_replace_managed
         }));
@@ -1942,7 +2014,26 @@ mod tests {
             message.contains("parse runtime-install receipt"),
             "{message}"
         );
-        let repaired_receipt = setup_project(request(&project, &binary)).unwrap();
+        let mut preview = request(&project, &binary);
+        preview.dry_run = true;
+        let preview = setup_project(preview).unwrap();
+        assert_eq!(preview.operation, SetupOperation::Blocked);
+        assert!(preview.next_actions.iter().any(|action| {
+            action.contains("Runtime receipt ownership was not proved")
+                && action.contains("parse runtime-install receipt")
+                && action.contains("--replace-managed")
+        }));
+        let error = setup_project(request(&project, &binary)).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("could not prove ownership"), "{message}");
+        assert!(
+            message.contains("parse runtime-install receipt"),
+            "{message}"
+        );
+
+        let mut repair = request(&project, &binary);
+        repair.replace_managed = true;
+        let repaired_receipt = setup_project(repair).unwrap();
         assert!(repaired_receipt.actions.iter().any(|action| {
             action.path == repaired_receipt.runtime_receipt_path
                 && action.action == SetupActionKind::Replace
