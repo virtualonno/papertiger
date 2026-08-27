@@ -59,12 +59,13 @@ Papertiger has no server or account. It ships as two Rust binaries:
 - Export and import preserve task identity, graph structure, evidence pointers,
   and history without creating a second live authority. `export --output`
   atomically writes a canonical recovery file and returns its SHA-256 receipt.
-- `evidence verify` resolves stored `file:` bindings beneath the project root,
-  rejects path escapes and symlinks, hashes one stable read of each regular
-  file, and fails closed on missing, unhashed, changed, or mismatched evidence.
-  Failed bindings include exact corrective argument vectors. Other locator
-  schemes remain explicitly unsupported until they have scheme-specific
-  verifiers.
+- `evidence verify` reports full-scope integrity counts before a bounded detail
+  projection. It resolves stored `file:` bindings beneath the project root,
+  rejects path escapes and symlinks, hashes each regular file in bounded memory
+  from one stable read, and fails closed on missing, unhashed, changed, or
+  mismatched evidence. Failed bindings include exact corrective argument
+  vectors. Other locator schemes remain explicitly unsupported until they have
+  scheme-specific authority-backed verifiers.
 
 Papertiger is intended for independently reviewable outcomes, separate commits,
 or work with meaningful dependencies and proof obligations. That boundary can
@@ -249,13 +250,30 @@ Verify retained local evidence without mutating the authority:
 ```bash
 papertiger evidence verify --project-root /path/to/project --json
 papertiger evidence verify --task <task.seq> --project-root /path/to/project
+papertiger evidence verify --outcome failed --task-state open --limit 50 --json
+papertiger evidence verify --outcome unsupported --task-state terminal --json
 ```
 
 When receipt discovery can identify the project root, `--project-root` is
 optional. The global option both selects that receipt's authority and supplies
 the evidence root. With an explicit `--db`, it supplies only the evidence root.
 A failed binding reports ordered `program` and `arguments` arrays for the
-explicit reopen, close or resolve, and re-completion workflow.
+explicit reopen, close or resolve, and re-completion workflow. Version 2 JSON
+always reports counts for the complete task scope in `summary`; filtering and
+`--limit` affect only `projection`. The summary also breaks results down by
+exact status and unsupported scheme, so resolver gaps are visible without
+paging through every binding. The default projection is `--outcome incomplete`,
+which includes failed and unsupported bindings without repeating verified
+detail. Every projection states eligible, returned, omitted, and remaining
+counts. When `has_more` is true, execute the exact structured
+`continuation_command`; its cursor is bound to the project root, filters, task
+scope, stored bindings, and live verification results, so drift refuses rather
+than silently skipping entries.
+
+A stored `file:` locator plus SHA-256 is the byte receipt for retained evidence;
+it is not a repository snapshot. For a commit-backed outcome, retain and hash
+the immutable audit receipt as evidence, then record the full commit object ID
+separately with `commit add`. Neither identity substitutes for the other.
 
 The installer copies [agent_integration.md](agent_integration.md) into the
 project. After reviewing it, incorporate its concise repository-guidance

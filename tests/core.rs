@@ -957,8 +957,18 @@ fn evidence_verifier_classifies_unhashed_missing_escaping_and_unsupported_bindin
         pt::close_gate(&conn, "test", task, name, locator, None, None).unwrap();
     }
 
-    let report = pt::verify_evidence(&conn, &root, Some(task)).unwrap();
+    let report = pt::verify_evidence(
+        &conn,
+        &root,
+        &pt::EvidenceVerificationOptions {
+            task_seq: Some(task),
+            outcome: pt::EvidenceOutcomeFilter::All,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let statuses = report
+        .projection
         .bindings
         .iter()
         .map(|binding| (binding.name.as_str(), binding.status.as_str()))
@@ -967,15 +977,157 @@ fn evidence_verifier_classifies_unhashed_missing_escaping_and_unsupported_bindin
     assert_eq!(statuses["missing"], "missing");
     assert_eq!(statuses["escape"], "path_escape");
     assert_eq!(statuses["unsupported"], "unsupported_scheme");
-    assert_eq!(report.failure_count, 3);
-    assert_eq!(report.unverifiable_count, 1);
-    assert!(!report.complete);
+    assert_eq!(report.summary.failed_count, 3);
+    assert_eq!(report.summary.unsupported_count, 1);
+    assert!(!report.summary.verification_complete);
     assert!(
         report
+            .projection
             .bindings
             .iter()
             .filter(|binding| binding.status != "unsupported_scheme")
             .all(|binding| !binding.corrective_commands.is_empty())
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
+    let root = unique_test_path("evidence-pagination-root").with_extension("root");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs/proof.txt"), b"proof\n").unwrap();
+    let digest = pt::sha256(b"proof\n");
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
+
+    for index in 0..24 {
+        let seq = pt::add_task(
+            &conn,
+            "test",
+            plan,
+            &format!("task-{index:02}"),
+            "",
+            None,
+            &[],
+            &[],
+            0,
+            None,
+        )
+        .unwrap();
+        let (name, locator, sha256) = match index % 3 {
+            0 => ("verified", "file:docs/proof.txt", Some(digest.as_str())),
+            1 => ("failed", "file:docs/missing.txt", Some(digest.as_str())),
+            _ => (
+                "unsupported",
+                "commit:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                None,
+            ),
+        };
+        pt::add_gate(&conn, "test", seq, name, "review", "retained evidence").unwrap();
+        pt::close_gate(&conn, "test", seq, name, locator, sha256, None).unwrap();
+        if index % 2 == 1 {
+            pt::complete_task(&conn, "test", seq, None).unwrap();
+        }
+    }
+
+    let first = pt::verify_evidence(
+        &conn,
+        &root,
+        &pt::EvidenceVerificationOptions {
+            limit: 5,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(first.schema, "papertiger.evidence_verification.v2");
+    assert_eq!(first.summary.binding_count, 24);
+    assert_eq!(first.summary.verified_count, 8);
+    assert_eq!(first.summary.failed_count, 8);
+    assert_eq!(first.summary.unsupported_count, 8);
+    assert_eq!(first.summary.status_counts["verified"], 8);
+    assert_eq!(first.summary.status_counts["missing"], 8);
+    assert_eq!(first.summary.status_counts["unsupported_scheme"], 8);
+    assert_eq!(first.summary.unsupported_scheme_counts["commit"], 8);
+    assert!(!first.summary.verification_complete);
+    assert_eq!(first.projection.eligible_count, 16);
+    assert_eq!(first.projection.returned_count, 5);
+    assert_eq!(first.projection.remaining_count, 11);
+    assert_eq!(first.projection.omitted_count, 11);
+    assert!(!first.projection.complete);
+    assert!(first.projection.has_more);
+    let cursor = first.projection.next_cursor.clone().unwrap();
+
+    let second = pt::verify_evidence(
+        &conn,
+        &root,
+        &pt::EvidenceVerificationOptions {
+            limit: 5,
+            after_cursor: Some(cursor.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(second.projection.page_start, 5);
+    assert_eq!(second.projection.returned_count, 5);
+    assert_eq!(second.projection.remaining_count, 6);
+    assert_eq!(second.projection.omitted_count, 11);
+    assert!(!second.projection.complete);
+
+    let failed_open = pt::verify_evidence(
+        &conn,
+        &root,
+        &pt::EvidenceVerificationOptions {
+            outcome: pt::EvidenceOutcomeFilter::Failed,
+            task_state: pt::EvidenceTaskStateFilter::Open,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(failed_open.projection.eligible_count, 4);
+    assert!(failed_open.projection.bindings.iter().all(|binding| {
+        binding.classification == pt::EvidenceClassification::Failed
+            && binding.task_status == "proposed"
+    }));
+
+    let unsupported_terminal = pt::verify_evidence(
+        &conn,
+        &root,
+        &pt::EvidenceVerificationOptions {
+            outcome: pt::EvidenceOutcomeFilter::Unsupported,
+            task_state: pt::EvidenceTaskStateFilter::Terminal,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(unsupported_terminal.projection.eligible_count, 4);
+    assert!(
+        unsupported_terminal
+            .projection
+            .bindings
+            .iter()
+            .all(|binding| {
+                binding.classification == pt::EvidenceClassification::Unsupported
+                    && binding.task_status == "done"
+            })
+    );
+
+    let changed_filter = pt::verify_evidence(
+        &conn,
+        &root,
+        &pt::EvidenceVerificationOptions {
+            outcome: pt::EvidenceOutcomeFilter::Failed,
+            limit: 5,
+            after_cursor: Some(cursor),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert!(
+        changed_filter
+            .to_string()
+            .contains("cursor is invalid for this live verification scope")
     );
 
     std::fs::remove_dir_all(root).unwrap();

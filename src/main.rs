@@ -330,12 +330,24 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum EvidenceCmd {
-    /// Resolve file: evidence under one project root and verify stored SHA-256 bindings
+    /// Summarize every stored binding and page filtered verification details
     Verify {
         /// Restrict verification to one task sequence
         #[arg(long)]
         task: Option<String>,
-        /// Emit papertiger.evidence_verification.v1 JSON
+        /// Detail classification to show; summary counts always cover the full task scope
+        #[arg(long, value_enum, default_value = "incomplete")]
+        outcome: pt::EvidenceOutcomeFilter,
+        /// Filter details by owning task lifecycle state
+        #[arg(long, value_enum, default_value = "all")]
+        task_state: pt::EvidenceTaskStateFilter,
+        /// Maximum detail bindings to return
+        #[arg(long, default_value_t = pt::DEFAULT_EVIDENCE_PAGE)]
+        limit: usize,
+        /// Continue a live evidence-v1 projection emitted by the same scope and filters
+        #[arg(long)]
+        after_cursor: Option<String>,
+        /// Emit papertiger.evidence_verification.v2 JSON
         #[arg(long)]
         json: bool,
     },
@@ -1036,6 +1048,7 @@ fn run() -> Result<()> {
 
     let project_root = cli.authority_project_root.clone();
     let db_override = cli.db.or_else(|| std::env::var("PAPERTIGER_DB").ok());
+    let evidence_db_override = db_override.clone();
     let evidence_verify = matches!(
         &cli.cmd,
         Cmd::Evidence {
@@ -1784,7 +1797,15 @@ fn run() -> Result<()> {
             }
         }
         Cmd::Evidence {
-            cmd: EvidenceCmd::Verify { task, json },
+            cmd:
+                EvidenceCmd::Verify {
+                    task,
+                    outcome,
+                    task_state,
+                    limit,
+                    after_cursor,
+                    json,
+                },
         } => {
             let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
             let project_root = match project_root {
@@ -1794,21 +1815,90 @@ fn run() -> Result<()> {
                         "no project-install receipt was found; pass `papertiger evidence verify --project-root <project-root>`",
                     )?,
             };
-            let report = pt::verify_evidence(&conn, &project_root, task_seq)?;
+            let options = pt::EvidenceVerificationOptions {
+                task_seq,
+                outcome,
+                task_state,
+                limit,
+                after_cursor,
+            };
+            let mut report = pt::verify_evidence(&conn, &project_root, &options)?;
+            if let Some(cursor) = report.projection.next_cursor.clone() {
+                let mut arguments = Vec::new();
+                if evidence_db_override.is_some() {
+                    let database = std::fs::canonicalize(&db_path)
+                        .with_context(|| format!("resolve evidence authority {}", db_path))?;
+                    arguments.extend(["--db".to_owned(), pt::portable_absolute(&database)?]);
+                }
+                arguments.extend([
+                    "--project-root".to_owned(),
+                    report.project_root.clone(),
+                    "evidence".to_owned(),
+                    "verify".to_owned(),
+                ]);
+                if let Some(task_seq) = task_seq {
+                    arguments.extend(["--task".to_owned(), task_seq.to_string()]);
+                }
+                arguments.extend([
+                    "--outcome".to_owned(),
+                    outcome.as_str().to_owned(),
+                    "--task-state".to_owned(),
+                    task_state.as_str().to_owned(),
+                    "--limit".to_owned(),
+                    limit.to_string(),
+                    "--after-cursor".to_owned(),
+                    cursor,
+                ]);
+                if json {
+                    arguments.push("--json".to_owned());
+                }
+                report.projection.continuation_command = Some(pt::CorrectiveCommand {
+                    program: "papertiger".into(),
+                    arguments,
+                });
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 println!(
-                    "evidence verification: {} verified, {} failed, {} unsupported",
-                    report.verified_count, report.failure_count, report.unverifiable_count
+                    "evidence verification: {} total, {} verified, {} failed, {} unsupported ({})",
+                    report.summary.binding_count,
+                    report.summary.verified_count,
+                    report.summary.failed_count,
+                    report.summary.unsupported_count,
+                    if report.summary.verification_complete {
+                        "complete"
+                    } else {
+                        "incomplete"
+                    }
                 );
-                for binding in &report.bindings {
+                println!(
+                    "status counts: {}",
+                    serde_json::to_string(&report.summary.status_counts)?
+                );
+                if !report.summary.unsupported_scheme_counts.is_empty() {
                     println!(
-                        "  #{} {} '{}' [{}] {}",
+                        "unsupported scheme counts: {}",
+                        serde_json::to_string(&report.summary.unsupported_scheme_counts)?
+                    );
+                }
+                println!(
+                    "details: {} of {} eligible shown from index {}; {} remaining; outcome={}, task-state={}",
+                    report.projection.returned_count,
+                    report.projection.eligible_count,
+                    report.projection.page_start,
+                    report.projection.remaining_count,
+                    report.projection.outcome.as_str(),
+                    report.projection.task_state.as_str()
+                );
+                for binding in &report.projection.bindings {
+                    println!(
+                        "  #{} {} '{}' [{}/{}] {}",
                         binding.task_seq,
                         binding.entity,
                         binding.name,
                         binding.status,
+                        binding.classification.as_str(),
                         binding.locator
                     );
                     if let Some(detail) = &binding.detail {
@@ -1822,10 +1912,17 @@ fn run() -> Result<()> {
                         );
                     }
                 }
+                if let Some(command) = &report.projection.continuation_command {
+                    println!(
+                        "  continuation argv: {} {}",
+                        command.program,
+                        serde_json::to_string(&command.arguments)?
+                    );
+                }
             }
-            if !report.complete {
+            if !report.summary.verification_complete {
                 bail!(
-                    "evidence verification is incomplete; follow each failed binding's corrective argv, or provide a scheme-specific verifier for unsupported bindings"
+                    "evidence verification is incomplete across the full task scope; use --outcome failed or --outcome unsupported for bounded details, follow failed bindings' corrective argv, and do not count unsupported schemes as verified"
                 );
             }
         }

@@ -15,6 +15,13 @@ All notable user-visible changes are documented here. Papertiger follows
   missing or mismatched host receipt and directs the operator to repair from a
   trusted external release. The tracked `project-install` receipt remains
   clone-portable and contains no platform-binary hash.
+- `evidence verify` emits `papertiger.evidence_verification.v2`: full-scope
+  verified, failed, and unsupported counts precede a bounded detail projection.
+  `--outcome all|incomplete|verified|failed|unsupported`, `--task-state
+  all|open|terminal`, `--limit`, and scope-bound continuation cursors make
+  whole-authority review actionable without weakening the fail-closed exit
+  status. Regular files are streamed in bounded memory, and unsupported schemes
+  remain ineligible until an authority-backed resolver exists.
 - Global `--project-root <DIR>` selects the authority from the exact project's
   version-checked installation receipt, allowing commands issued from another
   repository to retain one canonical planning authority. Missing receipts and

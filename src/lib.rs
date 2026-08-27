@@ -15,7 +15,13 @@ pub use atomic_file::{atomic_create_file, atomic_replace_file};
 mod export_file;
 pub use export_file::{ExportFileReceipt, write_export_file};
 mod evidence;
-pub use evidence::{EvidenceBindingVerification, EvidenceVerificationReport, verify_evidence};
+pub use evidence::{CorrectiveCommand, EvidenceBindingVerification, EvidenceClassification};
+mod evidence_projection;
+pub use evidence_projection::{
+    DEFAULT_EVIDENCE_PAGE, EvidenceOutcomeFilter, EvidenceTaskStateFilter,
+    EvidenceVerificationOptions, EvidenceVerificationProjection, EvidenceVerificationReport,
+    EvidenceVerificationSummary, MAX_EVIDENCE_PAGE, verify_evidence,
+};
 mod path_identity;
 pub use path_identity::portable_absolute;
 mod read_model;

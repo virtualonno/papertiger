@@ -427,13 +427,15 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
             "1",
             "--project-root",
             root_text,
+            "--outcome",
+            "all",
             "--json",
         ],
     );
     assert_success(&verified);
     let verified: serde_json::Value = serde_json::from_slice(&verified.stdout).unwrap();
-    assert_eq!(verified["complete"], true);
-    assert_eq!(verified["bindings"][0]["status"], "verified");
+    assert_eq!(verified["summary"]["verification_complete"], true);
+    assert_eq!(verified["projection"]["bindings"][0]["status"], "verified");
     assert_eq!(std::fs::read(&db.0).unwrap(), before);
 
     std::fs::write(&evidence, b"drifted proof bytes\n").unwrap();
@@ -451,9 +453,12 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
     );
     assert!(!drifted.status.success());
     let drifted_json: serde_json::Value = serde_json::from_slice(&drifted.stdout).unwrap();
-    assert_eq!(drifted_json["bindings"][0]["status"], "digest_mismatch");
     assert_eq!(
-        drifted_json["bindings"][0]["corrective_commands"][0]["arguments"],
+        drifted_json["projection"]["bindings"][0]["status"],
+        "digest_mismatch"
+    );
+    assert_eq!(
+        drifted_json["projection"]["bindings"][0]["corrective_commands"][0]["arguments"],
         serde_json::json!([
             "gate",
             "reopen",
@@ -463,9 +468,10 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
             "replace invalid evidence binding after papertiger evidence verify"
         ])
     );
-    let close_arguments = drifted_json["bindings"][0]["corrective_commands"][1]["arguments"]
-        .as_array()
-        .unwrap();
+    let close_arguments =
+        drifted_json["projection"]["bindings"][0]["corrective_commands"][1]["arguments"]
+            .as_array()
+            .unwrap();
     assert_eq!(
         &close_arguments[..7],
         serde_json::json!([
@@ -483,6 +489,131 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
     assert_eq!(std::fs::read(&db.0).unwrap(), before);
     drop(db);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn evidence_verification_json_is_summary_first_filtered_and_pageable() {
+    let root = TestDirectory::new("evidence-pageable");
+    std::fs::create_dir(root.0.join("state")).unwrap();
+    let db = TestDatabase(root.0.join("state/papertiger.sqlite"));
+    assert_success(&papertiger(&db.0, &["init"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "mixed evidence", "--plan", "work"],
+    ));
+    for (name, locator) in [
+        ("missing-a", "file:docs/missing-a.txt"),
+        ("missing-b", "file:docs/missing-b.txt"),
+        (
+            "unsupported",
+            "commit:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+    ] {
+        assert_success(&papertiger(
+            &db.0,
+            &[
+                "gate",
+                "add",
+                "1",
+                name,
+                "--kind",
+                "review",
+                "--requirement",
+                "retained evidence",
+            ],
+        ));
+        assert_success(&papertiger(
+            &db.0,
+            &["gate", "close", "1", name, "--evidence", locator],
+        ));
+    }
+
+    let root_text = root.0.to_str().unwrap();
+    let first = papertiger(
+        &db.0,
+        &[
+            "evidence",
+            "verify",
+            "--project-root",
+            root_text,
+            "--limit",
+            "1",
+            "--json",
+        ],
+    );
+    assert!(!first.status.success());
+    let first: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    assert_eq!(first["schema"], "papertiger.evidence_verification.v2");
+    assert_eq!(first["summary"]["binding_count"], 3);
+    assert_eq!(first["summary"]["failed_count"], 2);
+    assert_eq!(first["summary"]["unsupported_count"], 1);
+    assert_eq!(first["summary"]["status_counts"]["missing"], 2);
+    assert_eq!(first["summary"]["unsupported_scheme_counts"]["commit"], 1);
+    assert_eq!(first["projection"]["outcome"], "incomplete");
+    assert_eq!(first["projection"]["eligible_count"], 3);
+    assert_eq!(first["projection"]["returned_count"], 1);
+    assert_eq!(first["projection"]["remaining_count"], 2);
+    assert_eq!(first["projection"]["complete"], false);
+    let continuation = &first["projection"]["continuation_command"];
+    assert_eq!(continuation["program"], "papertiger");
+    let arguments = continuation["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(arguments.windows(2).any(|pair| pair[0] == "--db"));
+    assert!(arguments.windows(2).any(|pair| pair[0] == "--after-cursor"));
+    assert!(arguments.ends_with(&["--json".to_owned()]));
+
+    let second = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .args(&arguments)
+        .output()
+        .expect("run evidence continuation argv");
+    assert!(!second.status.success());
+    let second: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(second["projection"]["page_start"], 1);
+    assert_eq!(second["projection"]["returned_count"], 1);
+    assert_eq!(second["projection"]["remaining_count"], 1);
+
+    let unsupported = papertiger(
+        &db.0,
+        &[
+            "evidence",
+            "verify",
+            "--project-root",
+            root_text,
+            "--outcome",
+            "unsupported",
+            "--json",
+        ],
+    );
+    assert!(!unsupported.status.success());
+    let unsupported: serde_json::Value = serde_json::from_slice(&unsupported.stdout).unwrap();
+    assert_eq!(unsupported["summary"]["failed_count"], 2);
+    assert_eq!(unsupported["projection"]["eligible_count"], 1);
+    assert_eq!(
+        unsupported["projection"]["bindings"][0]["classification"],
+        "unsupported"
+    );
+
+    let zero_limit = papertiger(
+        &db.0,
+        &[
+            "evidence",
+            "verify",
+            "--project-root",
+            root_text,
+            "--limit",
+            "0",
+        ],
+    );
+    assert!(!zero_limit.status.success());
+    assert!(
+        String::from_utf8_lossy(&zero_limit.stderr)
+            .contains("evidence verify --limit must be between 1 and 500")
+    );
 }
 
 impl Drop for TestDatabase {

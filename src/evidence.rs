@@ -7,17 +7,40 @@ use std::{
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
-use crate::{get_task, portable_absolute, sha256, validate_sha256};
+use crate::{get_task, portable_absolute, validate_sha256};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceClassification {
+    Verified,
+    Failed,
+    Unsupported,
+}
+
+impl EvidenceClassification {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::Failed => "failed",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EvidenceBindingVerification {
     pub entity: String,
     pub task_seq: i64,
+    pub task_status: String,
     pub name: String,
     pub locator: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
     pub expected_sha256: Option<String>,
     pub status: String,
+    pub classification: EvidenceClassification,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,19 +57,6 @@ pub struct CorrectiveCommand {
     pub arguments: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct EvidenceVerificationReport {
-    pub schema: String,
-    pub project_root: String,
-    pub task_seq: Option<i64>,
-    pub binding_count: usize,
-    pub verified_count: usize,
-    pub failure_count: usize,
-    pub unverifiable_count: usize,
-    pub complete: bool,
-    pub bindings: Vec<EvidenceBindingVerification>,
-}
-
 #[derive(Debug, Clone)]
 struct StoredBinding {
     entity: &'static str,
@@ -61,11 +71,11 @@ struct StoredBinding {
     task_replacement_seq: Option<i64>,
 }
 
-pub fn verify_evidence(
+pub(crate) fn verify_all_evidence(
     conn: &Connection,
     project_root: &Path,
     task_seq: Option<i64>,
-) -> Result<EvidenceVerificationReport> {
+) -> Result<(String, Vec<EvidenceBindingVerification>)> {
     let project_root = std::fs::canonicalize(project_root).with_context(|| {
         format!(
             "resolve evidence project root {}; pass --project-root with an existing directory",
@@ -150,36 +160,20 @@ pub fn verify_evidence(
         .into_iter()
         .map(|binding| verify_binding(&project_root, binding))
         .collect::<Vec<_>>();
-    let verified_count = bindings
-        .iter()
-        .filter(|binding| binding.status == "verified")
-        .count();
-    let unverifiable_count = bindings
-        .iter()
-        .filter(|binding| binding.status == "unsupported_scheme")
-        .count();
-    let failure_count = bindings.len() - verified_count - unverifiable_count;
-    Ok(EvidenceVerificationReport {
-        schema: "papertiger.evidence_verification.v1".into(),
-        project_root: portable_absolute(&project_root)?,
-        task_seq,
-        binding_count: bindings.len(),
-        verified_count,
-        failure_count,
-        unverifiable_count,
-        complete: failure_count == 0 && unverifiable_count == 0,
-        bindings,
-    })
+    Ok((portable_absolute(&project_root)?, bindings))
 }
 
 fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerification {
     let mut result = EvidenceBindingVerification {
         entity: binding.entity.into(),
         task_seq: binding.task_seq,
+        task_status: binding.task_status.clone(),
         name: binding.name.clone(),
         locator: binding.locator.clone(),
+        scheme: None,
         expected_sha256: binding.expected_sha256.clone(),
         status: "unsupported_scheme".into(),
+        classification: EvidenceClassification::Unsupported,
         resolved_path: None,
         actual_sha256: None,
         detail: None,
@@ -190,6 +184,7 @@ fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerific
         result.detail = Some("locator is not scheme:value".into());
         return add_corrective_commands(result, &binding);
     };
+    result.scheme = Some(scheme.to_ascii_lowercase());
     if !scheme.eq_ignore_ascii_case("file") {
         result.detail = Some(format!(
             "scheme {scheme:?} has no local verifier; only file: bindings are resolved"
@@ -279,11 +274,18 @@ fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerific
             return add_corrective_commands(result, &binding);
         }
     };
-    let mut bytes = Vec::new();
-    if let Err(error) = file.read_to_end(&mut bytes) {
-        result.status = "unreadable".into();
-        result.detail = Some(format!("read evidence file: {error}"));
-        return add_corrective_commands(result, &binding);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => hasher.update(&buffer[..read]),
+            Err(error) => {
+                result.status = "unreadable".into();
+                result.detail = Some(format!("read evidence file: {error}"));
+                return add_corrective_commands(result, &binding);
+            }
+        }
     }
     let after = match file.metadata() {
         Ok(metadata) => metadata,
@@ -299,7 +301,7 @@ fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerific
             Some("evidence file metadata changed while its bytes were read; retry".into());
         return add_corrective_commands(result, &binding);
     }
-    let actual = sha256(&bytes);
+    let actual = format!("{:x}", hasher.finalize());
     result.actual_sha256 = Some(actual.clone());
     let Some(expected) = binding.expected_sha256.as_deref() else {
         result.status = "unhashed".into();
@@ -318,13 +320,18 @@ fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerific
         return add_corrective_commands(result, &binding);
     }
     result.status = "verified".into();
-    result
+    add_corrective_commands(result, &binding)
 }
 
 fn add_corrective_commands(
     mut result: EvidenceBindingVerification,
     binding: &StoredBinding,
 ) -> EvidenceBindingVerification {
+    result.classification = match result.status.as_str() {
+        "verified" => EvidenceClassification::Verified,
+        "unsupported_scheme" => EvidenceClassification::Unsupported,
+        _ => EvidenceClassification::Failed,
+    };
     if result.status == "verified" || result.status == "unsupported_scheme" {
         return result;
     }
