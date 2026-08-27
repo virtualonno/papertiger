@@ -136,14 +136,21 @@ Setup installs the native planner binary, the harness-neutral agent contract,
 and only the selected thin skill envelope: `.agents/skills` for the open Agent
 Skills convention, `.claude/skills` for Claude, both, or neither. The tracked
 receipt binds the release, authority path, resolved skill targets, and hashes
-the managed text: the canonical contract and selected skill envelopes. The
-receipt also owns the host-local binary, but deliberately omits
-its platform-specific bytes from that text hash list; every applied setup
-upgrades it to the exact bytes of the running release binary. The receipt
-itself and additive `.gitignore` policy also sit outside the hash list. A normal
-upgrade automatically replaces only receipt-matching prior managed text and
-repairs missing files; modified managed text refuses with a corrective action,
-and receipt-retired paths are removed only when prior ownership is hash-proven.
+the managed text: the canonical contract and selected skill envelopes. It
+deliberately omits platform-specific binary bytes so clones stay portable.
+Instead, the ignored sibling
+`tools/papertiger/bin/papertiger[.exe].runtime-install.json` records the exact
+installed path, byte count, and SHA-256. `setup-project --dry-run --json`
+exposes that identity in `runtime_install` without an ad hoc hash command, and
+the host receipt is written atomically as the final installation commit marker.
+Ordinary receipt discovery refuses a missing, malformed, or mismatched host
+receipt with the repair command. This identity is an observable local fact,
+not a claim that separate platform builds reproduce identical bytes. The
+tracked receipt itself and additive `.gitignore` policy also sit outside the
+text hash list. A normal upgrade automatically replaces only receipt-matching
+prior managed text and repairs missing files; modified managed text refuses
+with a corrective action, and receipt-retired paths are removed only when prior
+ownership is hash-proven.
 An older release also refuses to downgrade a newer receipt, even with
 `--replace-managed`; rerun setup with the recorded release or a newer one.
 A pre-receipt vendor manifest at `tools/papertiger/README.md` is accepted as a
@@ -177,11 +184,12 @@ papertiger uninstall-project /path/to/project --json
 
 Uninstall requires a matching-version receipt and removes only receipt-owned
 contract and skill files, the native binary when its bytes equal the external
-release binary, and finally the receipt. It refuses modified files, a differing
-binary, and project-local self-deletion before writing. It deliberately retains
-the planner authority and SQLite sidecars, Mise authority and evidence store,
-repository guidance, unrelated skills, and the complete `.gitignore` policy.
-Removing or archiving retained authority is a separate data-lifecycle decision.
+release binary, its exact host receipt, and finally the tracked receipt. It
+refuses modified files, a differing binary or host receipt, and project-local
+self-deletion before writing. It deliberately retains the planner authority
+and SQLite sidecars, Mise authority and evidence store, repository guidance,
+unrelated skills, and the complete `.gitignore` policy. Removing or archiving
+retained authority is a separate data-lifecycle decision.
 
 ## Start planning
 
@@ -199,9 +207,10 @@ papertiger log --json
 ```
 
 The binary walks upward from the current directory to find the nearest tracked
-`tools/papertiger/project-install.json`, verifies that the receipt version
-matches, and resolves its authority against that project root. This works from
-nested directories without a launcher, shell transition, or process bridge.
+`tools/papertiger/project-install.json`, verifies its version and the matching
+host-local runtime receipt and binary identity, then resolves its authority
+against that project root. This works from nested directories without a
+launcher, shell transition, or process bridge.
 For an intentional command issued from a different repository, select the
 canonical installed project explicitly:
 

@@ -9,6 +9,9 @@ use serde::Serialize;
 
 use super::filesystem::validate_destination;
 use super::receipt::{InstallReceipt, load_install_receipt, managed_text_sha256};
+use super::runtime_receipt::{
+    build_runtime_install_receipt, runtime_receipt_bytes, runtime_receipt_relative_path,
+};
 use super::{INSTALL_RECEIPT_PATH, normalized_path};
 
 #[derive(Debug)]
@@ -104,10 +107,16 @@ pub(crate) fn uninstall_project(
     refuse_self_uninstall(&source_binary, &runtime_path)?;
     let source_bytes = fs::read(&source_binary)
         .with_context(|| format!("read release binary {}", source_binary.display()))?;
+    let expected_runtime_receipt =
+        build_runtime_install_receipt(Path::new(&runtime_relative), &source_bytes);
+    let expected_runtime_receipt_bytes = runtime_receipt_bytes(&expected_runtime_receipt)?;
+    let runtime_receipt_relative = normalized_path(&runtime_receipt_relative_path(Path::new(
+        &runtime_relative,
+    ))?);
 
     let receipt_bytes = fs::read(&receipt_path)
         .with_context(|| format!("read project-install receipt {}", receipt_path.display()))?;
-    let mut targets = Vec::with_capacity(receipt.managed_files.len() + 2);
+    let mut targets = Vec::with_capacity(receipt.managed_files.len() + 3);
     let mut seen = HashSet::new();
     for file in &receipt.managed_files {
         if !seen.insert(file.path.clone()) {
@@ -129,6 +138,15 @@ pub(crate) fn uninstall_project(
     targets.push(RemovalTarget {
         relative_path: runtime_relative,
         expected: ExpectedContent::ExactBytes(source_bytes),
+    });
+    if !seen.insert(runtime_receipt_relative.clone()) {
+        return Err(anyhow!(
+            "project-install receipt incorrectly records runtime receipt path {runtime_receipt_relative} as text; nothing was removed"
+        ));
+    }
+    targets.push(RemovalTarget {
+        relative_path: runtime_receipt_relative,
+        expected: ExpectedContent::Receipt(expected_runtime_receipt_bytes),
     });
     targets.push(RemovalTarget {
         relative_path: INSTALL_RECEIPT_PATH.to_owned(),
@@ -206,7 +224,7 @@ pub(crate) fn uninstall_project(
     };
 
     Ok(UninstallProjectResult {
-        schema: "papertiger.project_uninstall.v1",
+        schema: "papertiger.project_uninstall.v2",
         version: env!("CARGO_PKG_VERSION"),
         project_root: normalized_path(&root),
         authority_path: receipt.authority_path.clone(),
@@ -392,7 +410,18 @@ mod tests {
 
         let result = uninstall_project(request(&project, &binary, false)).unwrap();
         assert_eq!(result.operation, UninstallOperation::Remove);
+        assert_eq!(result.schema, "papertiger.project_uninstall.v2");
         assert!(!project.join(INSTALL_RECEIPT_PATH).exists());
+        assert!(
+            !project
+                .join(
+                    runtime_receipt_relative_path(Path::new(
+                        &runtime_relative_path(&binary).unwrap()
+                    ))
+                    .unwrap()
+                )
+                .exists()
+        );
         assert!(
             !project
                 .join("tools/papertiger/agent_integration.md")

@@ -8,6 +8,13 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Added
 
+- `setup-project --json` reports the installed native binary's exact path,
+  byte count, and SHA-256 in `papertiger.project_setup.v4`. The same identity is
+  stored atomically in the ignored per-installed-binary
+  `papertiger[.exe].runtime-install.json`; ordinary receipt discovery refuses a
+  missing or mismatched host receipt and directs the operator to repair from a
+  trusted external release. The tracked `project-install` receipt remains
+  clone-portable and contains no platform-binary hash.
 - Global `--project-root <DIR>` selects the authority from the exact project's
   version-checked installation receipt, allowing commands issued from another
   repository to retain one canonical planning authority. Missing receipts and

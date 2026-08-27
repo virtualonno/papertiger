@@ -121,7 +121,7 @@ mkdir -p "$project/.agents/skills/unrelated"
 printf 'unrelated skill\n' > "$project/.agents/skills/unrelated/SKILL.md"
 
 "$planner" setup-project "$project" --dry-run --json > "$fixture/setup-dry-run.json"
-grep -q '"schema": "papertiger.project_setup.v3"' "$fixture/setup-dry-run.json"
+grep -q '"schema": "papertiger.project_setup.v4"' "$fixture/setup-dry-run.json"
 grep -q '"agents"' "$fixture/setup-dry-run.json"
 test ! -e "$project/scripts/papertiger"
 test ! -e "$project/scripts/papertiger.cmd"
@@ -195,7 +195,7 @@ ignore_fingerprint="$(cksum "$project/.gitignore")"
 mise_fingerprint="$(cksum "$project/state/papertiger-mise.sqlite")"
 "$planner" uninstall-project "$project" --dry-run --json \
   > "$fixture/uninstall-dry-run.json"
-grep -q '"schema": "papertiger.project_uninstall.v1"' \
+grep -q '"schema": "papertiger.project_uninstall.v2"' \
   "$fixture/uninstall-dry-run.json"
 grep -q '"operation": "remove"' "$fixture/uninstall-dry-run.json"
 test -f "$project/tools/papertiger/project-install.json"

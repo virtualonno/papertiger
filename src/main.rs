@@ -47,7 +47,7 @@ enum Cmd {
         /// Skill target selection; omitted upgrades preserve the receipt selection
         #[arg(long, value_enum, value_name = "auto|agents|claude|both|none")]
         skill_target: Option<project_setup::SkillTargetRequest>,
-        /// Emit papertiger.project_setup.v3 JSON
+        /// Emit papertiger.project_setup.v4 JSON, including exact host-binary identity
         #[arg(long)]
         json: bool,
     },
@@ -58,7 +58,7 @@ enum Cmd {
         /// Report the complete removal plan without writing
         #[arg(long)]
         dry_run: bool,
-        /// Emit papertiger.project_uninstall.v1 JSON
+        /// Emit papertiger.project_uninstall.v2 JSON
         #[arg(long)]
         json: bool,
     },
