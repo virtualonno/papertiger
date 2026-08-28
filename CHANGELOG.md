@@ -11,7 +11,7 @@ All notable user-visible changes are documented here. Papertiger follows
 ### Added
 
 - `setup-project --json` reports the installed native binary's exact path,
-  byte count, and SHA-256 in `papertiger.project_setup.v4`. The same identity is
+  byte count, and SHA-256 in `papertiger.project_setup.v5`. The same identity is
   stored atomically in the ignored per-installed-binary
   `papertiger[.exe].runtime-install.json`; ordinary receipt discovery refuses a
   missing or mismatched host receipt and directs the operator to repair from a
