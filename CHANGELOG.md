@@ -12,10 +12,10 @@ All notable user-visible changes are documented here. Papertiger follows
   still requires both. The source job owns the complete workspace suite and strict Clippy once;
   native matrix tests are limited to distinct Windows and macOS process behavior, while every
   architecture retains its exact build and packaged setup, authority, Mise, and uninstall lifecycle.
-- Release jobs use exact-action, target-keyed Rust caches. The source gate no longer reruns the
-  deterministic dogfood target already included by the workspace suite, and its local lifecycle
-  reuses debug binaries instead of recompiling release binaries already owned by the native
-  artifact matrix.
+- Release jobs use exact-action, target-keyed Rust caches and Node 24 artifact actions, with
+  digest mismatches rejected during publication. The source gate no longer reruns the deterministic
+  dogfood target already included by the workspace suite, and its local lifecycle reuses debug
+  binaries instead of recompiling release binaries already owned by the native artifact matrix.
 
 ## [0.10.0] - 2026-08-28
 
