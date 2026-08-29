@@ -21,6 +21,13 @@ mise_version="$($mise --version)"
 planner_semver="${planner_version#papertiger }"
 test "$planner_semver" = "${mise_version#papertiger-mise }"
 
+release_workflow="$root/.github/workflows/release-artifacts.yml"
+grep -Fq '"schema": "papertiger.project_uninstall.v2"' "$release_workflow"
+if grep -Fq 'papertiger.project_uninstall.v1' "$release_workflow"; then
+  echo "release workflow still asserts the retired project uninstall schema" >&2
+  exit 1
+fi
+
 bash scripts/validate_release_dispatch.sh \
   "$planner_semver" false refs/heads/codex/local-verification
 if release_error="$(bash scripts/validate_release_dispatch.sh \
