@@ -734,10 +734,11 @@ known-bad calibration, a qualified research cohort reconstructed from CAS, globa
 unique domain receipts, and zero residual budget reservations. The output is
 not a Contextmink performance claim.
 
-The repeatable deterministic dogfood is executable with:
+The repeatable deterministic dogfood is an explicit gate after Mise lifecycle
+changes, rather than part of the generic workspace suite:
 
 ```text
-cargo test -p papertiger-mise --test deterministic_dogfood -- --test-threads=1
+cargo test -p papertiger-mise --test deterministic_dogfood -- --ignored --test-threads=1
 ```
 
 It uses fresh on-disk SQLite/CAS state and separate clean source/control Git

@@ -52,6 +52,7 @@ fn interrupted_trial_worker() {
 }
 
 #[test]
+#[ignore = "run explicitly after Mise lifecycle changes"]
 fn deterministic_public_api_campaign_preserves_every_outcome() {
     let fixture = DogfoodFixture::new();
     let connection = open_existing(&fixture.database).expect("open Mise authority");

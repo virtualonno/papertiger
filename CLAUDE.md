@@ -76,7 +76,7 @@ each under 32 KiB.
 - Toolchain is pinned by `rust-toolchain.toml`. Gates before claiming done:
   `cargo fmt --check`, `cargo clippy --workspace --all-targets` (warnings are
   defects), `cargo test --workspace`, and for Mise changes
-  `cargo test -p papertiger-mise --test deterministic_dogfood -- --test-threads=1`.
+  `cargo test -p papertiger-mise --test deterministic_dogfood -- --ignored --test-threads=1`.
 - **Fail-closed is the project standard.** No error swallowing, no optimistic
   defaults, no converting an integrity failure into a score or a skipped
   check. A refusal path is a feature with tests, not dead weight.
@@ -120,5 +120,5 @@ each under 32 KiB.
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets
     cargo test --workspace
-    cargo test -p papertiger-mise --test deterministic_dogfood -- --test-threads=1
+    cargo test -p papertiger-mise --test deterministic_dogfood -- --ignored --test-threads=1
     papertiger audit

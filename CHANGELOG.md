@@ -13,9 +13,11 @@ All notable user-visible changes are documented here. Papertiger follows
   native matrix tests are limited to distinct Windows and macOS process behavior, while every
   architecture retains its exact build and packaged setup, authority, Mise, and uninstall lifecycle.
 - Release jobs use exact-action, target-keyed Rust caches and Node 24 artifact actions, with
-  digest mismatches rejected during publication. The source gate no longer reruns the deterministic
-  dogfood target already included by the workspace suite, and its local lifecycle reuses debug
-  binaries instead of recompiling release binaries already owned by the native artifact matrix.
+  digest mismatches rejected during publication. The source gate runs the default workspace suite
+  once, and its local lifecycle reuses debug binaries instead of recompiling release binaries
+  already owned by the native artifact matrix.
+- The 1,555-line deterministic Mise campaign remains an explicit gate for Mise lifecycle changes,
+  but unrelated workspace and release checks no longer execute its full on-disk campaign.
 
 ## [0.10.0] - 2026-08-28
 
