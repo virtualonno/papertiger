@@ -7,14 +7,14 @@ cd "$root"
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
-cargo build --locked --release --workspace --bins
+cargo build --locked --workspace --bins
 
 exe=""
 case "${OS:-}:$(uname -s 2>/dev/null || true)" in
   Windows_NT:* | *:MINGW* | *:MSYS* | *:CYGWIN*) exe=".exe" ;;
 esac
-planner="$root/target/release/papertiger$exe"
-mise="$root/target/release/papertiger-mise$exe"
+planner="$root/target/debug/papertiger$exe"
+mise="$root/target/debug/papertiger-mise$exe"
 planner_version="$($planner --version)"
 mise_version="$($mise --version)"
 planner_semver="${planner_version#papertiger }"
