@@ -7,7 +7,6 @@ cd "$root"
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
-cargo test --locked -p papertiger-mise --test deterministic_dogfood -- --test-threads=1
 cargo build --locked --release --workspace --bins
 
 exe=""

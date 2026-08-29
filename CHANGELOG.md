@@ -6,6 +6,15 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Changed
+
+- Release source verification and native artifact builds now run concurrently while publication
+  still requires both. The source job owns the complete workspace suite and strict Clippy once;
+  native matrix tests are limited to distinct Windows and macOS process behavior, while every
+  architecture retains its exact build and packaged setup, authority, Mise, and uninstall lifecycle.
+- Release jobs use exact-action, target-keyed Rust caches. The source gate no longer reruns the
+  deterministic dogfood target already included by the workspace suite.
+
 ## [0.10.0] - 2026-08-28
 
 ### Added

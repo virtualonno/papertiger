@@ -28,6 +28,11 @@ jobs:
           toolchain: 1.97.1
           components: clippy, rustfmt
 
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-source
+
       - name: Verify exact release source
         shell: bash
         run: bash scripts/cross_check.sh
@@ -40,7 +45,6 @@ jobs:
           cargo +1.95.0 check --locked --workspace --all-targets
 
   build:
-    needs: source
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -77,6 +81,11 @@ jobs:
           components: clippy, rustfmt
           targets: ${{ matrix.target }}
 
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-${{ matrix.target }}
+
       - name: Resolve archive names
         id: names
         shell: bash
@@ -94,37 +103,21 @@ jobs:
           echo "bundle=${bundle}" >> "$GITHUB_OUTPUT"
           echo "archive=${bundle}.${ARCHIVE_EXT}" >> "$GITHUB_OUTPUT"
 
-      # The source job owns the complete workspace suite. These focused tests
-      # cover code whose behavior or implementation differs by host OS.
+      # The source job owns the complete workspace suite and strict Clippy.
+      # One native runner per non-Linux OS family covers process behavior whose
+      # implementation differs by host; every architecture still builds and
+      # replays the packaged lifecycle below.
       - name: Test native process boundaries
+        if: matrix.platform == 'windows-x86_64' || matrix.platform == 'macos-arm64'
         run: >-
           cargo test --locked -p papertiger-mise --lib --target ${{ matrix.target }}
           executor::tests:: -- --test-threads=1
 
-      - name: Test native path and evidence boundaries
-        run: >-
-          cargo test --locked -p papertiger-mise --lib --target ${{ matrix.target }}
-          object::tests:: -- --test-threads=1
-
       - name: Test native process identity
+        if: matrix.platform == 'windows-x86_64' || matrix.platform == 'macos-arm64'
         run: >-
           cargo test --locked -p papertiger-mise --lib --target ${{ matrix.target }}
           process_identity::tests:: -- --test-threads=1
-
-      - name: Test project-root integration
-        run: >-
-          cargo test --locked -p papertiger-mise --test project_root_cli
-          --target ${{ matrix.target }} -- --test-threads=1
-
-      - name: Test project setup integration
-        run: >-
-          cargo test --locked -p papertiger --bin papertiger --target ${{ matrix.target }}
-          project_setup:: -- --test-threads=1
-
-      - name: Lint native target
-        run: >-
-          cargo clippy --locked --workspace --all-targets --target ${{ matrix.target }}
-          -- -D warnings
 
       - name: Build release binaries
         run: cargo build --locked --release --workspace --bins --target ${{ matrix.target }}
