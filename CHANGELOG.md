@@ -6,7 +6,11 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
-## [0.10.1] - 2026-08-30
+## [0.11.0] - 2026-08-30
+
+This release establishes the planner, receipt-bound project integration, evidence verification,
+and Mise lifecycle as the next experimental minor line. It incorporates the source changes
+prepared under the unpublished 0.10.1 version; no 0.10.1 tag or release artifacts were published.
 
 ### Changed
 
@@ -276,7 +280,8 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/virtualonno/papertiger/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/virtualonno/papertiger/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/virtualonno/papertiger/compare/v0.7.1...v0.9.0
 [0.7.1]: https://github.com/virtualonno/papertiger/releases/tag/v0.7.1
