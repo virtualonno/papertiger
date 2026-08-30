@@ -6,6 +6,8 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-30
+
 ### Changed
 
 - Release source verification and native artifact builds now run concurrently while publication
