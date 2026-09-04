@@ -113,7 +113,13 @@ fn git_output_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-pub(crate) fn git_worktree_add_without_hooks(
+/// Create an exact detached worktree while disabling repository and system
+/// checkout hooks and attributes.
+///
+/// Repository and pending worktree paths cross Git's process boundary through
+/// Mise's portable path rendering, including removal of Windows verbatim path
+/// prefixes that Git for Windows does not consistently accept.
+pub fn git_worktree_add_without_hooks(
     repository: &Path,
     worktree: &Path,
     base_commit: &str,
@@ -1092,6 +1098,34 @@ mod tests {
     use super::*;
     use crate::candidate::{CandidateMaterial, GitChangeOperation};
     use crate::manifest::CandidateMaterialContract;
+
+    #[cfg(windows)]
+    #[test]
+    fn controlled_worktree_creation_accepts_windows_verbatim_paths() {
+        let fixture = GitMaterialFixture::new();
+        let repository = std::fs::canonicalize(&fixture.repository)
+            .expect("canonical repository with Windows verbatim prefix");
+        let workspace = std::fs::canonicalize(&fixture.workspace)
+            .expect("canonical workspace with Windows verbatim prefix");
+        assert!(
+            repository.to_string_lossy().starts_with(r"\\?\"),
+            "Windows canonicalization should exercise a verbatim repository path"
+        );
+        assert!(
+            workspace.to_string_lossy().starts_with(r"\\?\"),
+            "Windows canonicalization should exercise a verbatim worktree path"
+        );
+
+        let worktree = workspace.join("verbatim-worktree");
+        git_worktree_add_without_hooks(&repository, &worktree, &fixture.base_commit)
+            .expect("controlled Git worktree creation from verbatim paths");
+        assert_eq!(
+            git_text(&worktree, &["rev-parse", "HEAD^{commit}"])
+                .expect("worktree commit")
+                .trim(),
+            fixture.base_commit
+        );
+    }
 
     #[test]
     fn typed_material_builds_and_applies_add_modify_delete_exactly() {

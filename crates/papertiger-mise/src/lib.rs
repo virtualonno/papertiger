@@ -74,7 +74,7 @@ pub use executor::{
     ExecutionCapabilities, HOST_EXECUTION_STATUS_SCHEMA_V1, HostExecutionStatus,
     PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1, host_execution_status,
 };
-pub use git_materialization::build_git_change_set_material;
+pub use git_materialization::{build_git_change_set_material, git_worktree_add_without_hooks};
 pub use lifecycle::{
     CandidateRecord, ColdRecoveryOutcome, DeterministicEvaluatorOutput,
     DeterministicEvaluatorRequest, EvaluatorJudgeBuild, JudgeBuildReceipt, MaterializationReceipt,
