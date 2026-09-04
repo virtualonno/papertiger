@@ -1824,6 +1824,11 @@ pub(crate) fn complete_deterministic_trial(
             current.status
         );
     }
+    crate::cancellation::ensure_not_cancelled(
+        &transaction,
+        crate::cancellation::CancellationTarget::Trial,
+        trial_id,
+    )?;
     record_artifact_in(&transaction, &completion.receipt, "application/json")?;
     transaction.execute(
         "INSERT INTO candidate_artifacts (candidate_id, role, sha256)

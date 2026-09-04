@@ -499,6 +499,14 @@ pub fn execute_workspace_trial(
         Some(SupervisionHooks {
             launched: &mut launched,
             heartbeat: &mut heartbeat,
+            cancellation_requested: &mut || {
+                Ok(crate::cancellation::cancellation_request(
+                    connection,
+                    crate::cancellation::CancellationTarget::Trial,
+                    &spec.trial_id,
+                )?
+                .is_some())
+            },
         }),
     )?;
     let execution = match execution {
@@ -693,7 +701,11 @@ pub fn execute_workspace_trial(
                 &intent,
                 &SupervisorFailureCapture {
                     process_birth_identity: Some(&receipt.process_birth_identity),
-                    reason: "completion-refused",
+                    reason: if error.is::<crate::cancellation::CancellationPending>() {
+                        "operator-cancelled"
+                    } else {
+                        "completion-refused"
+                    },
                     detail: &error.to_string(),
                     stdout: Some(&stdout),
                     stderr: Some(&stderr),

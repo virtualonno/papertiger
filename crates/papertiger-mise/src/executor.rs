@@ -40,6 +40,7 @@ pub(crate) enum SupervisedExecutionOutcome {
 pub(crate) struct SupervisionHooks<'a> {
     pub(crate) launched: &'a mut dyn FnMut(u32, &str) -> Result<()>,
     pub(crate) heartbeat: &'a mut dyn FnMut() -> Result<()>,
+    pub(crate) cancellation_requested: &'a mut dyn FnMut() -> Result<bool>,
 }
 
 /// Historical trial-receipt shape. These fields are backend diagnostics only:
@@ -259,6 +260,28 @@ pub(crate) fn execute_supervised(
     let deadline = Duration::from_millis(maximum_wall_time_ms);
     let mut last_heartbeat = Instant::now();
     let (status, mut failure) = loop {
+        if let Some(hooks) = hooks.as_mut() {
+            match (hooks.cancellation_requested)() {
+                Ok(false) => {}
+                Ok(true) => {
+                    terminate(&mut child, &process_family)?;
+                    break (
+                        None,
+                        Some((
+                            "operator-cancelled",
+                            "authority-recorded cancellation requested".to_owned(),
+                        )),
+                    );
+                }
+                Err(error) => {
+                    terminate(&mut child, &process_family)?;
+                    break (
+                        None,
+                        Some(("cancellation-observation-failed", format!("{error:#}"))),
+                    );
+                }
+            }
+        }
         if let Some(status) = child.try_wait()? {
             break (Some(status), None);
         }
@@ -794,6 +817,7 @@ mod tests {
             Some(SupervisionHooks {
                 launched: &mut launched,
                 heartbeat: &mut heartbeat,
+                cancellation_requested: &mut || Ok(false),
             }),
         )
         .expect("supervised helper");

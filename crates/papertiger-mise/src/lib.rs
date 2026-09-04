@@ -8,6 +8,7 @@ pub mod adapter;
 pub mod admission;
 pub mod attestation;
 pub mod budget;
+pub mod cancellation;
 pub mod candidate;
 pub mod classification;
 mod digest;

@@ -14,7 +14,7 @@ use crate::digest::{sha256, validate_sha256};
 use crate::manifest::{CAMPAIGN_SCHEMA_V1, CampaignManifest};
 use crate::validation::validate_nonblank;
 
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.mise";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
 
@@ -895,6 +895,7 @@ BEGIN SELECT RAISE(ABORT, 'nomination requires a qualified terminal candidate');
     transaction.execute_batch(DOMAIN_SHADOW_SCHEMA_V4)?;
     transaction.execute_batch(PAIRED_RUNTIME_SCHEMA_V5)?;
     transaction.execute_batch(SUCCESSOR_SCHEMA_V6)?;
+    transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V9)?;
     transaction.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
@@ -982,6 +983,16 @@ fn migrate(connection: &Connection, from: i64) -> Result<()> {
             "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, ?2)",
             params![AUTHORITY_IDENTITY_KEY, AUTHORITY_IDENTITY],
         )?;
+        transaction.execute(
+            "UPDATE meta SET value=?1 WHERE key='schema_version'",
+            params![8_i64.to_string()],
+        )?;
+        transaction.commit()?;
+        return migrate(connection, 8);
+    }
+    if from == 8 {
+        let transaction = begin_mutation(connection)?;
+        transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V9)?;
         transaction.execute(
             "UPDATE meta SET value=?1 WHERE key='schema_version'",
             params![SCHEMA_VERSION.to_string()],
@@ -1959,7 +1970,10 @@ mod tests {
         let fresh_family_schema = trust_boundary_family_schema(&connection);
         connection
             .execute_batch(
-                "DROP TRIGGER successor_admissions_no_delete;
+                "DROP TABLE cancellation_requests;
+                 DROP TRIGGER trial_cancellation_success_guard;
+                 DROP TRIGGER paired_cancellation_success_guard;
+                 DROP TRIGGER successor_admissions_no_delete;
                  DROP TRIGGER successor_admissions_no_update;
                  DROP TABLE successor_admissions;
                  DROP TRIGGER paired_shadow_domain_receipt_global_guard;
@@ -2045,6 +2059,9 @@ mod tests {
                     OR name LIKE 'paired_adapter_%'
                     OR name LIKE 'paired_domain_%'
                     OR name LIKE 'domain_shadows%'
+                    OR name IN ('cancellation_requests', 'cancellation_requests_no_update',
+                        'cancellation_requests_no_delete', 'cancellation_request_launched_guard',
+                        'trial_cancellation_success_guard', 'paired_cancellation_success_guard')
                  ORDER BY type, name",
             )
             .expect("prepare trust-boundary schema query")

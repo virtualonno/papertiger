@@ -95,6 +95,7 @@ pub(super) fn reconcile_lost_trial(
         "reason": "owned-process-absent",
         "absence_proof": proof,
         "reservation_charged": true,
+        "cancellation_request": crate::cancellation::cancellation_request(&transaction, crate::cancellation::CancellationTarget::Trial, trial_id)?,
     });
     transaction.execute(
         "UPDATE trials SET status='infrastructure_failed', outcome_json=?2, finished_at=?3

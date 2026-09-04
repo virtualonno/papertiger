@@ -32,6 +32,110 @@ fn local_runtime_refuses_a_sealed_campaign() {
 }
 
 #[test]
+fn cancellation_of_real_paired_run_settles_the_entire_cohort() {
+    use crate::cancellation::{CancellationTarget, cancellation_request, request_cancellation};
+    use std::time::{Duration, Instant};
+    let fixture = Fixture::with_cancellation_fixture(ContainmentGrade::WorkspaceOnly, true);
+    let spec = fixture.spec(
+        "cancel-cohort",
+        &fixture.baseline_id,
+        PairedCohort::NoOpCalibration,
+        NO_OP_SEED,
+        "cancel-cohort-budget",
+    );
+    prepare_paired_cohort(&fixture.connection, ACTOR, fixture.objects.path(), &spec).unwrap();
+    let run = paired_runs(&fixture.connection, &spec.cohort_id)
+        .unwrap()
+        .remove(0);
+    assert!(
+        request_cancellation(
+            &fixture.connection,
+            ACTOR,
+            CancellationTarget::PairedRun,
+            &run.execution_id,
+            "not launched"
+        )
+        .is_err()
+    );
+    let db = fixture._repository_owner.path().join("mise.sqlite");
+    let observer = crate::store::open_existing(&db).unwrap();
+    observer.busy_timeout(Duration::from_secs(1)).unwrap();
+    fixture
+        .connection
+        .busy_timeout(Duration::from_secs(1))
+        .unwrap();
+    let connection = fixture.connection;
+    let object_path = fixture.objects.path().to_path_buf();
+    let worker = std::thread::spawn(move || {
+        execute_next_paired_run(&connection, ACTOR, &object_path, "cancel-cohort")
+    });
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if paired_run(&observer, &run.execution_id)
+            .unwrap()
+            .unwrap()
+            .status
+            == PairedRunStatus::Launched
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "paired run did not launch");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let request = request_cancellation(
+        &observer,
+        "operator",
+        CancellationTarget::PairedRun,
+        &run.execution_id,
+        "stop this cohort",
+    )
+    .unwrap();
+    worker.join().unwrap().unwrap();
+    let record = paired_run(&observer, &run.execution_id).unwrap().unwrap();
+    assert_eq!(record.status, PairedRunStatus::InfrastructureFailed);
+    assert_eq!(record.failure_code.as_deref(), Some("operator-cancelled"));
+    assert_eq!(
+        paired_cohort(&observer, "cancel-cohort")
+            .unwrap()
+            .unwrap()
+            .status,
+        PairedCohortStatus::InfrastructureFailed
+    );
+    assert!(
+        crate::budget::budget_balances(&observer, &fixture.manifest.campaign_id)
+            .unwrap()
+            .iter()
+            .all(|b| b.reserved_amount == 0)
+    );
+    assert!(
+        adjudicate_paired_cohort(&observer, ACTOR, fixture.objects.path(), "cancel-cohort")
+            .is_err()
+    );
+    assert_eq!(
+        request_cancellation(
+            &observer,
+            ACTOR,
+            CancellationTarget::PairedRun,
+            &run.execution_id,
+            &request.reason
+        )
+        .unwrap(),
+        request
+    );
+    drop(observer);
+    let reopened = crate::store::open_existing(&db).unwrap();
+    assert_eq!(
+        cancellation_request(&reopened, CancellationTarget::PairedRun, &run.execution_id).unwrap(),
+        Some(request)
+    );
+    let receipt =
+        indexed_object(&reopened, record.execution_receipt_sha256.as_ref().unwrap()).unwrap();
+    let receipt: PairedFailureReceipt =
+        serde_json::from_slice(&read_object(fixture.objects.path(), &receipt).unwrap()).unwrap();
+    assert_eq!(receipt.failure_code, "operator-cancelled");
+}
+
+#[test]
 fn persisted_calibrations_and_research_adjudicate_only_from_reopened_receipts() {
     let fixture = Fixture::new();
     let no_op = fixture.spec(
@@ -347,9 +451,17 @@ impl Fixture {
     }
 
     fn new_with_containment(containment: ContainmentGrade) -> Self {
-        let connection = Connection::open_in_memory().expect("database");
-        init(&connection).expect("schema");
+        Self::with_cancellation_fixture(containment, false)
+    }
+
+    fn with_cancellation_fixture(containment: ContainmentGrade, cancellable: bool) -> Self {
         let repository_owner = tempdir().expect("repository owner");
+        let connection = if cancellable {
+            crate::store::open_for_init(repository_owner.path().join("mise.sqlite")).unwrap()
+        } else {
+            Connection::open_in_memory().expect("database")
+        };
+        init(&connection).expect("schema");
         let source = repository_owner.path().join("source");
         let runs = repository_owner.path().join("runs");
         std::fs::create_dir_all(source.join("src")).expect("source directory");
@@ -449,6 +561,20 @@ impl Fixture {
         };
         manifest.stop_rules.max_trials_without_qualified_improvement = 32;
         let mut plan = statistic_fixtures::plan();
+        if cancellable {
+            let binding = plan.trial_adapter.as_mut().unwrap();
+            binding.argv = vec![
+                binding.executable_locator.clone(),
+                "native_cleanup_family_descendant_helper".to_owned(),
+                "--ignored".to_owned(),
+                "--nocapture".to_owned(),
+            ];
+            binding
+                .environment
+                .insert("PAPERTIGER_MISE_EXECUTOR_HELPER".to_owned(), "1".to_owned());
+            binding.working_directory = canonical_or_pending_absolute(&source).unwrap();
+            binding.maximum_wall_time_ms = 5_000;
+        }
         plan.calibration_fixtures.no_op.locator =
             manifest.calibration.no_op.fixture_locator.clone();
         plan.calibration_fixtures.no_op.sha256 = manifest.calibration.no_op.fixture_sha256.clone();
