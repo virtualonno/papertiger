@@ -45,6 +45,7 @@ fn run() -> Result<(), String> {
         return Err("stdin is not a deterministic evaluator request".to_owned());
     }
     match mode.as_str() {
+        "cancellable" => std::thread::sleep(Duration::from_secs(30)),
         "success" => {}
         "stderr" => std::io::stderr()
             .write_all(b"warning that must not disappear")

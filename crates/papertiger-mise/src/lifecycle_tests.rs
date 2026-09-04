@@ -215,7 +215,12 @@ fn prepared_with_evaluator_request_and_frozen_rust_inputs(
     }
     git_run(&source, &["add", "."], None, None, None).expect("stage source");
     git_run(&source, &["commit", "-m", "frozen base"], None, None, None).expect("commit source");
-    let connection = Connection::open_in_memory().expect("database");
+    let connection = if evaluator_mode == "cancellable" {
+        crate::store::open_for_init(objects.path().join("mise.sqlite"))
+            .expect("file-backed cancellation fixture")
+    } else {
+        Connection::open_in_memory().expect("database")
+    };
     init(&connection).expect("schema");
     let mut manifest = crate::manifest::tests::valid_manifest();
     manifest.containment = crate::manifest::ContainmentGrade::WorkspaceOnly;
@@ -674,6 +679,214 @@ fn reserve_fixture_trial_budget(connection: &Connection, campaign_id: &str, rese
     .expect("trial reservation");
 }
 
+#[test]
+fn cancellation_survives_reopen_stops_real_trial_and_charges_once() {
+    use crate::cancellation::{CancellationTarget, cancellation_request, request_cancellation};
+    use std::time::{Duration, Instant};
+    let (connection, objects, candidate, _, _) =
+        prepared_trial_with_evaluator(8 * 1024, "cancellable");
+    reserve_fixture_trial_budget(
+        &connection,
+        &candidate.proposal.campaign_id,
+        "cancel-budget",
+    );
+    let db = objects.path().join("mise.sqlite");
+    let observer = crate::store::open_existing(&db).unwrap();
+    observer.busy_timeout(Duration::from_secs(1)).unwrap();
+    connection.busy_timeout(Duration::from_secs(1)).unwrap();
+    let spec = SupervisedTrialSpec {
+        trial_id: "cancel-trial".to_owned(),
+        campaign_id: candidate.proposal.campaign_id,
+        candidate_id: candidate.candidate_id,
+        reservation_id: "cancel-budget".to_owned(),
+        tier: "exploration".to_owned(),
+    };
+    let object_path = objects.path().to_path_buf();
+    let worker = std::thread::spawn(move || {
+        execute_workspace_trial(&connection, "supervisor", &object_path, &spec)
+    });
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let launched = loop {
+        if let Some(record) = trial(&observer, "cancel-trial").unwrap()
+            && record.status == TrialStatus::Launched
+        {
+            break record;
+        }
+        assert!(Instant::now() < deadline, "trial did not launch");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        crate::budget::release_unused_budget(
+            &observer,
+            "operator",
+            &launched.campaign_id,
+            "cancel-budget",
+            "cannot refund launched work"
+        )
+        .is_err()
+    );
+    let request = request_cancellation(
+        &observer,
+        "operator",
+        CancellationTarget::Trial,
+        "cancel-trial",
+        "operator stopped this experiment",
+    )
+    .unwrap();
+    drop(observer);
+    let reopened = crate::store::open_existing(&db).unwrap();
+    reopened.busy_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(
+        cancellation_request(&reopened, CancellationTarget::Trial, "cancel-trial").unwrap(),
+        Some(request.clone())
+    );
+    let error = worker
+        .join()
+        .unwrap()
+        .expect_err("cancelled work must not succeed");
+    assert!(
+        error.to_string().contains("operator-cancelled"),
+        "{error:#}"
+    );
+    let terminal = trial(&reopened, "cancel-trial").unwrap().unwrap();
+    assert_eq!(terminal.status, TrialStatus::InfrastructureFailed);
+    assert_eq!(
+        terminal.outcome.as_ref().unwrap()["cancellation_request"],
+        serde_json::to_value(&request).unwrap()
+    );
+    let balances = crate::budget::budget_balances(&reopened, &launched.campaign_id).unwrap();
+    assert!(balances.iter().all(|balance| balance.reserved_amount == 0));
+    assert_eq!(
+        balances
+            .iter()
+            .find(|b| b.resource == BudgetResource::Trials)
+            .unwrap()
+            .spent_amount,
+        1
+    );
+    assert_eq!(
+        request_cancellation(
+            &reopened,
+            "another-reader",
+            CancellationTarget::Trial,
+            "cancel-trial",
+            &request.reason
+        )
+        .unwrap(),
+        request
+    );
+    assert!(
+        request_cancellation(
+            &reopened,
+            "operator",
+            CancellationTarget::Trial,
+            "cancel-trial",
+            "different reason"
+        )
+        .is_err()
+    );
+    assert!(
+        crate::cancellation::ensure_not_cancelled(
+            &reopened,
+            CancellationTarget::Trial,
+            "cancel-trial"
+        )
+        .unwrap_err()
+        .is::<crate::cancellation::CancellationPending>()
+    );
+    assert_eq!(
+        crate::budget::budget_balances(&reopened, &launched.campaign_id).unwrap(),
+        balances
+    );
+    let recovered =
+        recover_workspace_trial(&reopened, "cold-reader", objects.path(), "cancel-trial").unwrap();
+    assert!(matches!(recovered, ColdRecoveryOutcome::AlreadyReconciled));
+}
+
+#[test]
+fn cancellation_guard_refuses_late_success_without_spending_or_measurements() {
+    use crate::cancellation::{CancellationTarget, request_cancellation};
+    let (connection, _objects, candidate, materialization, baseline) = prepared_trial();
+    reserve_fixture_trial_budget(
+        &connection,
+        &candidate.proposal.campaign_id,
+        "late-success-budget",
+    );
+    let intent = record_owned_fixture_trial(
+        &connection,
+        &candidate,
+        &materialization,
+        &baseline,
+        "late-success",
+        "late-success-budget",
+    );
+    assert!(
+        request_cancellation(
+            &connection,
+            "operator",
+            CancellationTarget::Trial,
+            "late-success",
+            "not launched"
+        )
+        .is_err()
+    );
+    mark_trial_launched(
+        &connection,
+        "test",
+        "late-success",
+        &TrialOwnership {
+            owner_uuid: intent.owner_uuid,
+            pid: 42,
+            process_birth_identity: "simulated-exited-process".to_owned(),
+            supervisor_identity: intent.supervisor_identity,
+        },
+    )
+    .unwrap();
+    let balances =
+        crate::budget::budget_balances(&connection, &candidate.proposal.campaign_id).unwrap();
+    request_cancellation(
+        &connection,
+        "operator",
+        CancellationTarget::Trial,
+        "late-success",
+        "request wins completion race",
+    )
+    .unwrap();
+    // Adversarially bypass the Rust completion check: the SQLite transition
+    // itself must still refuse a late successful writer after the request.
+    let error = connection.execute("UPDATE trials SET status='succeeded', outcome_json='{}', finished_at=?1 WHERE trial_id='late-success'", params![now()]).unwrap_err();
+    assert!(
+        error.to_string().contains("cancellation requested"),
+        "{error}"
+    );
+    assert_eq!(
+        trial(&connection, "late-success").unwrap().unwrap().status,
+        TrialStatus::Launched
+    );
+    assert_eq!(
+        crate::budget::budget_balances(&connection, &candidate.proposal.campaign_id).unwrap(),
+        balances
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT count(*) FROM measurements WHERE trial_id='late-success'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    assert!(
+        connection
+            .execute(
+                "DELETE FROM cancellation_requests WHERE trial_id='late-success'",
+                []
+            )
+            .is_err()
+    );
+}
+
 fn record_owned_fixture_trial(
     connection: &Connection,
     candidate: &BoundCandidate,
@@ -1015,6 +1228,25 @@ fn workspace_supervisor_owns_real_process_and_completion() {
         execute_workspace_trial(&connection, "workspace-supervisor", objects.path(), &spec)
             .expect("replay without execution");
     assert_eq!(replay.receipt, outcome.receipt);
+    assert!(
+        crate::cancellation::request_cancellation(
+            &connection,
+            "operator",
+            crate::cancellation::CancellationTarget::Trial,
+            "supervised-exploration",
+            "too late"
+        )
+        .is_err()
+    );
+    assert!(
+        crate::cancellation::cancellation_request(
+            &connection,
+            crate::cancellation::CancellationTarget::Trial,
+            "supervised-exploration"
+        )
+        .unwrap()
+        .is_none()
+    );
 }
 
 #[test]

@@ -455,6 +455,14 @@ pub fn execute_next_paired_run(
         Some(SupervisionHooks {
             launched: &mut launched,
             heartbeat: &mut heartbeat,
+            cancellation_requested: &mut || {
+                Ok(crate::cancellation::cancellation_request(
+                    connection,
+                    crate::cancellation::CancellationTarget::PairedRun,
+                    &run.execution_id,
+                )?
+                .is_some())
+            },
         }),
     )?;
     let execution = match execution {
@@ -543,14 +551,23 @@ pub fn execute_next_paired_run(
             capabilities: &execution.capabilities,
         },
     ) {
+        let cancelled = error.is::<crate::cancellation::CancellationPending>();
         return terminal_run_failure(
             connection,
             actor,
             object_root,
             &durable.record,
             &run,
-            PairedRunStatus::IntegrityFailed,
-            "execution-evidence-commit-failed",
+            if cancelled {
+                PairedRunStatus::InfrastructureFailed
+            } else {
+                PairedRunStatus::IntegrityFailed
+            },
+            if cancelled {
+                "operator-cancelled"
+            } else {
+                "execution-evidence-commit-failed"
+            },
             &format!("{error:#}"),
             Some(&execution.process_birth_identity),
             execution.elapsed_ms,
@@ -1482,6 +1499,11 @@ fn complete_paired_run(
     };
     let receipt_object = preserve_object(object_root, &serde_json::to_vec(&receipt)?)?;
     let transaction = begin_mutation(connection)?;
+    crate::cancellation::ensure_not_cancelled(
+        &transaction,
+        crate::cancellation::CancellationTarget::PairedRun,
+        &run.execution_id,
+    )?;
     for object in [&result_object, &domain_object, &receipt_object] {
         record_indexed_object(&transaction, object, "application/json")?;
     }
@@ -1560,8 +1582,9 @@ fn terminal_run_failure(
     };
     let receipt_object = preserve_object(object_root, &serde_json::to_vec(&receipt)?)?;
     let transaction = begin_mutation(connection)?;
-    record_indexed_object(&transaction, &stdout_object, "application/octet-stream")?;
-    record_indexed_object(&transaction, &stderr_object, "application/octet-stream")?;
+    // The receipt owns these raw stream pointers, as deterministic failure
+    // receipts do. Do not assign a second indexed media type to bytes that may
+    // already be candidate material (in particular an empty legacy no-op).
     record_indexed_object(&transaction, &receipt_object, "application/json")?;
     let changed = transaction.execute(
         "UPDATE paired_runs

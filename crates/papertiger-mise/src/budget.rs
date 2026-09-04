@@ -278,6 +278,43 @@ pub fn settle_budget(
     )
 }
 
+/// Release a reservation only before any lifecycle has bound it. The binding
+/// check and zero settlement share one writer transaction, so launch/intake
+/// cannot consume a reservation concurrently with its release.
+pub fn release_unused_budget(
+    connection: &Connection,
+    actor: &str,
+    campaign_id: &str,
+    reservation_id: &str,
+    reason: &str,
+) -> Result<SettlementOutcome> {
+    crate::validation::validate_nonblank("release reason (--reason)", reason)?;
+    let transaction = begin_mutation(connection)?;
+    let rows = reservation_rows(&transaction, campaign_id, reservation_id)?;
+    let settlements = rows
+        .iter()
+        .map(|row| BudgetSettlement {
+            resource: row.resource,
+            actual_amount: 0,
+        })
+        .collect::<Vec<_>>();
+    let note = format!("unused-reservation-released: {reason}");
+    let outcome = settle_budget_in(
+        &transaction,
+        actor,
+        SettlementTarget {
+            campaign_id,
+            reservation_id,
+            expected_binding: None,
+        },
+        SettlementMode::Measured,
+        &settlements,
+        Some(&note),
+    )?;
+    transaction.commit()?;
+    Ok(outcome)
+}
+
 pub(crate) struct BoundReservation<'a> {
     pub campaign_id: &'a str,
     pub reservation_id: &'a str,
@@ -876,6 +913,61 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn unused_release_is_zero_use_exact_replay_and_never_reusable() {
+        let connection = prepared();
+        let requests = [
+            BudgetRequest::new(BudgetResource::Trials, 1).unwrap(),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 700).unwrap(),
+        ];
+        reserve_budget(&connection, "operator", "budget-test", "unused", &requests).unwrap();
+        assert!(
+            release_unused_budget(&connection, "operator", "budget-test", "unused", " ").is_err()
+        );
+        assert_eq!(
+            release_unused_budget(
+                &connection,
+                "operator",
+                "budget-test",
+                "unused",
+                "preflight refused before binding"
+            )
+            .unwrap(),
+            SettlementOutcome::Settled
+        );
+        assert_eq!(
+            release_unused_budget(
+                &connection,
+                "operator",
+                "budget-test",
+                "unused",
+                "preflight refused before binding"
+            )
+            .unwrap(),
+            SettlementOutcome::Existing
+        );
+        assert!(
+            release_unused_budget(
+                &connection,
+                "operator",
+                "budget-test",
+                "unused",
+                "changed reason"
+            )
+            .is_err()
+        );
+        assert!(
+            reserve_budget(&connection, "operator", "budget-test", "unused", &requests).is_err()
+        );
+        assert!(
+            budget_balances(&connection, "budget-test")
+                .unwrap()
+                .iter()
+                .all(|b| b.reserved_amount == 0 && b.spent_amount == 0)
+        );
+        reserve_budget(&connection, "operator", "budget-test", "fresh", &requests).unwrap();
     }
 
     #[test]

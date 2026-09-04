@@ -5,6 +5,9 @@ use std::str::FromStr;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use papertiger_mise::budget::{BudgetRequest, BudgetResource, BudgetSettlement, SettlementMode};
+use papertiger_mise::cancellation::{
+    CancellationTarget, cancellation_request, request_cancellation,
+};
 use papertiger_mise::improvement;
 use papertiger_mise::manifest::{CampaignManifest, Sha256Digest};
 use papertiger_mise::{
@@ -212,6 +215,13 @@ enum BudgetCommand {
     },
     /// Display the cumulative ledger for one campaign.
     Show { campaign_id: String },
+    /// Release every resource at zero only if no lifecycle operation bound it.
+    Release {
+        campaign_id: String,
+        reservation_id: String,
+        #[arg(long)]
+        reason: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -264,6 +274,12 @@ enum CandidateCommand {
 
 #[derive(Subcommand)]
 enum TrialCommand {
+    /// Ask the live supervisor to stop a launched trial and retain failure evidence.
+    Cancel {
+        trial_id: String,
+        #[arg(long)]
+        reason: String,
+    },
     /// Execute one typed deterministic trial through the owned supervisor.
     Run {
         #[arg(long)]
@@ -289,6 +305,12 @@ enum TrialCommand {
 
 #[derive(Subcommand)]
 enum PairedCommand {
+    /// Ask the live supervisor to stop a launched run and conservatively settle its cohort.
+    Cancel {
+        execution_id: String,
+        #[arg(long)]
+        reason: String,
+    },
     /// Irrevocably bind one research candidate to a finite confirmation slot.
     ReserveSlot {
         campaign_id: String,
@@ -838,6 +860,21 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             println!("reservation {reservation_id} {outcome:?}");
         }
+        Command::Budget(BudgetCommand::Release {
+            campaign_id,
+            reservation_id,
+            reason,
+        }) => {
+            let connection = open_existing(&cli.db)?;
+            let outcome = papertiger_mise::budget::release_unused_budget(
+                &connection,
+                &cli.actor,
+                &campaign_id,
+                &reservation_id,
+                &reason,
+            )?;
+            println!("reservation {reservation_id} {outcome:?}");
+        }
         Command::Budget(BudgetCommand::Show { campaign_id }) => {
             let connection = open_existing(&cli.db)?;
             println!(
@@ -960,11 +997,28 @@ fn run(cli: Cli) -> Result<()> {
             let outcome = abandon_owned_trial(&connection, &cli.actor, &trial_id, &reason)?;
             println!("trial {trial_id} {outcome:?}");
         }
+        Command::Trial(TrialCommand::Cancel { trial_id, reason }) => {
+            let connection = open_existing(&cli.db)?;
+            let request = request_cancellation(
+                &connection,
+                &cli.actor,
+                CancellationTarget::Trial,
+                &trial_id,
+                &reason,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&request)?);
+        }
         Command::Trial(TrialCommand::Show { trial_id }) => {
             let connection = open_existing(&cli.db)?;
             let record = trial(&connection, &trial_id)?
                 .with_context(|| format!("unknown trial '{trial_id}'"))?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            let mut value = serde_json::to_value(record)?;
+            value["cancellation_request"] = serde_json::to_value(cancellation_request(
+                &connection,
+                CancellationTarget::Trial,
+                &trial_id,
+            )?)?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
         }
         Command::Paired(PairedCommand::Prepare { spec, objects }) => {
             let spec: PreparePairedCohortSpec = read_json(&spec)?;
@@ -1063,11 +1117,31 @@ fn run(cli: Cli) -> Result<()> {
                 serde_json::to_string_pretty(&paired_cohorts(&connection, &campaign_id)?)?
             );
         }
+        Command::Paired(PairedCommand::Cancel {
+            execution_id,
+            reason,
+        }) => {
+            let connection = open_existing(&cli.db)?;
+            let request = request_cancellation(
+                &connection,
+                &cli.actor,
+                CancellationTarget::PairedRun,
+                &execution_id,
+                &reason,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&request)?);
+        }
         Command::Paired(PairedCommand::ShowRun { execution_id }) => {
             let connection = open_existing(&cli.db)?;
             let record = paired_run(&connection, &execution_id)?
                 .with_context(|| format!("unknown paired run '{execution_id}'"))?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            let mut value = serde_json::to_value(record)?;
+            value["cancellation_request"] = serde_json::to_value(cancellation_request(
+                &connection,
+                CancellationTarget::PairedRun,
+                &execution_id,
+            )?)?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
         }
         Command::Paired(PairedCommand::ListRuns { cohort_id }) => {
             let connection = open_existing(&cli.db)?;
