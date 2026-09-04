@@ -30,7 +30,7 @@ fn project_root_binds_default_authority_from_an_unrelated_working_directory() {
         String::from_utf8_lossy(&before.stderr)
     );
     let before: Value = serde_json::from_slice(&before.stdout).expect("status JSON");
-    assert_eq!(before["schema"], "papertiger-mise.project-status.v1");
+    assert_eq!(before["schema"], "papertiger-mise.project-status.v2");
     assert_eq!(before["initialized"], false);
     for field in ["project_root", "database", "object_store"] {
         let rendered = before[field].as_str().expect("portable path field");
@@ -76,6 +76,61 @@ fn project_root_binds_default_authority_from_an_unrelated_working_directory() {
     assert_eq!(after["initialized"], true);
     assert_eq!(after["authority"]["campaign_count"], 0);
     assert_eq!(after["authority"]["open_reservation_count"], 0);
+}
+
+#[test]
+fn custom_authority_requires_explicit_objects_and_reports_only_presence() {
+    let fixture = tempdir().unwrap();
+    let project = fixture.path().join("consumer");
+    let caller = fixture.path().join("caller");
+    std::fs::create_dir_all(project.join("custom/objects")).unwrap();
+    std::fs::create_dir(&caller).unwrap();
+    let project_arg = project.to_str().unwrap();
+    let args = ["--project-root", project_arg, "--db", "custom/mise.sqlite"];
+    let missing = run(&[&args[..], &["status", "--json"]].concat(), &caller);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("status --objects <object-root>"));
+    let selected = [
+        &args[..],
+        &["status", "--objects", "custom/objects", "--json"],
+    ]
+    .concat();
+    let before = run(&selected, &caller);
+    assert!(
+        before.status.success(),
+        "{}",
+        String::from_utf8_lossy(&before.stderr)
+    );
+    let before: Value = serde_json::from_slice(&before.stdout).unwrap();
+    assert_eq!(before["initialized"], false);
+    assert!(
+        before["corrective_command"]
+            .as_str()
+            .unwrap()
+            .contains("custom/mise.sqlite")
+    );
+    let initialized = run(&[&args[..], &["init"]].concat(), &caller);
+    assert!(initialized.status.success());
+    let after = run(&selected, &caller);
+    assert!(after.status.success());
+    let after: Value = serde_json::from_slice(&after.stdout).unwrap();
+    assert_eq!(after["initialized"], true);
+    assert_eq!(after["object_store_present"], true);
+    assert_eq!(after["object_store_check"], "directory_presence_only");
+    assert!(
+        after["object_store"]
+            .as_str()
+            .unwrap()
+            .ends_with("/custom/objects")
+    );
+    assert!(!project.join("state").exists());
+    assert!(!caller.join("state").exists());
+    let not_directory = run(
+        &[&args[..], &["status", "--objects", "custom/mise.sqlite"]].concat(),
+        &caller,
+    );
+    assert!(!not_directory.status.success());
+    assert!(String::from_utf8_lossy(&not_directory.stderr).contains("intended directory"));
 }
 
 #[test]

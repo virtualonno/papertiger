@@ -54,6 +54,10 @@ enum Command {
     Status {
         #[arg(long)]
         json: bool,
+        /// Object root to inspect. Required with a custom database; presence
+        /// does not prove that its content matches the authority's CAS objects.
+        #[arg(long)]
+        objects: Option<PathBuf>,
     },
     /// Report portable supervision availability and non-authoritative native diagnostics.
     ExecutionStatus,
@@ -124,6 +128,7 @@ struct ProjectStatus {
     object_store: String,
     initialized: bool,
     object_store_present: bool,
+    object_store_check: &'static str,
     authority: Option<papertiger_mise::AuthorityStatus>,
     corrective_command: Option<String>,
 }
@@ -568,22 +573,42 @@ fn run(cli: Cli) -> Result<()> {
                 );
             }
         },
-        Command::Status { json } => {
+        Command::Status { json, objects } => {
             let database = absolute_from(&project_root, &cli.db);
-            let object_store = project_root.join("state/papertiger-mise-objects");
-            if database.exists() && !database.is_file() {
+            let object_store = match objects {
+                Some(path) => absolute_from(&project_root, &path),
+                None => {
+                    let default_database = project_root.join("state/papertiger-mise.sqlite");
+                    if portable_absolute(&database)? != portable_absolute(&default_database)? {
+                        bail!(
+                            "status cannot infer an object store for custom database {}; pass `status --objects <object-root>`",
+                            database.display()
+                        );
+                    }
+                    project_root.join("state/papertiger-mise-objects")
+                }
+            };
+            let database_metadata = status_metadata(&database)?;
+            let object_metadata = status_metadata(&object_store)?;
+            if database_metadata
+                .as_ref()
+                .is_some_and(|metadata| !metadata.is_file())
+            {
                 bail!(
                     "Mise database path {} exists but is not a file; pass the intended database with --db",
                     database.display()
                 );
             }
-            if object_store.exists() && !object_store.is_dir() {
+            if object_metadata
+                .as_ref()
+                .is_some_and(|metadata| !metadata.is_dir())
+            {
                 bail!(
-                    "Mise object-store path {} exists but is not a directory; move it aside or restore the intended object store",
+                    "Mise object-store path {} exists but is not a directory; pass `status --objects <object-root>` with the intended directory",
                     object_store.display()
                 );
             }
-            let initialized = database.is_file();
+            let initialized = database_metadata.is_some();
             let authority = if initialized {
                 let connection = open_existing_read_only(&database)?;
                 Some(authority_status(&connection, 10)?)
@@ -591,20 +616,22 @@ fn run(cli: Cli) -> Result<()> {
                 None
             };
             let project_root_identity = portable_absolute(&project_root)?;
+            let database_identity = portable_absolute(&database)?;
             let corrective_command = (!initialized).then(|| {
                 format!(
-                    "papertiger-mise --project-root \"{}\" init",
-                    project_root_identity
+                    "papertiger-mise --project-root \"{}\" --db \"{}\" init",
+                    project_root_identity, database_identity
                 )
             });
             let status = ProjectStatus {
-                schema: "papertiger-mise.project-status.v1",
+                schema: "papertiger-mise.project-status.v2",
                 version: env!("CARGO_PKG_VERSION"),
                 project_root: project_root_identity,
-                database: portable_absolute(&database)?,
+                database: database_identity,
                 object_store: portable_absolute(&object_store)?,
                 initialized,
-                object_store_present: object_store.is_dir(),
+                object_store_present: object_metadata.is_some(),
+                object_store_check: "directory_presence_only",
                 authority,
                 corrective_command,
             };
@@ -1297,7 +1324,10 @@ fn absolute_from(root: &std::path::Path, path: &std::path::Path) -> PathBuf {
 fn print_project_status(status: &ProjectStatus) {
     println!("project {}", status.project_root);
     println!("database {}", status.database);
-    println!("object store {}", status.object_store);
+    println!(
+        "object store {} (directory present: {}; content not verified)",
+        status.object_store, status.object_store_present
+    );
     let Some(authority) = &status.authority else {
         println!("authority uninitialized");
         if let Some(command) = &status.corrective_command {
@@ -1340,6 +1370,19 @@ fn print_project_status(status: &ProjectStatus) {
     }
     if authority.recent_campaigns_truncated {
         println!("(older campaigns omitted)");
+    }
+}
+
+fn status_metadata(path: &std::path::Path) -> Result<Option<std::fs::Metadata>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "inspect {}; pass a readable --db or --objects path",
+                path.display()
+            )
+        }),
     }
 }
 
