@@ -1071,15 +1071,9 @@ mod tests {
             init_repository(&source);
             manifest.source = inspect_source_binding(&source).expect("source binding");
 
-            let judge = std::fs::canonicalize(std::env::current_exe().expect("test executable"))
-                .expect("canonical test executable");
-            manifest.generation.outer_judge_executable_locator =
-                portable_absolute(&judge).expect("judge locator");
             manifest.generation.proposal_policy_locator = "policy.json".to_owned();
             let policy = b"{\"policy\":\"bounded\"}";
             std::fs::write(control.join("policy.json"), policy).expect("policy");
-            manifest.generation.outer_judge_executable_sha256 =
-                digest(&std::fs::read(&judge).expect("judge bytes"));
             manifest.generation.proposal_policy_sha256 = digest(policy);
 
             let manifest_path = control.join("campaign.json");
@@ -1183,10 +1177,8 @@ mod tests {
             let mut manifest: CampaignManifest =
                 serde_json::from_slice(&std::fs::read(&self.manifest_path).expect("read manifest"))
                     .expect("parse manifest");
-            let executable =
-                std::fs::canonicalize(std::env::current_exe().expect("test executable"))
-                    .expect("canonical test executable");
-            let executable_bytes = std::fs::read(&executable).expect("test executable bytes");
+            let (executable, executable_sha256) =
+                crate::manifest::tests::test_executable_identity().clone();
             manifest.source = inspect_source_binding(&self.source).expect("source binding");
             manifest.mutation_scope.protected_paths.extend([
                 ".cargo".to_owned(),
@@ -1194,10 +1186,10 @@ mod tests {
                 "vendor".to_owned(),
             ]);
             manifest.evaluator.rust_build_environment = Some(RustBuildEnvironment {
-                cargo_executable_locator: portable_absolute(&executable).expect("Cargo locator"),
-                cargo_executable_sha256: digest(&executable_bytes),
-                rustc_executable_locator: portable_absolute(&executable).expect("rustc locator"),
-                rustc_executable_sha256: digest(&executable_bytes),
+                cargo_executable_locator: executable.clone(),
+                cargo_executable_sha256: executable_sha256.clone(),
+                rustc_executable_locator: executable.clone(),
+                rustc_executable_sha256: executable_sha256.clone(),
                 toolchain: "1.95.0".to_owned(),
                 lockfile_locator: "Cargo.lock".to_owned(),
                 lockfile_sha256: digest(
@@ -1211,8 +1203,8 @@ mod tests {
                 vendored_sources_tree: git_stdout(&self.source, &["rev-parse", "HEAD:vendor"]),
                 linker: Some(RustLinkerBinding {
                     target_triple: "x86_64-unknown-linux-gnu".to_owned(),
-                    executable_locator: portable_absolute(&executable).expect("linker locator"),
-                    executable_sha256: digest(&executable_bytes),
+                    executable_locator: executable,
+                    executable_sha256,
                 }),
             });
             self.write_and_commit_manifest(&manifest, "bind frozen Rust build inputs");
