@@ -1524,17 +1524,27 @@ pub(crate) mod tests {
             .replace('\\', "/")
     }
 
+    pub(crate) fn test_executable_identity() -> &'static (String, Sha256Digest) {
+        // Only fixture construction shares this immutable binary identity.
+        // Admission and runtime integrity checks still read and hash live bytes.
+        static JUDGE: std::sync::OnceLock<(String, Sha256Digest)> = std::sync::OnceLock::new();
+        JUDGE.get_or_init(|| {
+            let judge = std::fs::canonicalize(std::env::current_exe().expect("test executable"))
+                .expect("canonical test executable");
+            let judge_text = judge.to_string_lossy();
+            let judge_locator = judge_text
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&judge_text)
+                .replace('\\', "/");
+            let judge_sha256 = Sha256Digest(sha256(
+                &std::fs::read(&judge).expect("test executable bytes"),
+            ));
+            (judge_locator, judge_sha256)
+        })
+    }
+
     pub(crate) fn valid_manifest() -> CampaignManifest {
-        let judge = std::fs::canonicalize(std::env::current_exe().expect("test executable"))
-            .expect("canonical test executable");
-        let judge_text = judge.to_string_lossy();
-        let judge_locator = judge_text
-            .strip_prefix(r"\\?\")
-            .unwrap_or(&judge_text)
-            .replace('\\', "/");
-        let judge_sha256 = Sha256Digest(sha256(
-            &std::fs::read(&judge).expect("test executable bytes"),
-        ));
+        let (judge_locator, judge_sha256) = test_executable_identity().clone();
         CampaignManifest {
             schema: CAMPAIGN_SCHEMA_V1.to_owned(),
             campaign_id: "fixture-rsi-1".to_owned(),

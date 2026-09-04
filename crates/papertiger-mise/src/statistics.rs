@@ -1733,8 +1733,8 @@ pub(crate) mod tests {
     }
 
     fn fixture_trial_adapter() -> crate::adapter::PairedAdapterBinding {
-        let executable = std::fs::canonicalize(std::env::current_exe().expect("test executable"))
-            .expect("canonical test executable");
+        let (executable_locator, executable_sha256) =
+            crate::manifest::tests::test_executable_identity().clone();
         let working_directory =
             std::fs::canonicalize(std::env::current_dir().expect("test working directory"))
                 .expect("canonical test working directory");
@@ -1744,12 +1744,9 @@ pub(crate) mod tests {
                 .unwrap_or(&path.to_string_lossy())
                 .replace('\\', "/")
         };
-        let executable_locator = portable(&executable);
         crate::adapter::PairedAdapterBinding {
             schema: crate::adapter::PAIRED_ADAPTER_BINDING_SCHEMA_V1.to_owned(),
-            executable_sha256: Sha256Digest(sha256(
-                &std::fs::read(&executable).expect("read test executable"),
-            )),
+            executable_sha256,
             argv: vec![executable_locator.clone()],
             executable_locator,
             working_directory: portable(&working_directory),
