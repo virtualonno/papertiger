@@ -1,14 +1,23 @@
 # Papertiger Mise
 
-Papertiger Mise is Papertiger's project-generic framework for recursively
-verified agent improvement. Its practical mission is to make sustained
-autonomous engineering more effective without confusing repeated
-experimentation with trustworthy improvement. It treats source changes,
-proposal policies, adapters, evaluators, and future Mise runtimes as versioned
-candidates in finite, evidence-producing campaigns. Candidate proposal is
-currently external: an agent or adapter supplies each immutable proposal, Mise
-judges it, and a separate operator path owns promotion. Mise is not yet an
-autonomous proposal policy or a self-authorizing deployment loop.
+Papertiger Mise evaluates immutable candidates in finite campaigns. It freezes
+the judge, fixtures, objective portfolio, and budget; runs calibrated trials;
+retains failures and measurements; and derives development nominations from
+reopened evidence. Its useful local scope is trusted Git-backed engineering
+with deterministic or fixed-sample paired evaluation.
+
+Candidate proposal belongs to the operator or an external agent. Mise does not
+select planner tasks, invoke an agent provider, or decide which project should
+change next. The external caller may propose another candidate within the
+admitted budget, or stop. Planning intent, domain truth, independent review,
+integration, and promotion keep their own owners.
+
+Use a campaign when several plausible candidates need comparison under a
+defensible fixed evaluator. A known fix with a decisive regression test usually
+needs ordinary engineering and review. A synthetic lifecycle score demonstrates
+protocol operation; it establishes no product improvement. Sealed execution,
+mutable external fixtures, and production promotion remain unavailable until
+their separate evidence and executor boundaries are implemented and proved.
 
 The name refers to *mise en abyme*: an improvement process can itself become an
 object of improvement. This recursion is deliberately generational rather than
@@ -122,6 +131,14 @@ quantitative and declare a nonzero `minimum_practical_change`; boolean outcomes
 belong only in hard constraints. This prevents a development campaign from
 qualifying on feature presence, command success, or another self-certifying
 yes/no proxy.
+
+Resource observations currently have metric names, units, and values, but the
+generic schemas do not bind the measured process, workload cardinality, phase,
+cache state, or cost category. Brief `resource_costs` entries are orientation
+text. Until typed provenance connects the brief, manifest, and retained
+observation, operators must review that linkage independently: compiler or test
+harness cost cannot establish product-runtime performance, and a numerical
+threshold alone is not a justified acceptance requirement.
 
 A targeted structural campaign may use an exact target-module measurement as
 its primary objective, but it must retain the repository-wide largest-module
@@ -415,10 +432,15 @@ the common `papertiger-mise.portable-local-supervision.v1` contract. The
 `papertiger-mise execution-status` command reports the same separation: local
 supervision is available, adversarial isolation is not.
 
-This checkout has direct runtime evidence on Windows and Linux. macOS shares
-the compiled POSIX implementation and is present in the CI matrix, but no
-macOS runner receipt is retained in this repository yet; release claims must
-not call the three-platform contract verified until that job actually runs.
+Native executor and process-birth tests passed on Windows, Linux, and Apple
+Silicon macOS at revision `4df138c08d25918084ec597a63934e31ea7699c0` in
+[release run 33310292508](https://github.com/virtualonno/papertiger/actions/runs/33310292508).
+The Apple Silicon job ran four executor tests and one process-identity test;
+its two ignored executor cases are subprocess helpers exercised by those tests.
+Intel macOS passed the separate packaged lifecycle without repeating the native
+process test subset.
+This establishes the released local-supervision boundary. It does not attest
+sealed isolation or verify subsequent changes.
 
 WorkspaceOnly campaigns therefore require unrestricted network policy and
 cannot declare native process-count or memory limits. They revalidate candidate,
@@ -470,11 +492,11 @@ domain work into immutable candidate materialization, evaluator invocations,
 typed measurements, and evidence locators. It does not move domain authority
 into Papertiger.
 
-For Minetiger and Chimera, Mise owns candidate lineage, detached workspace
-handling, schedules, retries, cumulative budgets, portable local supervision,
-resource leases, generic process telemetry, comparison, classification,
-negative-evidence retention, and nomination. Only a separately attested worker
-may own resource or access isolation. Minetiger retains Minecraft target identity, loader/JDK and
+For a Minetiger or Chimera adapter, Mise can own candidate lineage, detached
+workspace handling, schedules, cumulative budgets, portable local supervision,
+comparison, classification, negative-evidence retention, and development
+nomination. Exclusive accelerator leases and isolated sessions require a
+separately attested worker; the local runtime supplies neither. Minetiger retains Minecraft target identity, loader/JDK and
 content selection, session construction, readiness and failure-marker meaning,
 rendering correctness, in-process GPU and frame telemetry, scaled raw metric
 extraction, and dedicated-server proof. Its existing campaign and verdict
@@ -503,6 +525,15 @@ These two adapters are intentionally unlike each other. Chimera exercises Git
 source and runtime benchmarking; Ghidramink exercises a live, capability-bound
 program mutation system. Project-generic behavior belongs in Mise only after it
 survives both boundaries without importing either domain's assumptions.
+
+Repeated evaluation against a mutable external thread, issue, or database row
+also needs a domain-owned input boundary. Frozen Git fixture hashes do not prove
+that previous candidate or judge outputs are absent from a live object. Until
+an adapter supplies independently checked input-only snapshots or fresh
+equivalent objects, those repetitions cannot establish independent evidence.
+Textual similarity alone is not a contamination detector. Immutable exported
+fixtures can use the existing local-file contract with their inference scope
+limited to those snapshots.
 
 New campaigns use a CAS-bound candidate-material envelope. The manifest freezes
 its kind, protocol, and media type; the envelope binds its canonical typed
@@ -558,6 +589,34 @@ the full bound reservation atomically. It explicitly records that no process-
 absence claim was made; launched work instead requires `trial recover` and its
 OS-derived process observation.
 
+`trial cancel <trial> --reason <reason>` and `paired cancel <execution> --reason
+<reason>` record an immutable cooperative request for a launched execution. The
+live supervisor polls that authority, stops its process through the same private
+native cleanup adapter, and retains `operator-cancelled` failure evidence. A
+request that commits before completion prevents success in the same database
+transaction; completion that commits first refuses a later request. Exact reason
+replay returns the original request, including after restart and settlement.
+`trial show` and `paired show-run` include the recorded request.
+
+Cancellation is terminal non-qualification: deterministic trials become
+`infrastructure_failed`, and a paired cancellation fails the entire cohort.
+Their bound reservations are conservatively charged, including failure and
+disclosure capacity. The request alone claims neither process absence nor
+completed cleanup. If its supervisor has died, use the existing birth-bound
+`recover` command once the evaluator is absent. An ambiguous `owned` trial still
+requires `trial abandon`; cancellation accepts only a durably launched target.
+
+`budget release <campaign> <reservation> --reason <reason>` instead releases all
+resources at zero when no lifecycle operation has ever bound that reservation.
+The binding check and settlement are atomic. Releasing bound candidate,
+materialization, trial, or paired-cohort work refuses; released identifiers
+cannot be reserved again. This makes prelaunch refusal recoverable without
+claiming that already bound or launched work used no resources.
+
+Cancellation requires Mise schema v9. Upgrade an existing authority deliberately
+with `papertiger-mise --db <database> init`; read commands never migrate it and
+older binaries refuse this schema rather than ignore cancellation requests.
+
 Every campaign has a finite deadline, cumulative resource caps, failure caps,
 and a no-improvement stopping rule. Sequential early stopping is permitted only
 when the declared analysis method remains valid under continuous observation.
@@ -581,6 +640,15 @@ root regardless of the agent's caller directory. The consumer owns
 `state/papertiger-mise-objects/sha256`; the tool installation owns neither.
 `papertiger-mise --project-root <consumer> status --json` is bounded and
 read-only. `init` is the only authority creation or migration step.
+
+For a custom `--db`, `status` requires `--objects <object-root>` because the
+database has no stored CAS-root binding. Project-status v2 names the selected
+paths and labels the object check `directory_presence_only`; a present directory
+is not verified evidence or a claim that it belongs to that database. Use the
+existing object, candidate, cohort, and nomination inspection commands to
+reopen the specific relied-upon bytes. Filesystem inspection errors refuse
+instead of reporting absence, and missing-database guidance retains the exact
+selected database.
 
 This is intentionally asymmetric with the durable planner: `papertiger
 setup-project` installs the planner binary, its harness-neutral operating
@@ -670,6 +738,7 @@ papertiger-mise promotion verify-parent --nomination <id> --successor-manifest <
 papertiger-mise campaign admit-successor <manifest.json> --parent-nomination <id> --gate-binding <binding.json> --papertiger-db <db> --objects <object-root>
 papertiger-mise campaign show-successor <campaign>
 papertiger-mise budget reserve <campaign> <reservation> --amount <resource>=<n>
+papertiger-mise budget release <campaign> <reservation> --reason <reason>
 papertiger-mise candidate build-material --repository <repo> --base-tree <tree> --result-tree <tree> --output <file>
 papertiger-mise candidate record --proposal <proposal.json> --material <material.json> --reservation <id>
 papertiger-mise candidate materialize <candidate> --reservation <id> --worktree <path>
@@ -678,6 +747,7 @@ papertiger-mise candidate show <candidate>
 papertiger-mise candidate adjudicate <candidate>
 papertiger-mise trial run --spec <trial.json>
 papertiger-mise trial recover <trial> --objects <object-root>
+papertiger-mise trial cancel <trial> --reason <reason>
 papertiger-mise trial abandon <trial> --reason <reason>
 papertiger-mise trial show <trial>
 papertiger-mise paired reserve-slot <campaign> <candidate> <slot> --seed <file>
@@ -686,6 +756,7 @@ papertiger-mise paired run-next <cohort> --objects <object-root>
 papertiger-mise paired adjudicate <cohort> --objects <object-root>
 papertiger-mise paired derive-nomination <research-cohort> --no-op <cohort> --known-bad <cohort> --objects <object-root>
 papertiger-mise paired recover <execution> --objects <object-root>
+papertiger-mise paired cancel <execution> --reason <reason>
 papertiger-mise paired list-cohorts <campaign>
 papertiger-mise paired show-cohort <cohort>
 papertiger-mise paired list-runs <cohort>

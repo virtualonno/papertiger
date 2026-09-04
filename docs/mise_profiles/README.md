@@ -42,6 +42,20 @@ quantitative primary, distinct correctness and compatibility hard constraints,
 and protected countermetrics; results remain per-objective rather than a
 weighted scalar.
 
+Resource-cost prose currently carries no typed measurement provenance. A
+reviewer must distinguish the measured subject (product, compiler, harness, or
+external service), workload and cardinality, phase, host, cache state, units,
+and aggregation before using a cost as a constraint. The brief compiler cannot
+enforce that correspondence with later trial observations. A successful draft
+therefore establishes neither resource acceptance nor performance improvement.
+
+Proposal and follow-up decisions belong to the external operator or agent.
+The proposed task graph is advisory draft content; there is no built-in
+task-selecting controller. Generic templates do not require a proposal provider
+or access to a mutable external issue or chat. Such a fixture needs its own
+input-only snapshot and independence proof before repeated observations can
+support a behavioral claim.
+
 `example-project.runtime-readiness.brief.json` is deliberately unresolved: its
 checkout is marked dirty and its sealed fixture and native environment are
 unavailable. This lets tests prove that compilation refuses incomplete input.
