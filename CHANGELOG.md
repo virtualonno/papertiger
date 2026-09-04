@@ -21,6 +21,13 @@ All notable user-visible changes are documented here. Papertiger follows
   optional hashes and notes. References do not fetch external state or satisfy gates.
 - `schema` prints the bundled JSON Schema for planner context, status, task lists,
   history, recovery dumps, and mutation receipts without opening an authority.
+- Mise `trial cancel` and `paired cancel` accept `--reason` to request cancellation
+  of launched work. The live supervisor stops the process and records failure;
+  the request alone does not prove cleanup. Cancelled work cannot qualify and its
+  bound reservation is charged. A dead supervisor still requires `recover`.
+- Mise `budget release <campaign> <reservation> --reason <reason>` releases an
+  unused reservation at zero cost. It refuses reservations already bound to
+  lifecycle work, and released reservation identifiers cannot be reused.
 
 ### Changed
 
@@ -34,6 +41,18 @@ All notable user-visible changes are documented here. Papertiger follows
   and compact related-task summaries. Read each related task explicitly for its
   intent and result. The record remains local planning data requiring editorial
   review before publication.
+- Mise cancellation requires authority schema v9. Run
+  `papertiger-mise --db <database> init` explicitly to migrate; older binaries
+  refuse the new authority.
+- Mise `status --json` emits `papertiger-mise.project-status.v2`. A custom
+  `--db` requires `status --objects <object-root>` because the authority does not
+  bind its object-store location. The status reports directory presence only;
+  it does not verify the stored evidence.
+
+### Fixed
+
+- Mise candidate authoring uses portable Git paths when creating worktrees,
+  including repositories in Windows paths with spaces.
 
 ## [0.11.0] - 2026-08-30
 
