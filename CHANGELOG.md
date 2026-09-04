@@ -6,6 +6,35 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Added
+
+- Planner mutations accept `--json`, returning committed events and task/plan
+  snapshots in `papertiger.mutation.v1` so clients can create dependent tasks
+  without parsing prose. Concurrent writers cannot enter another command's receipt.
+- Optional `--model` or `PAPERTIGER_MODEL` records caller-reported event authorship
+  separately from actor and meaning source. Creation, completion, and disposition
+  history expose it; unknown historical models remain unset.
+- `move-plan <tasks> --plan <destination> --why <reason>` atomically moves an
+  explicit related set while preserving identity, obligations, and original event
+  plans. Partial selections refuse with the missing task selectors.
+- `reference add|remove|list|find` records exact inward artifact locators with
+  optional hashes and notes. References do not fetch external state or satisfy gates.
+- `schema` prints the bundled JSON Schema for planner context, status, task lists,
+  history, recovery dumps, and mutation receipts without opening an authority.
+
+### Changed
+
+- Planner schema v9 requires explicit `init` after archiving an export with the
+  previous release. Current recovery uses `papertiger.dump.v8`; restore older
+  dumps with their matching release, migrate the temporary authority, and re-export.
+  Plan-scoped exports retain moved tasks' original history and required former-plan
+  definitions, and refuse missing task identities instead of omitting history.
+  Older planner binaries refuse the new authority.
+- `show --json` emits `papertiger.task_context.v6`, with full selected-task details
+  and compact related-task summaries. Read each related task explicitly for its
+  intent and result. The record remains local planning data requiring editorial
+  review before publication.
+
 ## [0.11.0] - 2026-08-30
 
 This release establishes the planner, receipt-bound project integration, evidence verification,

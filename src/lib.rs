@@ -24,7 +24,11 @@ pub use evidence_projection::{
 };
 mod path_identity;
 pub use path_identity::portable_absolute;
+mod mutation;
 mod read_model;
+pub use mutation::{MutationEvent, MutationReceipt, MutationRecorder, validate_model};
+mod plan_move;
+pub use plan_move::move_tasks_to_plan;
 pub use read_model::{
     ActivityEvent, AuthorityInfo, EventCursor, EventLog, EventRecord, PlanStatus, StatusInProgress,
     StatusProjection, StatusReadyTask, StatusResponse, StatusTask, TaskActivity, TaskCounts,
@@ -34,9 +38,15 @@ pub use read_model::{
 mod search;
 pub use search::{SearchExcerpt, SearchHit, SearchResponse, search_tasks};
 mod commit_association;
+mod external_reference;
 pub use commit_association::{
     CommitAssociation, CommitAssociationMatch, add_commit_association, commit_associations,
     find_commit_associations, remove_commit_association,
+};
+pub use external_reference::{
+    ExternalReference, REFERENCE_KINDS, ReferenceMatch, add_external_reference,
+    external_references, find_external_references, new_external_reference,
+    remove_external_reference,
 };
 mod mise_projection;
 mod mise_projection_contract;
@@ -51,7 +61,7 @@ pub use mise_projection_contract::{
     MiseSourceProjection,
 };
 
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.planner";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
 pub const TASK_DEFINITION_REVISION_SCHEMA: &str = "papertiger.task_definition_revision.v1";
@@ -426,6 +436,7 @@ CREATE INDEX idx_events_entity_seq ON events(entity_seq, event_id);
 CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, commit_oid);
 "#,
     )?;
+    tx.execute_batch(external_reference::REFERENCE_SCHEMA)?;
     tx.execute_batch(mise_projection::MISE_PROJECTION_SCHEMA_V4)?;
     tx.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -563,6 +574,12 @@ ALTER TABLE tasks
         )?;
         version = 8;
     }
+    if version == 8 {
+        // Older readers filter task history by its former plan and would lose
+        // relocated events. This semantic boundary requires explicit migration.
+        tx.execute_batch(external_reference::REFERENCE_SCHEMA)?;
+        version = 9;
+    }
     if version != SCHEMA_VERSION {
         bail!("no papertiger migration path from schema v{from} to v{SCHEMA_VERSION}");
     }
@@ -614,6 +631,15 @@ fn record_event_in_mutation(
     why: Option<&str>,
     payload: Option<&serde_json::Value>,
 ) -> Result<()> {
+    let mut payload = payload.cloned();
+    if let Some(model) = mutation::current_model(tx)? {
+        let object = payload.get_or_insert_with(|| serde_json::json!({}));
+        object
+            .as_object_mut()
+            .context("event payload must be an object to record model attribution")?
+            .insert("model".into(), model.into());
+    }
+    mutation::payload_model(payload.as_ref())?;
     let (entity_plan, entity_seq, gate_name): (Option<String>, Option<i64>, Option<String>) =
         match (entity, entity_id) {
             ("plan", Some(plan_id)) => (
@@ -661,9 +687,10 @@ fn record_event_in_mutation(
             gate_name,
             kind,
             why,
-            payload.map(|p| p.to_string())
+            payload.as_ref().map(|p| p.to_string())
         ],
     )?;
+    mutation::capture_event(tx, tx.last_insert_rowid())?;
     Ok(())
 }
 
@@ -688,9 +715,9 @@ pub struct Task {
     pub priority: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     pub plan_id: i64,
     pub slug: String,
     pub title: String,
@@ -1345,6 +1372,9 @@ pub(crate) fn valid_task_definition_revision_payload(value: &serde_json::Value) 
                 value.is_null() || value.as_i64().is_some_and(|parent_seq| parent_seq > 0)
             }),
             "priority" => before.is_i64() && after.is_i64(),
+            "plan" => [before, after]
+                .into_iter()
+                .all(|value| value.as_str().is_some_and(|slug| !slug.trim().is_empty())),
             _ => false,
         }
     })
@@ -2736,14 +2766,15 @@ pub struct TaskContext {
     pub plan: Plan,
     pub task: Task,
     pub tags: Vec<String>,
-    pub parent: Option<Task>,
-    pub replacement: Option<Task>,
-    pub dependencies: Vec<Task>,
-    pub dependents: Vec<Task>,
-    pub children: Vec<Task>,
+    pub parent: Option<TaskSummary>,
+    pub replacement: Option<TaskSummary>,
+    pub dependencies: Vec<TaskSummary>,
+    pub dependents: Vec<TaskSummary>,
+    pub children: Vec<TaskSummary>,
     pub blockers: Vec<TaskBlocker>,
     pub gates: Vec<GateRecord>,
     pub commit_associations: Vec<CommitAssociation>,
+    pub external_references: Vec<ExternalReference>,
     pub activity: TaskActivity,
     pub mise_projections: Vec<TaskMiseProjectionSummary>,
     pub immediate_unlock_count: usize,
@@ -2838,17 +2869,18 @@ pub fn task_context(conn: &Connection, seq: i64) -> Result<TaskContext> {
     let recent_events = recent_event_log.events;
 
     Ok(TaskContext {
-        schema: "papertiger.task_context.v5".into(),
+        schema: "papertiger.task_context.v6".into(),
         plan,
         tags,
-        parent,
-        replacement,
-        dependencies,
-        dependents,
-        children,
+        parent: parent.as_ref().map(TaskSummary::from),
+        replacement: replacement.as_ref().map(TaskSummary::from),
+        dependencies: dependencies.iter().map(TaskSummary::from).collect(),
+        dependents: dependents.iter().map(TaskSummary::from).collect(),
+        children: children.iter().map(TaskSummary::from).collect(),
         blockers: task_blockers(conn, task.task_id)?,
         gates,
         commit_associations: commit_associations(conn, task.seq)?,
+        external_references: external_references(conn, task.seq)?,
         activity: task_activity(conn, task.seq)?,
         mise_projections: task_mise_projection_summaries(conn, task.seq)?,
         immediate_unlock_count: immediate_unlock_count(conn, task.task_id)?,
@@ -3111,6 +3143,7 @@ pub fn ready_tasks(
     Ok(ready)
 }
 
+#[derive(Serialize)]
 pub struct AuditFinding {
     pub kind: String,
     pub detail: String,
@@ -3422,6 +3455,9 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
             (_, "note") => Some("meaning_source"),
             _ => None,
         };
+        if let Err(error) = mutation::payload_model(parsed_payload.as_ref()) {
+            push("invalid_event_model", format!("event {event_id}: {error}"));
+        }
         if let Some(field) = meaning_source_field
             && let Some(value) = parsed_payload
                 .as_ref()
@@ -3877,6 +3913,17 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         );
     }
 
+    if let Err(error) = plan_move::audit_plan_history(conn) {
+        push("invalid_event_plan_history", error.to_string());
+    }
+    let mut reference_tasks = conn.prepare("SELECT DISTINCT t.seq FROM external_references r JOIN tasks t ON t.task_id=r.task_id ORDER BY t.seq")?;
+    for seq in reference_tasks.query_map([], |row| row.get::<_, i64>(0))? {
+        let seq = seq?;
+        if let Err(error) = external_references(conn, seq) {
+            push("invalid_external_reference", format!("#{seq}: {error}"));
+        }
+    }
+
     Ok(findings)
 }
 
@@ -3947,6 +3994,8 @@ pub struct TaskDump {
     pub blockers: Vec<TaskBlocker>,
     #[serde(default)]
     pub commit_associations: Vec<CommitAssociation>,
+    #[serde(default)]
+    pub external_references: Vec<ExternalReference>,
 }
 
 fn default_work() -> String {
@@ -4102,6 +4151,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                 .collect::<rusqlite::Result<_>>()?;
             let blockers = task_blockers(conn, t.task_id)?;
             let commit_associations = commit_associations(conn, t.seq)?;
+            let external_references = external_references(conn, t.seq)?;
             tasks.push(TaskDump {
                 seq: Some(t.seq),
                 plan: slug.clone(),
@@ -4120,10 +4170,20 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                 gates,
                 blockers,
                 commit_associations,
+                external_references,
             });
         }
     }
-    let selected_plans: HashSet<&str> = plans.iter().map(|p| p.slug.as_str()).collect();
+    let selected_plans: HashSet<String> = plans.iter().map(|p| p.slug.clone()).collect();
+    let selected_sequences = tasks
+        .iter()
+        .filter_map(|task| task.seq)
+        .collect::<HashSet<_>>();
+    let mut task_identities = conn.prepare("SELECT seq FROM tasks")?;
+    let all_sequences = task_identities
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    let mut historical_plans = HashSet::new();
     let mut events = Vec::new();
     let mut st = conn.prepare(
         "SELECT at, actor, entity, entity_plan, entity_seq, gate_name, kind, why, payload
@@ -4149,7 +4209,28 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
             "plan" | "task" | "dep" | "gate" => {}
             _ => continue,
         }
-        if entity_plan
+        if let Some(seq) = entity_seq {
+            if !all_sequences.contains(&seq) {
+                bail!(
+                    "cannot export event for missing task #{seq}; run `papertiger audit` and restore a verified authority instead of omitting history"
+                );
+            }
+            if !selected_sequences.contains(&seq) {
+                continue;
+            }
+            if let Some(slug) = &entity_plan {
+                historical_plans.insert(slug.clone());
+            }
+            if let Some(raw) = &payload {
+                let value: serde_json::Value = serde_json::from_str(raw)?;
+                if let Some(before) = value
+                    .pointer("/changes/plan/before")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    historical_plans.insert(before.to_owned());
+                }
+            }
+        } else if entity_plan
             .as_deref()
             .is_some_and(|slug| !selected_plans.contains(slug))
         {
@@ -4178,6 +4259,24 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
         });
     }
 
+    let mut historical_plans = historical_plans
+        .difference(&selected_plans)
+        .collect::<Vec<_>>();
+    historical_plans.sort();
+    for slug in historical_plans {
+        plans.push(conn.query_row(
+            "SELECT slug, title, intent, status FROM plans WHERE slug=?1",
+            params![slug],
+            |row| {
+                Ok(PlanDump {
+                    slug: row.get(0)?,
+                    title: row.get(1)?,
+                    intent: row.get(2)?,
+                    status: row.get(3)?,
+                })
+            },
+        )?);
+    }
     let selected_task_sequences = tasks
         .iter()
         .filter_map(|task| task.seq)
@@ -4186,7 +4285,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
         mise_projection::export_mise_projections(conn, &selected_task_sequences)?;
 
     Ok(Dump {
-        schema: "papertiger.dump.v7".into(),
+        schema: "papertiger.dump.v8".into(),
         plans,
         tasks,
         events,
@@ -4194,10 +4293,10 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
     })
 }
 
-pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize, usize)> {
-    if dump.schema != "papertiger.dump.v7" {
+pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usize)> {
+    if dump.schema != "papertiger.dump.v8" {
         bail!(
-            "unsupported dump schema '{}'; use the Papertiger release that produced it to import it into a temporary authority, run current `papertiger --db <temporary-authority> init`, then re-export `papertiger.dump.v7`",
+            "unsupported dump schema '{}'; use the Papertiger release that produced it to import it into a temporary authority, run current `papertiger --db <temporary-authority> init`, then re-export `papertiger.dump.v8`",
             dump.schema
         );
     }
@@ -4614,6 +4713,9 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                 ],
             )?;
         }
+        for reference in &td.external_references {
+            external_reference::insert_reference(&tx, id, reference)?;
+        }
         for commit in &td.commit_associations {
             let repository =
                 require_nonblank("import commit repository label", &commit.repository)?;
@@ -4761,9 +4863,11 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
         &imported_task_id_by_seq,
     )?;
 
+    plan_move::validate_plan_history(dump)?;
     // Restore the append-only history using stable task sequences, plan slugs,
     // and gate names rather than database-local row ids.
     for event in &dump.events {
+        mutation::payload_model(event.payload.as_ref())?;
         let at = event.at.trim();
         if at.is_empty() || event.actor.trim().is_empty() || event.kind.trim().is_empty() {
             bail!("import event has a blank timestamp, actor, or kind");
@@ -4802,12 +4906,7 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                         event.entity
                     )
                 })?;
-                if event_plan != *task_plan {
-                    bail!(
-                        "import {} event names plan '{event_plan}', but task #{seq} belongs to plan '{task_plan}'",
-                        event.entity
-                    );
-                }
+                let _ = (event_plan, task_plan); // validated by validate_plan_history
                 Some(*imported_task_id_by_seq.get(&seq).with_context(|| {
                     format!("import event names task #{seq}, which is absent from the dump")
                 })?)
@@ -4822,11 +4921,7 @@ pub fn import(conn: &mut Connection, actor: &str, dump: &Dump) -> Result<(usize,
                 let event_plan = event.entity_plan.as_deref().with_context(|| {
                     format!("import gate event for task #{seq} lacks entity_plan")
                 })?;
-                if event_plan != *task_plan {
-                    bail!(
-                        "import gate event names plan '{event_plan}', but task #{seq} belongs to plan '{task_plan}'"
-                    );
-                }
+                let _ = (event_plan, task_plan); // validated by validate_plan_history
                 let task_id = *imported_task_id_by_seq.get(&seq).with_context(|| {
                     format!("import gate event names task #{seq}, which is absent from the dump")
                 })?;

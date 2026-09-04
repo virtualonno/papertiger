@@ -4,7 +4,7 @@ use std::{collections::HashSet, path::Path};
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
@@ -22,11 +22,12 @@ pub struct EventCursor {
     pub token: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventRecord {
     pub event_id: i64,
     pub at: String,
     pub actor: String,
+    pub model: Option<String>,
     pub entity: String,
     pub plan: Option<String>,
     pub task_seq: Option<i64>,
@@ -55,6 +56,7 @@ pub struct ActivityEvent {
     pub event_id: i64,
     pub at: String,
     pub actor: String,
+    pub model: Option<String>,
     pub entity: String,
     pub kind: String,
 }
@@ -68,7 +70,7 @@ pub struct TaskActivity {
     pub completed_event: Option<ActivityEvent>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskSummary {
     pub seq: i64,
     pub title: String,
@@ -248,6 +250,7 @@ impl StoredEvent {
             None
         };
         Ok(EventRecord {
+            model: crate::mutation::payload_model(payload.as_ref())?,
             event_id: self.event_id,
             at: self.at,
             actor: self.actor,
@@ -262,14 +265,20 @@ impl StoredEvent {
         })
     }
 
-    fn activity(&self) -> ActivityEvent {
-        ActivityEvent {
+    fn activity(&self) -> Result<ActivityEvent> {
+        let payload = self
+            .payload
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()?;
+        Ok(ActivityEvent {
+            model: crate::mutation::payload_model(payload.as_ref())?,
             event_id: self.event_id,
             at: self.at.clone(),
             actor: self.actor.clone(),
             entity: self.entity.clone(),
             kind: self.kind.clone(),
-        }
+        })
     }
 }
 
@@ -287,6 +296,13 @@ fn event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
         why: row.get(9)?,
         payload: row.get(10)?,
     })
+}
+
+pub(crate) fn event_by_id(conn: &Connection, event_id: i64) -> Result<EventRecord> {
+    conn.query_row(
+        "SELECT event_id, at, actor, entity, entity_id, entity_plan, entity_seq, gate_name, kind, why, payload FROM events WHERE event_id=?1",
+        params![event_id], event_from_row,
+    )?.public()
 }
 
 fn hash_event(hasher: &mut Sha256, event: &StoredEvent) -> Result<()> {
@@ -493,7 +509,7 @@ pub fn task_activity(conn: &Connection, seq: i64) -> Result<TaskActivity> {
     let mut latest_started_event = None;
     let mut latest_completed_event = None;
     for event in rows {
-        let activity = event.activity();
+        let activity = event.activity()?;
         last_event = Some(activity.clone());
         if event.entity == "task" && event.kind == "create" && created_event.is_none() {
             created_event = Some(activity.clone());

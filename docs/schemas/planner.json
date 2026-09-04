@@ -1,0 +1,1675 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/virtualonno/papertiger/blob/master/docs/schemas/planner.json",
+  "title": "Papertiger local planner contracts",
+  "description": "Every field is provider-local. Stored prose, locators, identities and history require editorial review before external publication. This schema validates structure, not authority integrity, evidence bytes, or producer semantics.",
+  "$comment": "Current-schema reads are versioned. Dump defaults support minimal current-format imports. Model attribution is caller-reported, not authenticated.",
+  "x-papertiger-disclosure": "provider-local",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/task_context"
+    },
+    {
+      "$ref": "#/$defs/task_list"
+    },
+    {
+      "$ref": "#/$defs/event_log"
+    },
+    {
+      "$ref": "#/$defs/status"
+    },
+    {
+      "$ref": "#/$defs/dump"
+    },
+    {
+      "$ref": "#/$defs/mutation"
+    }
+  ],
+  "$defs": {
+    "task_status": {
+      "enum": [
+        "proposed",
+        "in_progress",
+        "done",
+        "retired",
+        "rejected"
+      ]
+    },
+    "meaning_source": {
+      "anyOf": [
+        {
+          "enum": [
+            "user",
+            "agent",
+            "external"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9._:/-]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "paused",
+            "done",
+            "retired"
+          ]
+        }
+      },
+      "required": [
+        "slug",
+        "title",
+        "intent",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "task_summary": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/task_status"
+        },
+        "kind": {
+          "enum": [
+            "work",
+            "probe",
+            "decision"
+          ]
+        },
+        "priority": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seq",
+        "title",
+        "status",
+        "kind",
+        "priority"
+      ],
+      "additionalProperties": false
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/task_status"
+        },
+        "kind": {
+          "enum": [
+            "work",
+            "probe",
+            "decision"
+          ]
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "intent_source": {
+          "$ref": "#/$defs/meaning_source"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_source": {
+          "$ref": "#/$defs/meaning_source"
+        }
+      },
+      "required": [
+        "seq",
+        "title",
+        "status",
+        "kind",
+        "priority",
+        "intent",
+        "intent_source",
+        "result",
+        "result_source"
+      ],
+      "additionalProperties": false
+    },
+    "cursor": {
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "integer"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "token"
+      ],
+      "additionalProperties": false
+    },
+    "activity_event": {
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "integer"
+        },
+        "at": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "entity": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "at",
+        "actor",
+        "model",
+        "entity",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "activity": {
+      "type": "object",
+      "properties": {
+        "created_event": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/activity_event"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_event": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/activity_event"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status_event": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/activity_event"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started_event": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/activity_event"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completed_event": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/activity_event"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "created_event",
+        "last_event",
+        "status_event",
+        "started_event",
+        "completed_event"
+      ],
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "integer"
+        },
+        "at": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "entity": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "why": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "payload": {},
+        "task_definition_revision_state": {
+          "enum": [
+            "complete",
+            "legacy_without_snapshots",
+            "invalid"
+          ]
+        }
+      },
+      "required": [
+        "event_id",
+        "at",
+        "actor",
+        "model",
+        "entity",
+        "kind",
+        "plan",
+        "task_seq",
+        "gate",
+        "why",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "event_log": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.event_log.v1"
+        },
+        "task_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "direction": {
+          "type": "string"
+        },
+        "head": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "floor_event_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "continuation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "task_seq",
+        "direction",
+        "head",
+        "floor_event_id",
+        "events",
+        "truncated",
+        "continuation"
+      ],
+      "additionalProperties": false
+    },
+    "commit": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "commit_oid": {
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recorded_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "commit_oid",
+        "note",
+        "recorded_at"
+      ],
+      "additionalProperties": false
+    },
+    "reference": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "pull_request",
+            "issue",
+            "review",
+            "adr",
+            "input",
+            "other"
+          ]
+        },
+        "locator": {
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recorded_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "locator",
+        "sha256",
+        "note",
+        "recorded_at"
+      ],
+      "additionalProperties": false
+    },
+    "gate": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "requirement": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "closed",
+            "waived"
+          ]
+        },
+        "evidence_locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "closed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "requirement",
+        "status",
+        "evidence_locator",
+        "evidence_sha256",
+        "note",
+        "closed_at"
+      ],
+      "additionalProperties": false
+    },
+    "blocker": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "resolved",
+            "waived"
+          ]
+        },
+        "evidence_locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "reason",
+        "status",
+        "evidence_locator",
+        "evidence_sha256",
+        "note",
+        "resolved_at"
+      ],
+      "additionalProperties": false
+    },
+    "mise_projection": {
+      "type": "object",
+      "description": "Producer-owned Mise projection, validated by the dedicated Mise contract."
+    },
+    "task_context": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.task_context.v6"
+        },
+        "plan": {
+          "$ref": "#/$defs/plan"
+        },
+        "task": {
+          "$ref": "#/$defs/task"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/task_summary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "replacement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/task_summary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task_summary"
+          }
+        },
+        "dependents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task_summary"
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task_summary"
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/blocker"
+          }
+        },
+        "gates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gate"
+          }
+        },
+        "commit_associations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/commit"
+          }
+        },
+        "external_references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "activity": {
+          "$ref": "#/$defs/activity"
+        },
+        "mise_projections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mise_projection"
+          }
+        },
+        "immediate_unlock_count": {
+          "type": "integer"
+        },
+        "unfinished_downstream_count": {
+          "type": "integer"
+        },
+        "recent_events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        },
+        "recent_events_truncated": {
+          "type": "boolean"
+        },
+        "older_events_cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "plan",
+        "task",
+        "tags",
+        "parent",
+        "replacement",
+        "dependencies",
+        "dependents",
+        "children",
+        "blockers",
+        "gates",
+        "commit_associations",
+        "external_references",
+        "activity",
+        "mise_projections",
+        "immediate_unlock_count",
+        "unfinished_downstream_count",
+        "recent_events",
+        "recent_events_truncated",
+        "older_events_cursor"
+      ],
+      "additionalProperties": false
+    },
+    "task_list": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.task_list.v1"
+        },
+        "plan": {
+          "$ref": "#/$defs/plan"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tag": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sort": {
+          "enum": [
+            "seq",
+            "activity"
+          ]
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "task": {
+                "$ref": "#/$defs/task_summary"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "last_event": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/activity_event"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "task",
+              "tags",
+              "last_event"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "plan",
+        "status",
+        "tag",
+        "sort",
+        "tasks"
+      ],
+      "additionalProperties": false
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "proposed": {
+          "type": "integer"
+        },
+        "in_progress": {
+          "type": "integer"
+        },
+        "done": {
+          "type": "integer"
+        },
+        "retired": {
+          "type": "integer"
+        },
+        "rejected": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "proposed",
+        "in_progress",
+        "done",
+        "retired",
+        "rejected"
+      ],
+      "additionalProperties": false
+    },
+    "plan_status": {
+      "type": "object",
+      "properties": {
+        "plan": {
+          "$ref": "#/$defs/plan"
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        },
+        "in_progress": {
+          "type": "object",
+          "properties": {
+            "all_count": {
+              "type": "integer"
+            },
+            "parent_count": {
+              "type": "integer"
+            },
+            "leaf_count": {
+              "type": "integer"
+            },
+            "parents": {
+              "type": "object",
+              "properties": {
+                "scope": {
+                  "type": "string"
+                },
+                "ordering": {
+                  "type": "string"
+                },
+                "eligible_count": {
+                  "type": "integer"
+                },
+                "returned_count": {
+                  "type": "integer"
+                },
+                "omitted_count": {
+                  "type": "integer"
+                },
+                "complete": {
+                  "type": "boolean"
+                },
+                "continuation_command": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "task": {
+                        "$ref": "#/$defs/task_summary"
+                      },
+                      "activity": {
+                        "$ref": "#/$defs/activity"
+                      }
+                    },
+                    "required": [
+                      "task",
+                      "activity"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "scope",
+                "ordering",
+                "eligible_count",
+                "returned_count",
+                "omitted_count",
+                "complete",
+                "continuation_command",
+                "entries"
+              ],
+              "additionalProperties": false
+            },
+            "leaves": {
+              "type": "object",
+              "properties": {
+                "scope": {
+                  "type": "string"
+                },
+                "ordering": {
+                  "type": "string"
+                },
+                "eligible_count": {
+                  "type": "integer"
+                },
+                "returned_count": {
+                  "type": "integer"
+                },
+                "omitted_count": {
+                  "type": "integer"
+                },
+                "complete": {
+                  "type": "boolean"
+                },
+                "continuation_command": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "task": {
+                        "$ref": "#/$defs/task_summary"
+                      },
+                      "activity": {
+                        "$ref": "#/$defs/activity"
+                      }
+                    },
+                    "required": [
+                      "task",
+                      "activity"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "scope",
+                "ordering",
+                "eligible_count",
+                "returned_count",
+                "omitted_count",
+                "complete",
+                "continuation_command",
+                "entries"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "all_count",
+            "parent_count",
+            "leaf_count",
+            "parents",
+            "leaves"
+          ],
+          "additionalProperties": false
+        },
+        "ready": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string"
+            },
+            "ordering": {
+              "type": "string"
+            },
+            "eligible_count": {
+              "type": "integer"
+            },
+            "returned_count": {
+              "type": "integer"
+            },
+            "omitted_count": {
+              "type": "integer"
+            },
+            "complete": {
+              "type": "boolean"
+            },
+            "continuation_command": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "$ref": "#/$defs/task_summary"
+                  }
+                },
+                "required": [
+                  "task"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "scope",
+            "ordering",
+            "eligible_count",
+            "returned_count",
+            "omitted_count",
+            "complete",
+            "continuation_command",
+            "entries"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "plan",
+        "counts",
+        "in_progress",
+        "ready"
+      ],
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.status.v2"
+        },
+        "authority": {
+          "type": "object",
+          "properties": {
+            "papertiger_version": {
+              "type": "string"
+            },
+            "requested_path": {
+              "type": "string"
+            },
+            "resolved_path": {
+              "type": "string"
+            },
+            "schema_version": {
+              "const": 9
+            },
+            "event_head": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/cursor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "papertiger_version",
+            "requested_path",
+            "resolved_path",
+            "schema_version",
+            "event_head"
+          ],
+          "additionalProperties": false
+        },
+        "active_plans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/plan_status"
+          }
+        },
+        "recent_notes": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string"
+            },
+            "ordering": {
+              "type": "string"
+            },
+            "eligible_count": {
+              "type": "integer"
+            },
+            "returned_count": {
+              "type": "integer"
+            },
+            "omitted_count": {
+              "type": "integer"
+            },
+            "complete": {
+              "type": "boolean"
+            },
+            "continuation_command": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/event"
+              }
+            }
+          },
+          "required": [
+            "scope",
+            "ordering",
+            "eligible_count",
+            "returned_count",
+            "omitted_count",
+            "complete",
+            "continuation_command",
+            "entries"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "authority",
+        "active_plans",
+        "recent_notes"
+      ],
+      "additionalProperties": false
+    },
+    "event_dump": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "entity": {
+          "type": "string"
+        },
+        "entity_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "entity_plan": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gate_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "why": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "payload": {}
+      },
+      "required": [
+        "at",
+        "actor",
+        "entity",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "task_dump": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plan": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "intent_source": {
+          "$ref": "#/$defs/meaning_source"
+        },
+        "kind": {
+          "enum": [
+            "work",
+            "probe",
+            "decision"
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_source": {
+          "$ref": "#/$defs/meaning_source"
+        },
+        "status": {
+          "$ref": "#/$defs/task_status"
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "parent_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "replacement_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deps": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "gates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gate_dump"
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/blocker_dump"
+          }
+        },
+        "commit_associations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/commit"
+          }
+        },
+        "external_references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        }
+      },
+      "required": [
+        "plan",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "dump": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.dump.v8"
+        },
+        "plans": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "intent": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "active",
+                  "paused",
+                  "done",
+                  "retired"
+                ]
+              }
+            },
+            "required": [
+              "slug",
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task_dump"
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event_dump"
+          }
+        },
+        "mise_projections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mise_projection"
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "plans",
+        "tasks"
+      ],
+      "additionalProperties": false
+    },
+    "mutation": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.mutation.v1"
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "event": {
+                "$ref": "#/$defs/event"
+              },
+              "task": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/task_summary"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "plan": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/plan"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "event",
+              "task",
+              "plan"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "changed",
+        "events"
+      ],
+      "additionalProperties": false
+    },
+    "gate_dump": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "requirement": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "closed",
+            "waived"
+          ]
+        },
+        "evidence_locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "closed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "requirement"
+      ],
+      "additionalProperties": false
+    },
+    "blocker_dump": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "resolved",
+            "waived"
+          ]
+        },
+        "evidence_locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

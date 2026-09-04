@@ -3,6 +3,112 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[test]
+fn mutation_receipts_model_attribution_and_task_moves_are_cli_usable() {
+    let db = TestDatabase::new("mutation-receipts");
+    assert_success(&papertiger(&db.0, &["init"]));
+    for plan in ["old", "new"] {
+        let output = papertiger(&db.0, &["plan", "add", plan, plan, "--json"]);
+        assert_success(&output);
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["schema"], "papertiger.mutation.v1");
+        assert_eq!(value["events"][0]["plan"]["slug"], plan);
+    }
+    let output = papertiger(
+        &db.0,
+        &[
+            "add",
+            "a proposal",
+            "--plan",
+            "old",
+            "--model",
+            "gpt-5.6-luna",
+            "--json",
+        ],
+    );
+    assert_success(&output);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let seq = value["events"][0]["task"]["seq"]
+        .as_i64()
+        .unwrap()
+        .to_string();
+    assert_eq!(value["events"][0]["event"]["model"], "gpt-5.6-luna");
+    for args in [
+        vec![
+            "reference",
+            "add",
+            &seq,
+            "https://example.test/issue/1",
+            "--kind",
+            "issue",
+            "--json",
+        ],
+        vec![
+            "move-plan",
+            &seq,
+            "--plan",
+            "new",
+            "--why",
+            "correct initiative",
+            "--json",
+        ],
+        vec![
+            "done",
+            &seq,
+            "--result",
+            "verified outcome",
+            "--model",
+            "review-model",
+            "--json",
+        ],
+    ] {
+        let output = papertiger(&db.0, &args);
+        assert_success(&output);
+        let receipt: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(receipt["changed"], true);
+    }
+    let output = papertiger(&db.0, &["show", &seq, "--json"]);
+    assert_success(&output);
+    let context: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(context["plan"]["slug"], "new");
+    assert_eq!(
+        context["activity"]["created_event"]["model"],
+        "gpt-5.6-luna"
+    );
+    assert_eq!(
+        context["activity"]["completed_event"]["model"],
+        "review-model"
+    );
+    let failed = papertiger(
+        &db.0,
+        &[
+            "move-plan",
+            &seq,
+            "--plan",
+            "new",
+            "--why",
+            "no-op",
+            "--json",
+        ],
+    );
+    assert!(!failed.status.success());
+    assert!(failed.stdout.is_empty());
+    let invalid = papertiger(
+        &db.0,
+        &[
+            "add",
+            "invalid model",
+            "--plan",
+            "old",
+            "--model",
+            " ",
+            "--json",
+        ],
+    );
+    assert!(!invalid.status.success());
+    assert!(invalid.stdout.is_empty());
+}
+
 struct TestDatabase(PathBuf);
 
 impl TestDatabase {
@@ -1327,7 +1433,7 @@ fn commit_lookup_lifecycle_json_and_activity_sort_are_agent_usable() {
     let show = papertiger(&db.0, &["show", "1", "--json"]);
     assert_success(&show);
     let value: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
-    assert_eq!(value["schema"], "papertiger.task_context.v5");
+    assert_eq!(value["schema"], "papertiger.task_context.v6");
     assert!(value["activity"]["created_event"]["at"].is_string());
     assert!(value["activity"]["last_event"]["at"].is_string());
     assert_eq!(value["commit_associations"][0]["commit_oid"], oid);
@@ -1616,7 +1722,7 @@ fn retire_into_is_visible_without_redirecting_show() {
     let json = papertiger(&db.0, &["show", "1", "--json"]);
     assert_success(&json);
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(value["schema"], "papertiger.task_context.v5");
+    assert_eq!(value["schema"], "papertiger.task_context.v6");
     assert_eq!(value["task"]["seq"], 1);
     assert_eq!(value["replacement"]["seq"], 2);
     assert_eq!(value["recent_events"][0]["payload"]["replacement_seq"], 2);
@@ -1777,7 +1883,7 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     assert_success(&status);
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(status["schema"], "papertiger.status.v2");
-    assert_eq!(status["authority"]["schema_version"], 8);
+    assert_eq!(status["authority"]["schema_version"], 9);
     assert!(
         status["authority"]["resolved_path"]
             .as_str()
@@ -1840,10 +1946,10 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     assert_success(&export);
     let receipt: serde_json::Value = serde_json::from_slice(&export.stdout).unwrap();
     assert_eq!(receipt["schema"], "papertiger.export_file.v1");
-    assert_eq!(receipt["dump_schema"], "papertiger.dump.v7");
+    assert_eq!(receipt["dump_schema"], "papertiger.dump.v8");
     let dump: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&export_path).unwrap()).unwrap();
-    assert_eq!(dump["schema"], "papertiger.dump.v7");
+    assert_eq!(dump["schema"], "papertiger.dump.v8");
     let same_authority = papertiger(
         &db.0,
         &["export", "--output", db.0.to_str().unwrap(), "--replace"],

@@ -25,13 +25,22 @@ struct Cli {
     /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator'); invalid with project integration commands
     #[arg(long, global = true)]
     actor: Option<String>,
+    /// Emit JSON: versioned reads or exact committed mutation receipts.
+    #[arg(long, global = true)]
+    json: bool,
+    /// Caller-reported event author model; unknown attribution remains absent.
+    #[arg(long, global = true)]
+    model: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Print the bundled JSON Schema for local planner reads, recovery, and mutation receipts; never opens authority
+    Schema,
     /// Install a project-local native binary, receipt, ignore policy, and agent contract; does not accept --db or --actor
+    #[command(after_help = "JSON schema: papertiger.project_setup.v5")]
     SetupProject {
         /// Existing consuming project directory
         project_root: std::path::PathBuf,
@@ -47,16 +56,10 @@ enum Cmd {
         /// Skill target selection; omitted upgrades preserve the receipt selection
         #[arg(long, value_enum, value_name = "auto|agents|claude|both|none")]
         skill_target: Option<project_setup::SkillTargetRequest>,
-        /// Emit papertiger.project_setup.v5 JSON, including exact host-binary identity and bounded guidance inspection
-        #[arg(long)]
-        json: bool,
     },
     /// Inspect repository-owned AGENTS.md and CLAUDE.md without editing them or opening the planning authority
-    InspectProjectGuidance {
-        /// Emit deterministic papertiger.project_guidance.v1 JSON
-        #[arg(long)]
-        json: bool,
-    },
+    #[command(after_help = "JSON schema: papertiger.project_guidance.v1")]
+    InspectProjectGuidance {},
     /// Remove only receipt-owned project integration files; preserves authority and repository policy
     UninstallProject {
         /// Existing consuming project directory
@@ -64,18 +67,11 @@ enum Cmd {
         /// Report the complete removal plan without writing
         #[arg(long)]
         dry_run: bool,
-        /// Emit papertiger.project_uninstall.v2 JSON
-        #[arg(long)]
-        json: bool,
     },
     /// Create or upgrade a Papertiger database; refuses nonempty foreign databases
     Init,
     /// One-screen orientation: authority, active plans, current work, ready work, recent notes
-    Status {
-        /// Emit papertiger.status.v2 JSON
-        #[arg(long)]
-        json: bool,
-    },
+    Status {},
     /// Plan management
     Plan {
         #[command(subcommand)]
@@ -118,9 +114,6 @@ enum Cmd {
     Show {
         /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
-        /// Emit papertiger.task_context.v5 JSON
-        #[arg(long)]
-        json: bool,
     },
     /// List tasks (compact)
     List {
@@ -136,9 +129,6 @@ enum Cmd {
         /// Ordering: seq or activity
         #[arg(long, default_value = "seq")]
         sort: String,
-        /// Emit papertiger.task_list.v1 JSON
-        #[arg(long)]
-        json: bool,
     },
     /// Search durable task context with deterministic field ranking
     Search {
@@ -153,9 +143,6 @@ enum Cmd {
         /// Maximum ranked results to return
         #[arg(long, default_value_t = 20)]
         limit: usize,
-        /// Emit papertiger.search.v1 JSON
-        #[arg(long)]
-        json: bool,
     },
     /// Edit a task
     Edit {
@@ -184,6 +171,17 @@ enum Cmd {
         /// Replacement scheduling priority
         #[arg(long)]
         priority: Option<i64>,
+        #[command(flatten)]
+        why: WhyArgs,
+    },
+    /// Move an explicit complete related set to an active plan without rewriting history
+    MovePlan {
+        /// Explicit complete set of tasks to relocate, including related tasks
+        #[arg(required = true)]
+        tasks: Vec<String>,
+        /// Active destination plan
+        #[arg(long)]
+        plan: String,
         #[command(flatten)]
         why: WhyArgs,
     },
@@ -239,6 +237,11 @@ enum Cmd {
         cmd: BlockerCmd,
     },
     /// Manage caller-resolved local commit associations without invoking Git
+    Reference {
+        #[command(subcommand)]
+        cmd: ReferenceCmd,
+    },
+    /// Manage caller-resolved local commit associations without invoking Git
     Commit {
         #[command(subcommand)]
         cmd: CommitCmd,
@@ -256,9 +259,6 @@ enum Cmd {
         /// Maximum tasks to return
         #[arg(long, default_value_t = 20)]
         limit: usize,
-        /// Emit papertiger.focus.v5 JSON
-        #[arg(long)]
-        json: bool,
         /// Include proposed work that is currently blocked
         #[arg(long)]
         all: bool,
@@ -299,9 +299,6 @@ enum Cmd {
         /// Read new events after an event-v1 cursor emitted by JSON output
         #[arg(long)]
         after_cursor: Option<String>,
-        /// Emit papertiger.event_log.v1 JSON
-        #[arg(long)]
-        json: bool,
     },
     /// Advisory integrity findings
     Audit,
@@ -322,7 +319,7 @@ enum Cmd {
         #[arg(long, requires = "output")]
         replace: bool,
     },
-    /// Import a papertiger.dump.v7 JSON file
+    /// Import a papertiger.dump.v8 JSON file
     Import {
         /// Dump file to validate and import atomically
         file: String,
@@ -332,6 +329,34 @@ enum Cmd {
         #[command(subcommand)]
         cmd: MiseCmd,
     },
+}
+
+#[derive(Subcommand)]
+enum ReferenceCmd {
+    /// Record an inward locator without importing external status or fetching bytes
+    Add {
+        task: String,
+        locator: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        sha256: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Remove one exact reference with retained rationale
+    Remove {
+        task: String,
+        locator: String,
+        #[arg(long)]
+        kind: String,
+        #[command(flatten)]
+        why: WhyArgs,
+    },
+    /// List inward references on one task
+    List { task: String },
+    /// Find tasks that name an exact locator
+    Find { locator: String },
 }
 
 #[derive(Subcommand)]
@@ -353,9 +378,6 @@ enum EvidenceCmd {
         /// Continue a live evidence-v1 projection emitted by the same scope and filters
         #[arg(long)]
         after_cursor: Option<String>,
-        /// Emit papertiger.evidence_verification.v2 JSON
-        #[arg(long)]
-        json: bool,
     },
 }
 
@@ -390,9 +412,6 @@ enum CommitCmd {
     List {
         /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
-        /// Emit JSON
-        #[arg(long)]
-        json: bool,
     },
     /// Reverse lookup local tasks associated with one full commit object ID
     Find {
@@ -401,9 +420,6 @@ enum CommitCmd {
         /// Restrict lookup to this stable repository label
         #[arg(long)]
         repo: Option<String>,
-        /// Emit JSON
-        #[arg(long)]
-        json: bool,
     },
 }
 
@@ -420,9 +436,6 @@ enum MiseCmd {
     List {
         /// Task sequence that owns the projections
         task: String,
-        /// Emit JSON
-        #[arg(long)]
-        json: bool,
     },
     /// Show one exact reverified projection by its SHA-256 identity
     Show {
@@ -642,7 +655,8 @@ impl Cmd {
     fn opens_authority_read_only(&self) -> bool {
         matches!(
             self,
-            Self::Status { .. }
+            Self::Schema
+                | Self::Status { .. }
                 | Self::Show { .. }
                 | Self::List { .. }
                 | Self::Search { .. }
@@ -661,6 +675,9 @@ impl Cmd {
                 }
                 | Self::Commit {
                     cmd: CommitCmd::List { .. } | CommitCmd::Find { .. }
+                }
+                | Self::Reference {
+                    cmd: ReferenceCmd::List { .. } | ReferenceCmd::Find { .. }
                 }
                 | Self::Mise {
                     cmd: MiseCmd::List { .. } | MiseCmd::Show { .. }
@@ -797,8 +814,15 @@ fn print_task_context(context: &pt::TaskContext) {
     ] {
         if let Some(event) = event {
             println!(
-                "  {label}: {} by {} (@{})",
-                event.at, event.actor, event.event_id
+                "  {label}: {} by {}{} (@{})",
+                event.at,
+                event.actor,
+                event
+                    .model
+                    .as_ref()
+                    .map(|model| format!(" [model {model}]"))
+                    .unwrap_or_default(),
+                event.event_id
             );
         }
     }
@@ -885,6 +909,18 @@ fn print_task_context(context: &pt::TaskContext) {
             commit.repository, commit.commit_oid, note
         );
     }
+    for reference in &context.external_references {
+        println!(
+            "  reference [{}] {}{}",
+            reference.kind,
+            reference.locator,
+            reference
+                .sha256
+                .as_ref()
+                .map(|sha| format!(" [sha256 {sha}]"))
+                .unwrap_or_default()
+        );
+    }
     for projection in &context.mise_projections {
         println!(
             "  Mise [{}] {} candidate {} campaign {}{}",
@@ -940,6 +976,53 @@ fn main() -> Result<()> {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    let json = cli.json;
+    if matches!(cli.cmd, Cmd::Schema) {
+        println!(
+            "{}",
+            include_str!("../docs/schemas/planner.json").trim_end()
+        );
+        return Ok(());
+    }
+    let mutation = !cli.cmd.opens_authority_read_only()
+        && !matches!(
+            cli.cmd,
+            Cmd::SetupProject { .. } | Cmd::UninstallProject { .. } | Cmd::Init
+        );
+    if cli.model.is_some() && !mutation {
+        bail!(
+            "--model records planning event authorship; omit --model for commands that do not record events"
+        );
+    }
+    let model = if mutation {
+        cli.model.or_else(|| std::env::var("PAPERTIGER_MODEL").ok())
+    } else {
+        None
+    };
+    if let Some(model) = &model {
+        pt::validate_model(model)?;
+    }
+    if json
+        && matches!(
+            cli.cmd,
+            Cmd::Init
+                | Cmd::Tree { .. }
+                | Cmd::Plan { cmd: PlanCmd::List }
+                | Cmd::Gate {
+                    cmd: GateCmd::List { .. }
+                }
+                | Cmd::Blocker {
+                    cmd: BlockerCmd::List { .. }
+                }
+        )
+    {
+        bail!(
+            "this command has no JSON projection; omit --json or use status/show --json for planner context"
+        );
+    }
+    macro_rules! mutation_output {
+        ($($args:tt)*) => { if !json { println!($($args)*); } };
+    }
 
     if let Cmd::SetupProject {
         project_root,
@@ -947,7 +1030,6 @@ fn run() -> Result<()> {
         replace_managed,
         authority_path,
         skill_target,
-        json,
     } = &cli.cmd
     {
         if cli.db.is_some() {
@@ -973,7 +1055,7 @@ fn run() -> Result<()> {
             authority_path: authority_path.as_deref(),
             skill_target: *skill_target,
         })?;
-        if *json {
+        if json {
             println!("{}", serde_json::to_string_pretty(&result)?);
         } else {
             let mode = if result.dry_run { "planned" } else { "applied" };
@@ -996,7 +1078,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    if let Cmd::InspectProjectGuidance { json } = &cli.cmd {
+    if let Cmd::InspectProjectGuidance {} = &cli.cmd {
         if cli.db.is_some() {
             bail!(
                 "inspect-project-guidance does not accept --db because it never opens the planning authority; omit --db"
@@ -1020,7 +1102,7 @@ fn run() -> Result<()> {
             })?
         };
         let result = project_setup::inspect_installed_project_guidance(&root)?;
-        if *json {
+        if json {
             println!("{}", serde_json::to_string_pretty(&result)?);
         } else {
             println!("papertiger repository guidance at {}", result.project_root);
@@ -1048,7 +1130,6 @@ fn run() -> Result<()> {
     if let Cmd::UninstallProject {
         project_root,
         dry_run,
-        json,
     } = &cli.cmd
     {
         if cli.db.is_some() {
@@ -1071,7 +1152,7 @@ fn run() -> Result<()> {
             source_binary: None,
             dry_run: *dry_run,
         })?;
-        if *json {
+        if json {
             println!("{}", serde_json::to_string_pretty(&result)?);
         } else {
             let mode = if result.dry_run { "planned" } else { "applied" };
@@ -1144,7 +1225,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    let mut conn = if cli.cmd.opens_authority_read_only() {
+    let conn = if cli.cmd.opens_authority_read_only() {
         pt::open_existing_read_only(&db_path)?
     } else {
         pt::open_existing(&db_path)?
@@ -1154,12 +1235,18 @@ fn run() -> Result<()> {
             .context("begin read-only Papertiger authority snapshot")?;
     }
 
+    let recorder = if mutation && (json || model.is_some()) {
+        Some(pt::MutationRecorder::new(&conn, model.as_deref())?)
+    } else {
+        None
+    };
     match cli.cmd {
         Cmd::SetupProject { .. } => unreachable!(),
         Cmd::InspectProjectGuidance { .. } => unreachable!(),
         Cmd::UninstallProject { .. } => unreachable!(),
         Cmd::Init => unreachable!(),
-        Cmd::Status { json } => {
+        Cmd::Schema => unreachable!(),
+        Cmd::Status {} => {
             let status = pt::status_response(&conn, &db_path)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
@@ -1238,7 +1325,7 @@ fn run() -> Result<()> {
             } => {
                 let intent = intent.optional()?.unwrap_or_default();
                 pt::add_plan(&conn, &actor, &slug, &title, &intent)?;
-                println!("plan {slug} created");
+                mutation_output!("plan {slug} created");
             }
             PlanCmd::List => {
                 let mut st =
@@ -1270,12 +1357,12 @@ fn run() -> Result<()> {
                     intent.as_deref(),
                     &why,
                 )?;
-                println!("plan {slug} updated ({})", changed.join(", "));
+                mutation_output!("plan {slug} updated ({})", changed.join(", "));
             }
             PlanCmd::Set { slug, status, why } => {
                 let why = why.required()?;
                 pt::set_plan_status(&conn, &actor, &slug, &status, &why)?;
-                println!("plan {slug} -> {status}");
+                mutation_output!("plan {slug} -> {status}");
             }
         },
         Cmd::Add {
@@ -1317,12 +1404,12 @@ fn run() -> Result<()> {
                 },
             )?;
             if start {
-                println!("#{seq} added to {slug} and in progress");
+                mutation_output!("#{seq} added to {slug} and in progress");
             } else {
-                println!("#{seq} added to {slug}");
+                mutation_output!("#{seq} added to {slug}");
             }
         }
-        Cmd::Show { task, json } => {
+        Cmd::Show { task } => {
             let context = pt::task_context(&conn, pt::parse_task_ref(&task)?)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&context)?);
@@ -1335,7 +1422,6 @@ fn run() -> Result<()> {
             status,
             tag,
             sort,
-            json,
         } => {
             if json {
                 let response = pt::task_list_response(
@@ -1365,7 +1451,6 @@ fn run() -> Result<()> {
             plan,
             status,
             limit,
-            json,
         } => {
             let response =
                 pt::search_tasks(&conn, &query, plan.as_deref(), status.as_deref(), limit)?;
@@ -1442,13 +1527,22 @@ fn run() -> Result<()> {
                 },
                 &why,
             )?;
-            println!("#{seq} updated ({})", changed.join(", "));
+            mutation_output!("#{seq} updated ({})", changed.join(", "));
         }
         Cmd::Start { task, why } => {
             let why = why.optional()?;
             let seq = pt::parse_task_ref(&task)?;
             pt::start_task(&conn, &actor, seq, why.as_deref())?;
-            println!("#{seq} in progress");
+            mutation_output!("#{seq} in progress");
+        }
+        Cmd::MovePlan { tasks, plan, why } => {
+            let why = why.required()?;
+            let sequences = tasks
+                .iter()
+                .map(|task| pt::parse_task_ref(task))
+                .collect::<Result<Vec<_>>>()?;
+            pt::move_tasks_to_plan(&conn, &actor, &sequences, &plan, &why)?;
+            mutation_output!("moved {} task(s) to {plan}", sequences.len());
         }
         Cmd::Done {
             task,
@@ -1464,13 +1558,13 @@ fn run() -> Result<()> {
                 result.as_deref(),
                 result_source.as_deref(),
             )?;
-            println!("#{seq} done");
+            mutation_output!("#{seq} done");
         }
         Cmd::Reopen { task, why } => {
             let why = why.required()?;
             let seq = pt::parse_task_ref(&task)?;
             pt::reopen_task(&conn, &actor, seq, &why)?;
-            println!("#{seq} reopened");
+            mutation_output!("#{seq} reopened");
         }
         Cmd::Retire { task, into, why } => {
             let why = why.required()?;
@@ -1478,16 +1572,16 @@ fn run() -> Result<()> {
             let replacement_seq = into.as_deref().map(pt::parse_task_ref).transpose()?;
             pt::retire_task(&conn, &actor, seq, replacement_seq, &why)?;
             if let Some(replacement_seq) = replacement_seq {
-                println!("#{seq} retired into #{replacement_seq}");
+                mutation_output!("#{seq} retired into #{replacement_seq}");
             } else {
-                println!("#{seq} retired");
+                mutation_output!("#{seq} retired");
             }
         }
         Cmd::Reject { task, why } => {
             let why = why.required()?;
             let seq = pt::parse_task_ref(&task)?;
             pt::reject_task(&conn, &actor, seq, &why)?;
-            println!("#{seq} rejected");
+            mutation_output!("#{seq} rejected");
         }
         Cmd::Gate { cmd } => match cmd {
             GateCmd::Add {
@@ -1498,7 +1592,7 @@ fn run() -> Result<()> {
             } => {
                 let seq = pt::parse_task_ref(&task)?;
                 pt::add_gate(&conn, &actor, seq, &name, &kind, &requirement)?;
-                println!("gate '{name}' added to #{seq}");
+                mutation_output!("gate '{name}' added to #{seq}");
             }
             GateCmd::Close {
                 task,
@@ -1517,25 +1611,25 @@ fn run() -> Result<()> {
                     sha256.as_deref(),
                     note.as_deref(),
                 )?;
-                println!("gate '{name}' on #{seq} closed");
+                mutation_output!("gate '{name}' on #{seq} closed");
             }
             GateCmd::Waive { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::waive_gate(&conn, &actor, seq, &name, &why)?;
-                println!("gate '{name}' on #{seq} waived");
+                mutation_output!("gate '{name}' on #{seq} waived");
             }
             GateCmd::Reopen { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::reopen_gate(&conn, &actor, seq, &name, &why)?;
-                println!("gate '{name}' on #{seq} reopened");
+                mutation_output!("gate '{name}' on #{seq} reopened");
             }
             GateCmd::Remove { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::remove_open_gate(&conn, &actor, seq, &name, &why)?;
-                println!("gate '{name}' removed from #{seq}");
+                mutation_output!("gate '{name}' removed from #{seq}");
             }
             GateCmd::List { task } => {
                 let t = pt::get_task(&conn, pt::parse_task_ref(&task)?)?;
@@ -1556,7 +1650,7 @@ fn run() -> Result<()> {
             BlockerCmd::Add { task, name, reason } => {
                 let seq = pt::parse_task_ref(&task)?;
                 pt::add_task_blocker(&conn, &actor, seq, &name, &reason)?;
-                println!("blocker '{name}' added to #{seq}");
+                mutation_output!("blocker '{name}' added to #{seq}");
             }
             BlockerCmd::Resolve {
                 task,
@@ -1575,25 +1669,25 @@ fn run() -> Result<()> {
                     sha256.as_deref(),
                     note.as_deref(),
                 )?;
-                println!("blocker '{name}' on #{seq} resolved");
+                mutation_output!("blocker '{name}' on #{seq} resolved");
             }
             BlockerCmd::Waive { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::waive_task_blocker(&conn, &actor, seq, &name, &why)?;
-                println!("blocker '{name}' on #{seq} waived");
+                mutation_output!("blocker '{name}' on #{seq} waived");
             }
             BlockerCmd::Reopen { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::reopen_task_blocker(&conn, &actor, seq, &name, &why)?;
-                println!("blocker '{name}' on #{seq} reopened");
+                mutation_output!("blocker '{name}' on #{seq} reopened");
             }
             BlockerCmd::Remove { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::remove_open_task_blocker(&conn, &actor, seq, &name, &why)?;
-                println!("blocker '{name}' removed from #{seq}");
+                mutation_output!("blocker '{name}' removed from #{seq}");
             }
             BlockerCmd::List { task } => {
                 let task = pt::get_task(&conn, pt::parse_task_ref(&task)?)?;
@@ -1608,6 +1702,65 @@ fn run() -> Result<()> {
                             .map(|locator| format!(" -> {locator}"))
                             .unwrap_or_default()
                     );
+                }
+            }
+        },
+        Cmd::Reference { cmd } => match cmd {
+            ReferenceCmd::Add {
+                task,
+                locator,
+                kind,
+                sha256,
+                note,
+            } => {
+                let seq = pt::parse_task_ref(&task)?;
+                let reference = pt::new_external_reference(
+                    &kind,
+                    &locator,
+                    sha256.as_deref(),
+                    note.as_deref(),
+                )?;
+                pt::add_external_reference(&conn, &actor, seq, &reference)?;
+                mutation_output!("reference {kind} '{locator}' recorded on #{seq}");
+            }
+            ReferenceCmd::Remove {
+                task,
+                locator,
+                kind,
+                why,
+            } => {
+                let seq = pt::parse_task_ref(&task)?;
+                pt::remove_external_reference(
+                    &conn,
+                    &actor,
+                    seq,
+                    &kind,
+                    &locator,
+                    &why.required()?,
+                )?;
+                mutation_output!("reference {kind} '{locator}' removed from #{seq}");
+            }
+            ReferenceCmd::List { task } => {
+                let references = pt::external_references(&conn, pt::parse_task_ref(&task)?)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&references)?);
+                } else {
+                    for reference in references {
+                        println!("[{}] {}", reference.kind, reference.locator);
+                    }
+                }
+            }
+            ReferenceCmd::Find { locator } => {
+                let matches = pt::find_external_references(&conn, &locator)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&matches)?);
+                } else {
+                    for item in matches {
+                        println!(
+                            "#{} [{}] {}",
+                            item.task_seq, item.reference.kind, item.task_title
+                        );
+                    }
                 }
             }
         },
@@ -1627,7 +1780,7 @@ fn run() -> Result<()> {
                     &commit_oid,
                     note.as_deref(),
                 )?;
-                println!("commit {commit_oid} ({repo}) recorded on #{seq}");
+                mutation_output!("commit {commit_oid} ({repo}) recorded on #{seq}");
             }
             CommitCmd::Remove {
                 task,
@@ -1638,9 +1791,9 @@ fn run() -> Result<()> {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::remove_commit_association(&conn, &actor, seq, &repo, &commit_oid, &why)?;
-                println!("commit {commit_oid} ({repo}) removed from #{seq}");
+                mutation_output!("commit {commit_oid} ({repo}) removed from #{seq}");
             }
-            CommitCmd::List { task, json } => {
+            CommitCmd::List { task } => {
                 let seq = pt::parse_task_ref(&task)?;
                 let commits = pt::commit_associations(&conn, seq)?;
                 if json {
@@ -1661,11 +1814,7 @@ fn run() -> Result<()> {
                     }
                 }
             }
-            CommitCmd::Find {
-                commit_oid,
-                repo,
-                json,
-            } => {
+            CommitCmd::Find { commit_oid, repo } => {
                 let matches = pt::find_commit_associations(&conn, &commit_oid, repo.as_deref())?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&matches)?);
@@ -1687,21 +1836,16 @@ fn run() -> Result<()> {
                 let why = why.required()?;
                 let (a, b) = (pt::parse_task_ref(&task)?, pt::parse_task_ref(&on)?);
                 pt::add_dep(&conn, &actor, a, b, &why)?;
-                println!("#{a} now depends on #{b}");
+                mutation_output!("#{a} now depends on #{b}");
             }
             DepCmd::Remove { task, on, why } => {
                 let why = why.required()?;
                 let (a, b) = (pt::parse_task_ref(&task)?, pt::parse_task_ref(&on)?);
                 pt::remove_dep(&conn, &actor, a, b, &why)?;
-                println!("#{a} no longer depends on #{b}");
+                mutation_output!("#{a} no longer depends on #{b}");
             }
         },
-        Cmd::Focus {
-            plan,
-            limit,
-            json,
-            all,
-        } => {
+        Cmd::Focus { plan, limit, all } => {
             let selected_plan = match plan.as_deref() {
                 Some(slug) => Some(pt::resolve_plan(&conn, Some(slug))?),
                 None if json => pt::active_plan(&conn)?,
@@ -1758,13 +1902,13 @@ fn run() -> Result<()> {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::add_tag(&conn, &actor, seq, &tag, &why)?;
-                println!("tag '{tag}' added to #{seq}");
+                mutation_output!("tag '{tag}' added to #{seq}");
             }
             TagCmd::Remove { task, tag, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
                 pt::remove_tag(&conn, &actor, seq, &tag, &why)?;
-                println!("tag '{tag}' removed from #{seq}");
+                mutation_output!("tag '{tag}' removed from #{seq}");
             }
         },
         Cmd::Tree { plan } => {
@@ -1776,14 +1920,13 @@ fn run() -> Result<()> {
             let text = text.required()?;
             let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
             pt::add_note_with_source(&conn, &actor, task_seq, &text, source.as_deref())?;
-            println!("noted");
+            mutation_output!("noted");
         }
         Cmd::Log {
             task,
             limit,
             before_cursor,
             after_cursor,
-            json,
         } => {
             let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
             let log = pt::event_log(
@@ -1838,6 +1981,13 @@ fn run() -> Result<()> {
         }
         Cmd::Audit => {
             let findings = pt::audit(&conn)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"schema": "papertiger.audit.v1", "findings": findings})
+                );
+                return Ok(());
+            }
             if findings.is_empty() {
                 println!("no findings");
             }
@@ -1853,7 +2003,6 @@ fn run() -> Result<()> {
                     task_state,
                     limit,
                     after_cursor,
-                    json,
                 },
         } => {
             let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
@@ -1999,8 +2148,8 @@ fn run() -> Result<()> {
         Cmd::Import { file } => {
             let text = std::fs::read_to_string(&file).with_context(|| format!("read {file}"))?;
             let dump = pt::parse_dump_json(&text)?;
-            let (tasks, deps) = pt::import(&mut conn, &actor, &dump)?;
-            println!("imported {tasks} task(s), {deps} dependency edge(s)");
+            let (tasks, deps) = pt::import(&conn, &actor, &dump)?;
+            mutation_output!("imported {tasks} task(s), {deps} dependency edge(s)");
         }
         Cmd::Mise { cmd } => match cmd {
             MiseCmd::Project { task, projection } => {
@@ -2017,7 +2166,7 @@ fn run() -> Result<()> {
                 };
                 let (outcome, record) =
                     pt::record_mise_projection(&conn, &actor, task_seq, &bytes)?;
-                println!(
+                mutation_output!(
                     "{} {} task #{} [{}] campaign {} candidate {}{}",
                     outcome.as_str(),
                     record.projection_sha256,
@@ -2033,7 +2182,7 @@ fn run() -> Result<()> {
                         .unwrap_or_default()
                 );
             }
-            MiseCmd::List { task, json } => {
+            MiseCmd::List { task } => {
                 let task_seq = pt::parse_task_ref(&task)?;
                 let records = pt::task_mise_projection_summaries(&conn, task_seq)?;
                 if json {
@@ -2066,6 +2215,9 @@ fn run() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&record)?);
             }
         },
+    }
+    if json && let Some(recorder) = recorder {
+        println!("{}", serde_json::to_string_pretty(&recorder.receipt()?)?);
     }
     Ok(())
 }
@@ -2130,7 +2282,7 @@ mod command_access_tests {
     #[test]
     fn read_surfaces_use_read_only_authority_admission() {
         for command in [
-            Cmd::Status { json: true },
+            Cmd::Status {},
             Cmd::Audit,
             Cmd::Export {
                 plan: None,
@@ -2148,7 +2300,6 @@ mod command_access_tests {
                 cmd: CommitCmd::Find {
                     commit_oid: "a".repeat(40),
                     repo: None,
-                    json: true,
                 },
             },
             Cmd::Mise {
