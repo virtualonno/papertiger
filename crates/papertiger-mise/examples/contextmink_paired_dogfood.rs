@@ -26,10 +26,10 @@ use papertiger_mise::{
     PairedCohortAdjudication, PairedExecutionParticipant, PairedExecutionParticipants,
     PairedFixtureBinding, PairedObjectivePolicy, PairedRunOutcome, PairedSlotSeedCommitment,
     PreparePairedCohortSpec, RationalThreshold, adjudicate_paired_cohort, admit_verified_campaign,
-    bind_candidate, budget_balances, build_git_change_set_material, execute_next_paired_run, init,
-    inspect_source_binding, materialize_candidate, open_for_init, prepare_paired_cohort,
-    preserve_object, record_candidate, reserve_budget, reserve_paired_analysis_slot,
-    verify_campaign_admission,
+    bind_candidate, budget_balances, build_git_change_set_material, execute_next_paired_run,
+    git_worktree_add_without_hooks, init, inspect_source_binding, materialize_candidate,
+    open_for_init, prepare_paired_cohort, preserve_object, record_candidate, reserve_budget,
+    reserve_paired_analysis_slot, verify_campaign_admission,
 };
 use serde_json::json;
 
@@ -649,15 +649,10 @@ fn candidate_fixture(
             .context("candidate worktree has no UTF-8 name")?
     );
     let authoring = worktree.with_file_name(authoring_name);
-    git(
+    git_worktree_add_without_hooks(
         Path::new(&source.repository_locator),
-        &[
-            "worktree",
-            "add",
-            "--detach",
-            authoring.to_str().context("authoring path is not UTF-8")?,
-            &source.base_commit,
-        ],
+        &authoring,
+        &source.base_commit,
     )?;
     if !patch.is_empty() {
         git_apply(&authoring, &patch)?;
