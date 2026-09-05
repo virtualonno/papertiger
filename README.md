@@ -26,6 +26,31 @@ Papertiger has no server or account. It ships as two Rust binaries:
   currently done. Their actor fields record transition authorship, not task
   ownership. `list --sort activity` orders work by the latest meaningful event
   without inventing time tracking.
+- `show --json` is the task work record. Task context v6 includes full details
+  for the selected task and compact identity/status summaries for related
+  tasks; read a related task explicitly for its full context. `schema` prints
+  the bundled JSON Schema for context, status, task lists, history, recovery,
+  and mutation receipts without opening a database. All fields are local
+  planning data and require editorial review before external publication.
+- Mutations accept `--json` to emit `papertiger.mutation.v1`: the exact committed
+  events and their task/plan snapshots, captured inside the transaction. Clients
+  obtain new task selectors from `events[].task.seq` without scraping prose.
+  Refusals emit no success receipt; idempotent operations can report
+  `changed=false`. Initialization has its own human-readable migration result.
+- `--model <model-id>` or `PAPERTIGER_MODEL` optionally records caller-reported
+  event authorship independently of actor and meaning source. Creation,
+  completion, and status history expose it; historical unknowns remain null.
+  This is attribution, not authenticated identity or a model-quality score.
+- `move-plan <N>... --plan <slug> --why <reason>` moves an explicitly selected
+  related set atomically. Dependencies, hierarchy, replacement links, gates,
+  references, status, and task identity remain intact. A partial set refuses
+  with the missing task selectors. Historical events keep their original plans.
+- `reference add <N> <locator> --kind <kind>` records inward issue, pull-request,
+  review, ADR, input, or other references. Optional `--sha256` and `--note`
+  retain byte identity and context; `reference list`, `find`, and `remove`
+  support exact archaeology. References never fetch data or satisfy gates.
+  A stored reference hash is an assertion; `evidence verify` continues to
+  verify gate and blocker bindings, not these planning inputs.
 - `log --json` provides full event records and history-bound cursors for older
   pages or incremental reads. A cursor from divergent history refuses. New
   task-edit events carry canonical before/after definition revisions; old edit
@@ -263,15 +288,19 @@ so an explicitly selected database can resolve `file:` locators beneath the
 supplied root. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 
-The current authority schema is v8. Before migrating an older authority, use
+The current planner authority schema is v9. Before migrating an older authority, use
 its matching Papertiger release to archive its current export. Current import
-accepts only `papertiger.dump.v7`; restore an older dump with the release that
+accepts only `papertiger.dump.v8`; restore an older dump with the release that
 produced it, migrate that temporary authority, and re-export it.
 
-Planner and Mise schema v8 store distinct authority identities. Either binary
-refuses the other authority without changing its bytes. A v7 authority is
-migrated only by its matching binary's explicit `init` command; the dump shape
-remains `papertiger.dump.v7` because authority identity is local metadata.
+Planner and Mise store distinct authority identities; their schema versions
+are independent. Either binary refuses the other authority without changing
+its bytes. Run the installed planner's explicit `init` to migrate an existing
+authority. Schema v9 adds external references and protects relocated history
+from older readers. Current plan-scoped exports include only tasks currently
+in that plan, their complete histories, and the former-plan definitions needed
+to restore those histories. Prior event cursors remain valid after a move in
+the same authority; importing a scoped export is a separate recovery history.
 
 Verify retained local evidence without mutating the authority:
 
