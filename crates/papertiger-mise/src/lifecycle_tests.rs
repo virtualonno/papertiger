@@ -11,6 +11,11 @@ use super::*;
 use crate::git_materialization::{git_run, reject_checkout_transform_rules};
 use crate::path_identity::{canonical_or_pending_absolute, trial_path_identity};
 
+// Behavior tests allow native startup and scheduling under host contention.
+// Keep this below the 30-second sleeping child so cleanup and cancellation
+// still have to act; explicit deadline tests provide their own short bound.
+const FIXTURE_WALL_TIME_MS: u64 = 20_000;
+
 #[test]
 fn deterministic_runtime_refuses_paired_campaigns() {
     let mut manifest = crate::manifest::tests::valid_manifest();
@@ -136,7 +141,12 @@ fn prepared_with_evaluator(
     maximum_output_bytes: u64,
     evaluator_mode: &str,
 ) -> (Connection, tempfile::TempDir, BoundCandidate) {
-    prepared_with_evaluator_and_request(maximum_output_bytes, 5_000, evaluator_mode, 0)
+    prepared_with_evaluator_and_request(
+        maximum_output_bytes,
+        FIXTURE_WALL_TIME_MS,
+        evaluator_mode,
+        0,
+    )
 }
 
 fn prepared_with_evaluator_and_request(
@@ -562,7 +572,12 @@ fn prepared_trial_with_evaluator(
     MaterializationRecord,
     MaterializationRecord,
 ) {
-    prepared_trial_with_evaluator_and_request(maximum_output_bytes, 5_000, evaluator_mode, 0)
+    prepared_trial_with_evaluator_and_request(
+        maximum_output_bytes,
+        FIXTURE_WALL_TIME_MS,
+        evaluator_mode,
+        0,
+    )
 }
 
 fn prepared_trial_with_evaluator_and_request(
@@ -671,7 +686,8 @@ fn reserve_fixture_trial_budget(connection: &Connection, campaign_id: &str, rese
             BudgetRequest::new(BudgetResource::Trials, 1).expect("trial"),
             BudgetRequest::new(BudgetResource::Failures, 1).expect("failure"),
             BudgetRequest::new(BudgetResource::HoldoutDisclosures, 1).expect("disclosure"),
-            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 5_000).expect("wall"),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, FIXTURE_WALL_TIME_MS)
+                .expect("wall"),
             BudgetRequest::new(BudgetResource::DiskBytesWritten, 8 * 1024).expect("disk"),
             BudgetRequest::new(BudgetResource::ArtifactBytes, 16 * 1024).expect("artifact"),
         ],
@@ -705,7 +721,7 @@ fn cancellation_survives_reopen_stops_real_trial_and_charges_once() {
     let worker = std::thread::spawn(move || {
         execute_workspace_trial(&connection, "supervisor", &object_path, &spec)
     });
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_millis(2 * FIXTURE_WALL_TIME_MS);
     let launched = loop {
         if let Some(record) = trial(&observer, "cancel-trial").unwrap()
             && record.status == TrialStatus::Launched
@@ -1197,7 +1213,8 @@ fn workspace_supervisor_owns_real_process_and_completion() {
             BudgetRequest::new(BudgetResource::Trials, 1).expect("trial"),
             BudgetRequest::new(BudgetResource::Failures, 1).expect("failure"),
             BudgetRequest::new(BudgetResource::HoldoutDisclosures, 1).expect("disclosure"),
-            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 5_000).expect("wall"),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, FIXTURE_WALL_TIME_MS)
+                .expect("wall"),
             BudgetRequest::new(BudgetResource::DiskBytesWritten, 8 * 1024).expect("disk"),
             BudgetRequest::new(BudgetResource::ArtifactBytes, 16 * 1024).expect("artifact"),
         ],
@@ -1261,7 +1278,8 @@ fn trial_success_and_budget_settlement_are_one_atomic_transition() {
             BudgetRequest::new(BudgetResource::Trials, 1).expect("trial"),
             BudgetRequest::new(BudgetResource::Failures, 1).expect("failure"),
             BudgetRequest::new(BudgetResource::HoldoutDisclosures, 1).expect("disclosure"),
-            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 5_000).expect("wall"),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, FIXTURE_WALL_TIME_MS)
+                .expect("wall"),
             BudgetRequest::new(BudgetResource::DiskBytesWritten, 8 * 1024).expect("disk"),
             BudgetRequest::new(BudgetResource::ArtifactBytes, 16 * 1024).expect("artifact"),
         ],
@@ -1323,7 +1341,8 @@ fn cold_recovery_heals_legacy_succeeded_unsettled_trial_without_execution() {
             BudgetRequest::new(BudgetResource::Trials, 1).expect("trial"),
             BudgetRequest::new(BudgetResource::Failures, 1).expect("failure"),
             BudgetRequest::new(BudgetResource::HoldoutDisclosures, 1).expect("disclosure"),
-            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 5_000).expect("wall"),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, FIXTURE_WALL_TIME_MS)
+                .expect("wall"),
             BudgetRequest::new(BudgetResource::DiskBytesWritten, 8 * 1024).expect("disk"),
             BudgetRequest::new(BudgetResource::ArtifactBytes, 16 * 1024).expect("artifact"),
         ],
@@ -1399,7 +1418,8 @@ fn workspace_supervisor_hard_caps_retained_output() {
             BudgetRequest::new(BudgetResource::Trials, 1).expect("trial"),
             BudgetRequest::new(BudgetResource::Failures, 1).expect("failure"),
             BudgetRequest::new(BudgetResource::HoldoutDisclosures, 1).expect("disclosure"),
-            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 5_000).expect("wall"),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, FIXTURE_WALL_TIME_MS)
+                .expect("wall"),
             BudgetRequest::new(BudgetResource::DiskBytesWritten, 8 * 1024).expect("disk"),
             BudgetRequest::new(BudgetResource::ArtifactBytes, 16 * 1024).expect("artifact"),
         ],
@@ -1443,7 +1463,8 @@ fn workspace_supervisor_retains_successful_process_stderr_as_failure_evidence() 
             BudgetRequest::new(BudgetResource::Trials, 1).expect("trial"),
             BudgetRequest::new(BudgetResource::Failures, 1).expect("failure"),
             BudgetRequest::new(BudgetResource::HoldoutDisclosures, 1).expect("disclosure"),
-            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 5_000).expect("wall"),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, FIXTURE_WALL_TIME_MS)
+                .expect("wall"),
             BudgetRequest::new(BudgetResource::DiskBytesWritten, 8 * 1024).expect("disk"),
             BudgetRequest::new(BudgetResource::ArtifactBytes, 16 * 1024).expect("artifact"),
         ],
@@ -1502,7 +1523,8 @@ fn workspace_supervisor_quiesces_descendants_holding_inherited_output_handles() 
             BudgetRequest::new(BudgetResource::Trials, 1).expect("trial"),
             BudgetRequest::new(BudgetResource::Failures, 1).expect("failure"),
             BudgetRequest::new(BudgetResource::HoldoutDisclosures, 1).expect("disclosure"),
-            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 5_000).expect("wall"),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, FIXTURE_WALL_TIME_MS)
+                .expect("wall"),
             BudgetRequest::new(BudgetResource::DiskBytesWritten, 8 * 1024).expect("disk"),
             BudgetRequest::new(BudgetResource::ArtifactBytes, 16 * 1024).expect("artifact"),
         ],
@@ -1582,7 +1604,8 @@ fn workspace_supervisor_refuses_materialization_drift_before_intent() {
             BudgetRequest::new(BudgetResource::Trials, 1).expect("trial"),
             BudgetRequest::new(BudgetResource::Failures, 1).expect("failure"),
             BudgetRequest::new(BudgetResource::HoldoutDisclosures, 1).expect("disclosure"),
-            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 5_000).expect("wall"),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, FIXTURE_WALL_TIME_MS)
+                .expect("wall"),
             BudgetRequest::new(BudgetResource::DiskBytesWritten, 8 * 1024).expect("disk"),
             BudgetRequest::new(BudgetResource::ArtifactBytes, 16 * 1024).expect("artifact"),
         ],
@@ -1621,7 +1644,8 @@ fn workspace_supervisor_records_launcher_drift_as_terminal_integrity() {
             BudgetRequest::new(BudgetResource::Trials, 1).expect("trial"),
             BudgetRequest::new(BudgetResource::Failures, 1).expect("failure"),
             BudgetRequest::new(BudgetResource::HoldoutDisclosures, 1).expect("disclosure"),
-            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 5_000).expect("wall"),
+            BudgetRequest::new(BudgetResource::WallTimeMilliseconds, FIXTURE_WALL_TIME_MS)
+                .expect("wall"),
             BudgetRequest::new(BudgetResource::DiskBytesWritten, 8 * 1024).expect("disk"),
             BudgetRequest::new(BudgetResource::ArtifactBytes, 16 * 1024).expect("artifact"),
         ],
@@ -1662,7 +1686,7 @@ fn workspace_supervisor_records_lockfile_drift_and_stops_campaign() {
     let (connection, objects, candidate, materialization, baseline) =
         prepared_trial_with_evaluator_request_and_frozen_rust_inputs(
             8 * 1024,
-            5_000,
+            FIXTURE_WALL_TIME_MS,
             "success",
             0,
             true,
@@ -1726,7 +1750,7 @@ fn workspace_supervisor_records_toolchain_drift_as_terminal_integrity() {
     let (connection, objects, candidate, _, _) =
         prepared_trial_with_evaluator_request_and_frozen_rust_inputs(
             8 * 1024,
-            5_000,
+            FIXTURE_WALL_TIME_MS,
             "success",
             0,
             true,
