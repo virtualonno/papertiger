@@ -16,6 +16,7 @@ pub mod domain_shadow;
 mod executor;
 mod git_materialization;
 pub mod improvement;
+pub mod inspection;
 mod lifecycle;
 pub mod manifest;
 pub mod measurement;

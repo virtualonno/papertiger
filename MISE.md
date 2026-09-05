@@ -677,6 +677,25 @@ self-authorizing its own deployment.
 
 ## Operational boundary
 
+`papertiger-mise guide` emits the concise workflow from the running binary;
+`guide --reference` emits this complete matching reference. Both work without
+an initialized authority. The ordinary agent selects a campaign only when a
+fixed comparative experiment is useful; Mise supplies neither domain metrics
+nor automatic hypothesis generation.
+
+`campaign inspect <id>` discovers recorded candidates, trials, paired cohorts,
+and reservations in one read-only SQLite snapshot. Choose `--section
+candidates|trials|cohorts|reservations`; `--limit` accepts 1–100 (default 20).
+`papertiger-mise.campaign-inspection.v1` reports complete entity counts and
+recorded budgets alongside the selected page, exact inspection argument vectors,
+and continuation arguments that retain the project and database selection.
+Pagination is live identity ordering: restart it after concurrent changes.
+The stored manifest's hash and identity are checked, but CAS evidence, current
+driver compatibility, process liveness, and execution readiness are not.
+Use the discovered IDs with the existing inspection, recovery, and projection
+commands before relying on a result; totals and a stored nomination label
+cannot substitute for reopened evidence.
+
 Mise is an episodic external driver, not permanent consuming-project tooling.
 Keep the exact `papertiger-mise` peer binary from a Papertiger release outside
 the consumer and invoke it with `--project-root <consumer>`. Every relative

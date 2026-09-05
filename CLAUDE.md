@@ -50,7 +50,8 @@ each under 32 KiB.
   work matching an existing durable task, read
   `.agents/skills/papertiger/SKILL.md` completely and follow it. Skip one
   bounded edit, read-only review, intermediate steps inside one independently
-  reviewable outcome, and domain-owned or shared-team lifecycle.
+  reviewable outcome, and domain-owned or shared-team lifecycle. Resume an
+  existing durable task even when its next step is a bounded edit or read-only.
 - Invoke the receipt-bound binary at
   `tools/papertiger/bin/papertiger[.exe]`; do not guess from `target/` or rely
   on an unrelated `papertiger` on `PATH`.

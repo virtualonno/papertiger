@@ -384,6 +384,88 @@ fn deterministic_public_api_campaign_preserves_every_outcome() {
     assert!(error.to_string().contains("exceeds campaign"), "{error:#}");
 
     fixture.prove_successor_lineage(&connection, &nomination, &improved);
+
+    // A cold caller can discover both successful and failed work through the
+    // public read surface, without retaining the proposal driver's ID map.
+    let readonly =
+        papertiger_mise::open_existing_read_only(&fixture.database).expect("read-only inspection");
+    let candidates = papertiger_mise::inspection::inspect_campaign(
+        &readonly,
+        CAMPAIGN_ID,
+        papertiger_mise::inspection::InspectionSection::Candidates,
+        100,
+        0,
+    )
+    .unwrap();
+    assert!(
+        candidates
+            .items
+            .iter()
+            .any(|item| item["candidate_id"] == improved.candidate_id
+                && item["disposition"] == "nominated")
+    );
+    let trials = papertiger_mise::inspection::inspect_campaign(
+        &readonly,
+        CAMPAIGN_ID,
+        papertiger_mise::inspection::InspectionSection::Trials,
+        100,
+        0,
+    )
+    .unwrap();
+    assert!(
+        trials.items.iter().any(
+            |item| item["trial_id"] == "crashed-1" && item["status"] == "infrastructure_failed"
+        )
+    );
+    assert!(
+        trials
+            .items
+            .iter()
+            .any(|item| item["trial_id"] == "interrupted-1")
+    );
+    let first = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+        .args([
+            "--project-root",
+            &fixture.manifest.source.repository_locator,
+            "--db",
+            fixture.database.to_str().unwrap(),
+            "campaign",
+            "inspect",
+            CAMPAIGN_ID,
+            "--limit",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let first: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    let continuation = first["continuation_arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|arg| arg.as_str().unwrap())
+        .collect::<Vec<_>>();
+    let second = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+        .current_dir(std::env::temp_dir())
+        .args(continuation)
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let second: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(second["campaign_id"], CAMPAIGN_ID);
+    assert_eq!(second["offset"], 1);
+    assert_ne!(
+        first["items"][0]["candidate_id"],
+        second["items"][0]["candidate_id"]
+    );
 }
 
 #[path = "../examples/support/synthetic_measurement.rs"]

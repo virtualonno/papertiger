@@ -6,6 +6,15 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Added
+
+- Mise `guide` supplies the running driver's concise agent workflow; `guide --reference` emits its full operating reference without opening an authority.
+- Mise `campaign inspect` discovers candidates, trials, paired cohorts, and reservations through bounded read-only pages. Continuation arguments preserve project and database selection. Recorded state remains separate from CAS verification and execution readiness.
+
+### Changed
+
+- The vendored Papertiger skill contains the ordinary task workflow and loads installation, recovery, and advanced-operation detail only when needed. Existing durable work remains tracked when its next step is a bounded edit or read-only check.
+
 ## [0.12.1] - 2026-09-05
 
 ### Fixed

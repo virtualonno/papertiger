@@ -53,6 +53,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Read the bundled agent workflow, or its complete operating reference.
+    Guide {
+        #[arg(long)]
+        reference: bool,
+    },
     /// Read-only orientation over the project-owned campaign authority.
     Status {
         #[arg(long)]
@@ -162,6 +167,16 @@ enum ProjectionCommand {
 
 #[derive(Subcommand)]
 enum CampaignCommand {
+    /// Discover recorded work in bounded live pages; does not reverify CAS or execution readiness.
+    Inspect {
+        campaign_id: String,
+        #[arg(long, default_value = "candidates")]
+        section: papertiger_mise::inspection::InspectionSection,
+        #[arg(long, default_value_t = 20)]
+        limit: u64,
+        #[arg(long, default_value_t = 0)]
+        offset: u64,
+    },
     /// Inspect the exact clean Git source binding used to author a manifest.
     SourceBinding { repository: PathBuf },
     /// Report every independently checkable admission defect without touching an authority.
@@ -496,6 +511,56 @@ fn main() {
 fn run(cli: Cli) -> Result<()> {
     let project_root = bind_project_root(cli.project_root.as_deref())?;
     match cli.command {
+        Command::Guide { reference } => {
+            print!(
+                "{}",
+                if reference {
+                    include_str!("../../../MISE.md")
+                } else {
+                    include_str!("../agent_guide.md")
+                }
+            );
+        }
+        Command::Campaign(CampaignCommand::Inspect {
+            campaign_id,
+            section,
+            limit,
+            offset,
+        }) => {
+            let connection = open_existing_read_only(&cli.db)?;
+            let inspection = papertiger_mise::inspection::inspect_campaign(
+                &connection,
+                &campaign_id,
+                section,
+                limit,
+                offset,
+            )?;
+            let mut output = serde_json::to_value(&inspection)?;
+            let prefix = vec![
+                "--project-root".to_owned(),
+                portable_absolute(&project_root)?,
+                "--db".to_owned(),
+                portable_absolute(&absolute_from(&project_root, &cli.db))?,
+            ];
+            output["command_prefix_arguments"] = serde_json::to_value(&prefix)?;
+            output["continuation_arguments"] =
+                serde_json::to_value(inspection.next_offset.map(|next| {
+                    let mut args = prefix;
+                    args.extend([
+                        "campaign".to_owned(),
+                        "inspect".to_owned(),
+                        campaign_id,
+                        "--section".to_owned(),
+                        section.as_str().to_owned(),
+                        "--limit".to_owned(),
+                        limit.to_string(),
+                        "--offset".to_owned(),
+                        next.to_string(),
+                    ]);
+                    args
+                }))?;
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
         Command::Improvement(command) => match command {
             ImprovementCommand::Paradigms { json } => {
                 let (registry, digest) = improvement::builtin_paradigm_registry()?;

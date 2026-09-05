@@ -12,6 +12,25 @@ fn run(arguments: &[&str], current_directory: &std::path::Path) -> Output {
 }
 
 #[test]
+fn bundled_guides_and_inspection_refusals_leave_missing_authority_untouched() {
+    let fixture = tempdir().unwrap();
+    for (args, expected) in [
+        (vec!["guide"], include_str!("../agent_guide.md")),
+        (
+            vec!["guide", "--reference"],
+            include_str!("../../../MISE.md"),
+        ),
+    ] {
+        let output = run(&args, fixture.path());
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+    }
+    let missing = run(&["campaign", "inspect", "missing-a01"], fixture.path());
+    assert!(!missing.status.success());
+    assert!(!fixture.path().join("state").exists());
+}
+
+#[test]
 fn project_root_binds_default_authority_from_an_unrelated_working_directory() {
     let fixture = tempdir().expect("fixture");
     let project = fixture.path().join("consumer");

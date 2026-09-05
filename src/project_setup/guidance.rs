@@ -485,7 +485,7 @@ fn corrective_trigger(relative: &str, skill_targets: &[SkillTarget]) -> String {
         target.managed_path()
     });
     format!(
-        "Before the first edit or commit on multi-outcome or separate-commit work, or work matching an existing durable task, read `{selected}` completely and follow it. Skip one bounded edit, read-only review, intermediate steps inside one independently reviewable outcome, and domain-owned or shared-team lifecycle."
+        "Before the first edit or commit on multi-outcome or separate-commit work, or work matching an existing durable task, read `{selected}` completely and follow it. Skip new bounded edits or read-only reviews without a durable outcome, intermediate steps, and domain-owned or shared-team lifecycle. Resume existing durable work even for a small step."
     )
 }
 

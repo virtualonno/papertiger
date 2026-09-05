@@ -13,6 +13,14 @@ Papertiger has no server or account. It ships as two Rust binaries:
   campaigns. It stays outside the consuming project and has no authority to
   close planning tasks, integrate changes, or deploy software.
 
+The vendored planning skill supplies the ordinary task workflow without
+requiring the full installation reference. It resumes existing outcomes,
+records validated follow-up, and leaves transient checklist steps alone.
+For a fixed comparison of plausible candidates, start with `papertiger-mise
+guide`; `campaign inspect <id>` discovers retained work in bounded pages.
+The guide is not a ready-made domain evaluator, and inspection does not reverify
+CAS evidence or establish that a campaign can still execute.
+
 ## What the planner enforces
 
 - `status --json`, `focus --json`, `list --json`, and `show <N> --json` provide
