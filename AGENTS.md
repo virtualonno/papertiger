@@ -71,6 +71,8 @@ each under 32 KiB.
 - When validated deferred work, proof debt, or tooling friction should survive
   this session, use the Papertiger contract proactively; do not create
   same-session checklist tasks or interrupt authorized work unnecessarily.
+Resume existing durable work even when its next step is a bounded edit or
+read-only check.
 
 Before broad or potentially high-output file, text, structured-data, or command-output reads, load `.agents/skills/contextmink/SKILL.md`. Skip known-small direct reads and project-native compact or domain-query commands.
 
