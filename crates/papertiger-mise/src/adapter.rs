@@ -17,6 +17,7 @@ use crate::validation::validate_bounded_token as validate_token;
 
 pub const PAIRED_ADAPTER_BINDING_SCHEMA_V1: &str = "papertiger-mise.paired-adapter-binding.v1";
 pub const PAIRED_TRIAL_REQUEST_SCHEMA_V2: &str = "papertiger-mise.paired-trial-request.v2";
+pub const PAIRED_TRIAL_REQUEST_SCHEMA_V3: &str = "papertiger-mise.paired-trial-request.v3";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -117,6 +118,8 @@ pub struct PairedTrialObjective {
     pub objective: String,
     pub scale10: u8,
     pub measurement_summary_protocol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<crate::measurement::MeasurementContract>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +145,8 @@ pub struct PairedTrialRequest {
 pub struct DomainTrialMeasurement {
     pub objective: String,
     pub units: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::measurement::MeasurementSample>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,18 +324,32 @@ where
         let candidate_measurements = candidate_result
             .measurements
             .iter()
-            .map(|measurement| (measurement.objective.as_str(), measurement.units))
+            .map(|measurement| (measurement.objective.as_str(), measurement))
             .collect::<BTreeMap<_, _>>();
         let observations = baseline
             .measurements
             .iter()
             .map(|measurement| {
+                let candidate = candidate_measurements
+                    .get(measurement.objective.as_str())
+                    .context("candidate domain measurement disappeared")?;
+                let provenance = match (&measurement.provenance, &candidate.provenance) {
+                    (Some(baseline), Some(candidate)) => {
+                        Some(crate::measurement::ObservationProvenance {
+                            baseline: baseline.clone(),
+                            candidate: candidate.clone(),
+                        })
+                    }
+                    (None, None) => None,
+                    _ => bail!(
+                        "paired participants must both supply the frozen measurement provenance"
+                    ),
+                };
                 Ok(PairedObjectiveObservation {
                     objective: measurement.objective.clone(),
                     baseline_units: measurement.units,
-                    candidate_units: *candidate_measurements
-                        .get(measurement.objective.as_str())
-                        .context("candidate domain measurement disappeared")?,
+                    candidate_units: candidate.units,
+                    provenance,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -410,7 +429,15 @@ pub(crate) fn prepare_paired_adapter_cohort(
                 PairedParticipantRole::Candidate => &participants.candidate,
             };
             requests.push(PairedTrialRequest {
-                schema: PAIRED_TRIAL_REQUEST_SCHEMA_V2.to_owned(),
+                schema: if objectives
+                    .iter()
+                    .any(|objective| objective.measurement.is_some())
+                {
+                    PAIRED_TRIAL_REQUEST_SCHEMA_V3
+                } else {
+                    PAIRED_TRIAL_REQUEST_SCHEMA_V2
+                }
+                .to_owned(),
                 execution_id: trial_execution_id(
                     experiment_id,
                     &schedule_sha256,
@@ -437,6 +464,7 @@ pub(crate) fn prepare_paired_adapter_cohort(
                         Ok(PairedTrialObjective {
                             objective: objective.key.clone(),
                             scale10: policy.scale10,
+                            measurement: objective.measurement.clone(),
                             measurement_summary_protocol: policy
                                 .measurement_summary_protocol
                                 .clone(),
@@ -579,6 +607,26 @@ pub(crate) fn validate_domain_trial_result(
         .collect::<BTreeSet<_>>();
     if observed.len() != result.measurements.len() || observed != expected {
         bail!("paired trial result must contain every admitted objective exactly once");
+    }
+    for measurement in &result.measurements {
+        let objective = request
+            .objectives
+            .iter()
+            .find(|objective| objective.objective == measurement.objective)
+            .context("paired measurement objective disappeared")?;
+        crate::measurement::validate_paired_sample(
+            objective.measurement.as_ref(),
+            measurement.provenance.as_ref(),
+            measurement.units,
+            objective.scale10,
+        )?;
+        if let Some(provenance) = &measurement.provenance {
+            provenance.validate_runtime_binding(
+                &request.participant.revision,
+                &request.fixture_sha256.0,
+                &request.environment_profile_sha256.0,
+            )?;
+        }
     }
     Ok(())
 }
@@ -760,6 +808,107 @@ mod tests {
     }
 
     #[test]
+    fn paired_v3_rejects_missing_and_substituted_provenance_before_classification() {
+        let plan = crate::statistics::tests::plan();
+        let mut objectives = crate::statistics::tests::objectives();
+        for objective in &mut objectives {
+            objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
+        }
+        let candidate_identity = Sha256Digest("e".repeat(64));
+        let candidate = PairedCandidateContext {
+            cohort: PairedCohort::Research {
+                candidate_analysis_slot: 1,
+            },
+            candidate_identity_sha256: &candidate_identity,
+            revealed_order_seed: b"mise-test-research-order-seed-0001",
+        };
+        let participants = PairedExecutionParticipants {
+            baseline: PairedExecutionParticipant {
+                identity_sha256: Sha256Digest("b".repeat(64)),
+                revision: "baseline".to_owned(),
+            },
+            candidate: PairedExecutionParticipant {
+                identity_sha256: candidate_identity.clone(),
+                revision: "candidate".to_owned(),
+            },
+        };
+        let request = prepare_paired_adapter_cohort(
+            "provenance-fixture",
+            &plan,
+            &objectives,
+            &candidate,
+            &participants,
+        )
+        .unwrap()
+        .requests
+        .remove(0);
+        assert_eq!(request.schema, PAIRED_TRIAL_REQUEST_SCHEMA_V3);
+        let binding = plan.trial_adapter.as_ref().unwrap();
+        let request_sha256 =
+            sha256(&serde_json::to_vec(&serde_json::to_value(&request).unwrap()).unwrap());
+        let result = DomainTrialResult {
+            schema: binding.result_schema.clone(),
+            execution_id: request.execution_id.clone(),
+            request_sha256: Sha256Digest(request_sha256.clone()),
+            adapter_executable_sha256: binding.executable_sha256.clone(),
+            participant_identity_sha256: request.participant.identity_sha256.clone(),
+            domain_trial_receipt: serde_json::json!({"synthetic": true}),
+            domain_authority: serde_json::json!({"synthetic": true}),
+            measurements: request
+                .objectives
+                .iter()
+                .map(|objective| {
+                    let mut sample = crate::measurement::tests::sample(
+                        objective.measurement.as_ref().unwrap(),
+                        1,
+                    );
+                    sample.participant_revision = request.participant.revision.clone();
+                    sample.fixture_sha256 = request.fixture_sha256.0.clone();
+                    sample.environment_sha256 = request.environment_profile_sha256.0.clone();
+                    sample.scale10 = objective.scale10;
+                    DomainTrialMeasurement {
+                        objective: objective.objective.clone(),
+                        units: 1,
+                        provenance: Some(sample),
+                    }
+                })
+                .collect(),
+        };
+        validate_domain_trial_result(binding, &request, &result, &request_sha256).unwrap();
+        for field in [
+            "omission",
+            "revision",
+            "environment",
+            "fixture",
+            "cardinality",
+            "value",
+            "scale",
+            "process",
+        ] {
+            let mut invalid = result.clone();
+            if field == "omission" {
+                invalid.measurements[0].provenance = None;
+            } else {
+                let sample = invalid.measurements[0].provenance.as_mut().unwrap();
+                match field {
+                    "revision" => sample.participant_revision = "other".to_owned(),
+                    "environment" => sample.environment_sha256 = "0".repeat(64),
+                    "fixture" => sample.fixture_sha256 = "0".repeat(64),
+                    "cardinality" => sample.observed.workload.cardinality += 1,
+                    "value" => sample.value = 9.into(),
+                    "scale" => sample.scale10 += 1,
+                    "process" => sample.process.executable_locator = "/toolchain/rustc".to_owned(),
+                    _ => unreachable!(),
+                }
+            }
+            assert!(
+                validate_domain_trial_result(binding, &request, &invalid, &request_sha256).is_err(),
+                "accepted substituted {field}"
+            );
+        }
+    }
+
+    #[test]
     fn mise_sequences_every_adjacent_pair_before_classifying_adapter_results() {
         let plan = crate::statistics::tests::plan();
         let objectives = crate::statistics::tests::objectives();
@@ -795,6 +944,7 @@ mod tests {
                     .objectives
                     .iter()
                     .map(|objective| DomainTrialMeasurement {
+                        provenance: None,
                         objective: objective.objective.clone(),
                         units: match (objective.objective.as_str(), request.participant_role) {
                             ("correct", _) => 1,

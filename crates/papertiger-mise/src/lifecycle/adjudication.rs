@@ -28,6 +28,21 @@ pub(super) fn validate_calibration_outcome(
     {
         bail!("known-bad calibration did not produce its exact expected rejection");
     }
+    if matches!(
+        trial.tier.as_str(),
+        "calibration.no_op" | "calibration.known_bad"
+    ) {
+        crate::measurement::validate_resource_calibration(
+            classification.objectives.iter().map(|result| {
+                (
+                    result.key.as_str(),
+                    result.measurement.as_ref(),
+                    result.acceptance_passed,
+                )
+            }),
+            trial.tier == "calibration.known_bad",
+        )?;
+    }
     Ok(())
 }
 
@@ -418,7 +433,7 @@ pub(super) fn verify_completed_trial_evidence(
             .clone()
             .context("successful trial has no process-birth identity")?,
     };
-    validate_completion_binding(&durable, &receipt, &credential, manifest)?;
+    validate_completion_binding(connection, &durable, &receipt, &credential, manifest)?;
     validate_trial_receipt_schema(&durable, &receipt, manifest)?;
     validate_judge_build_receipt(object_root, &durable, &receipt, manifest)?;
     let classification =

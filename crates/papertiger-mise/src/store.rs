@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::budget::{BudgetLimit, BudgetResource};
 use crate::digest::{sha256, validate_sha256};
-use crate::manifest::{CAMPAIGN_SCHEMA_V1, CampaignManifest};
+use crate::manifest::CampaignManifest;
 use crate::validation::validate_nonblank;
 
 pub const SCHEMA_VERSION: i64 = 9;
@@ -309,7 +309,7 @@ impl CampaignAdmission {
         let canonical_manifest: CampaignManifest = serde_json::from_str(&manifest_json)?;
         Ok(Self {
             campaign_id: manifest.campaign_id.clone(),
-            manifest_schema: CAMPAIGN_SCHEMA_V1.to_owned(),
+            manifest_schema: manifest.schema.clone(),
             manifest_sha256: sha256(manifest_json.as_bytes()),
             manifest_json,
             limits: canonical_manifest.budgets.caps,

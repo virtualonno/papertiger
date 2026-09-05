@@ -271,6 +271,7 @@ fn prepared_with_evaluator_request_and_frozen_rust_inputs(
             minimum_practical_change: 0.0,
             regression_tolerance: 0.0,
             acceptance_threshold: None,
+            measurement: None,
             target_value: None,
         });
     }
@@ -3182,11 +3183,13 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
     );
     let flat = vec![
         DeterministicObservation {
+            provenance: None,
             objective: "tests-pass".to_owned(),
             baseline: 1.0,
             candidate: 1.0,
         },
         DeterministicObservation {
+            provenance: None,
             objective: "latency-ms".to_owned(),
             baseline: 10.0,
             candidate: 10.0,
@@ -3220,11 +3223,13 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
         (
             vec![
                 DeterministicObservation {
+                    provenance: None,
                     objective: "tests-pass".to_owned(),
                     baseline: 1.0,
                     candidate: 0.0,
                 },
                 DeterministicObservation {
+                    provenance: None,
                     objective: "latency-ms".to_owned(),
                     baseline: 10.0,
                     candidate: 8.0,
@@ -3235,11 +3240,13 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
     );
     let improved_observations = vec![
         DeterministicObservation {
+            provenance: None,
             objective: "tests-pass".to_owned(),
             baseline: 1.0,
             candidate: 1.0,
         },
         DeterministicObservation {
+            provenance: None,
             objective: "latency-ms".to_owned(),
             baseline: 10.0,
             candidate: 8.0,

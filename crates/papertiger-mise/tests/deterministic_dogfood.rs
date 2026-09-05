@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use papertiger_mise::manifest::{
-    AdapterBinding, CAMPAIGN_SCHEMA_V1, CalibrationRequirements, CampaignManifest,
+    AdapterBinding, CAMPAIGN_SCHEMA_V2, CalibrationRequirements, CampaignManifest,
     CandidateMaterialContract, ContainmentGrade, CumulativeBudgetCaps, EvaluatorBinding,
     ExecutionLimits, GenerationBinding, HoldoutDisclosure, HoldoutPolicy, HoldoutTier,
     HoldoutTierKind, JudgeBuildBinding, KnownBadCalibration, MutationScope, NetworkPolicy,
@@ -324,6 +324,69 @@ fn deterministic_public_api_campaign_preserves_every_outcome() {
     fixture.prove_successor_lineage(&connection, &nomination, &improved);
 }
 
+#[path = "../examples/support/synthetic_measurement.rs"]
+mod synthetic_measurement;
+
+#[test]
+#[ignore = "run explicitly after Mise provenance changes"]
+fn native_v2_completion_refuses_unscoped_or_substituted_observations() {
+    let fixture = DogfoodFixture::new();
+    let connection = open_existing(&fixture.database).unwrap();
+    fixture.record_and_materialize(&connection, "no-op", "calibration-no-op", b"");
+    for (index, defect) in [
+        "provenance-missing",
+        "provenance-compiler",
+        "provenance-environment",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let candidate = fixture.record_and_materialize(
+            &connection,
+            defect,
+            defect,
+            &replace_score_patch("10", defect),
+        );
+        let trial_id = format!("provenance-refusal-{index}");
+        let spec = fixture.reserve_trial(
+            &connection,
+            &candidate.candidate_id,
+            &trial_id,
+            "exploration",
+        );
+        let error = execute_workspace_trial(&connection, ACTOR, &fixture.objects, &spec)
+            .expect_err("provenance defect must fail closed");
+        assert!(
+            format!("{error:#}").contains("provenance")
+                || format!("{error:#}").contains("measured executable"),
+            "{error:#}"
+        );
+        let record = trial(&connection, &trial_id).unwrap().unwrap();
+        assert_eq!(
+            record.status,
+            papertiger_mise::TrialStatus::InfrastructureFailed
+        );
+        let object: papertiger_mise::PreservedObject = serde_json::from_value(
+            record
+                .outcome
+                .unwrap()
+                .pointer("/absence_proof/evidence")
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        let evidence: serde_json::Value =
+            serde_json::from_slice(&read_object(&fixture.objects, &object).unwrap()).unwrap();
+        assert_eq!(evidence["reason"], "completion-refused");
+        assert!(
+            budget_balances(&connection, CAMPAIGN_ID)
+                .unwrap()
+                .iter()
+                .all(|balance| balance.reserved_amount == 0)
+        );
+    }
+}
+
 struct DogfoodFixture {
     _temporary: TempDir,
     database: PathBuf,
@@ -410,17 +473,34 @@ impl DogfoodFixture {
             "deterministic-evaluator{}",
             std::env::consts::EXE_SUFFIX
         ));
-        let compile = Command::new("rustc")
-            .arg(&evaluator_source)
-            .args(["--edition", "2024", "-O", "-o"])
-            .arg(&launcher)
+        let compile = Command::new(env!("CARGO"))
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args([
+                "build",
+                "--locked",
+                "--example",
+                "deterministic_evaluator",
+                "--message-format=json",
+            ])
             .output()
-            .expect("compile deterministic evaluator fixture");
+            .expect("build deterministic evaluator example");
         assert!(
             compile.status.success(),
-            "fixture evaluator compilation failed: {}",
+            "{}",
             String::from_utf8_lossy(&compile.stderr)
         );
+        let executable = String::from_utf8(compile.stdout)
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find_map(|event| {
+                (event["reason"] == "compiler-artifact"
+                    && event["target"]["name"] == "deterministic_evaluator")
+                    .then(|| event["executable"].as_str().map(str::to_owned))
+                    .flatten()
+            })
+            .expect("fixture compiler artifact path");
+        std::fs::copy(executable, &launcher).expect("freeze fixture executable");
         let launcher = canonical_absolute(launcher);
         let outer_judge = canonical_absolute(std::env::current_exe().expect("test executable"));
         let launcher_locator = portable_absolute(&launcher);
@@ -444,7 +524,7 @@ impl DogfoodFixture {
             &known_bad_patch,
         );
         let manifest = CampaignManifest {
-            schema: CAMPAIGN_SCHEMA_V1.to_owned(),
+            schema: CAMPAIGN_SCHEMA_V2.to_owned(),
             campaign_id: CAMPAIGN_ID.to_owned(),
             source: source_binding,
             mutation_scope: MutationScope {
@@ -497,7 +577,7 @@ impl DogfoodFixture {
                 workspace_root_locator: portable_absolute(&runs),
                 runtime_root_locator: Some(portable_absolute(temporary.path())),
                 maximum_trial_wall_time_ms: 5_000,
-                maximum_trial_output_bytes: 8 * 1024,
+                maximum_trial_output_bytes: 64 * 1024,
                 network: NetworkPolicy::Unrestricted,
             },
             objectives: vec![
@@ -509,6 +589,10 @@ impl DogfoodFixture {
                     minimum_practical_change: 1.0,
                     regression_tolerance: 0.0,
                     acceptance_threshold: None,
+                    measurement: Some(synthetic_measurement::contract(
+                        "ms",
+                        &format!("deterministic-evaluator{}", std::env::consts::EXE_SUFFIX),
+                    )),
                     target_value: None,
                 },
                 ObjectiveSpec {
@@ -519,6 +603,10 @@ impl DogfoodFixture {
                     minimum_practical_change: 0.0,
                     regression_tolerance: 0.0,
                     acceptance_threshold: Some(1.0),
+                    measurement: Some(synthetic_measurement::contract(
+                        "boolean",
+                        &format!("deterministic-evaluator{}", std::env::consts::EXE_SUFFIX),
+                    )),
                     target_value: None,
                 },
             ],
@@ -720,8 +808,8 @@ impl DogfoodFixture {
             budget_request(BudgetResource::Trials, 1),
             budget_request(BudgetResource::Failures, 1),
             budget_request(BudgetResource::WallTimeMilliseconds, 5_000),
-            budget_request(BudgetResource::DiskBytesWritten, 8 * 1024),
-            budget_request(BudgetResource::ArtifactBytes, 32 * 1024),
+            budget_request(BudgetResource::DiskBytesWritten, 64 * 1024),
+            budget_request(BudgetResource::ArtifactBytes, 128 * 1024),
         ];
         if !tier.starts_with("calibration.") {
             resources.push(budget_request(BudgetResource::HoldoutDisclosures, 1));

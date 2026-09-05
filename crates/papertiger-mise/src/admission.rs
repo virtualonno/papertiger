@@ -252,7 +252,7 @@ fn inspect_campaign_preflight(requested_manifest_path: &Path) -> CampaignPreflig
     collect_check(
         &mut report.defects,
         "manifest.contract",
-        manifest.validate(),
+        manifest.validate_for_admission(),
     );
 
     let source_repository = collect_check(
@@ -1062,6 +1062,10 @@ mod tests {
             let mut manifest = crate::manifest::tests::valid_manifest();
             if paired {
                 configure_paired_manifest(&mut manifest);
+            }
+            manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V2.to_owned();
+            for objective in &mut manifest.objectives {
+                objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
             }
             manifest.execution_limits.workspace_root_locator =
                 portable_absolute(&run).expect("run locator");

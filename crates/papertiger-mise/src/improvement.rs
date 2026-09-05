@@ -6,11 +6,12 @@ use papertiger::{sha256, validate_sha256};
 
 pub const PARADIGM_REGISTRY_SCHEMA_V1: &str = "papertiger.improvement-paradigm-registry.v1";
 pub const PARADIGM_TEMPLATE_SCHEMA_V1: &str = "papertiger.improvement-paradigm-template.v1";
-pub const PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V1: &str = "papertiger.project-improvement-brief.v1";
+pub const PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V2: &str = "papertiger.project-improvement-brief.v2";
 pub const BRIEF_APPROVAL_SCHEMA_V1: &str = "papertiger.project-improvement-brief-approval.v1";
-pub const COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V1: &str = "papertiger.compiled-improvement-draft.v1";
+pub const COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V2: &str = "papertiger.compiled-improvement-draft.v2";
 
-const CURRENT_REGISTRY: &str = include_str!("../../../docs/mise_templates/v2/registry.json");
+const CURRENT_REGISTRY: &str = include_str!("../../../docs/mise_templates/v3/registry.json");
+const HISTORICAL_REGISTRY_V2: &str = include_str!("../../../docs/mise_templates/v2/registry.json");
 const HISTORICAL_REGISTRY_V1: &str = include_str!("../../../docs/mise_templates/v1/registry.json");
 const REQUIRED_PARADIGMS: [&str; 8] = [
     "capability_effectiveness",
@@ -141,7 +142,7 @@ pub struct ImprovementOpportunity {
     pub fixtures: Vec<BriefFixture>,
     pub environment_requirements: Vec<EnvironmentRequirement>,
     pub uncertainties: Vec<String>,
-    pub resource_costs: Vec<String>,
+    pub resource_costs: Vec<BriefResourceCost>,
     pub objectives: Vec<BriefObjective>,
     pub mutation_allowlist: Vec<String>,
     pub budgets: Vec<BriefBudget>,
@@ -169,6 +170,14 @@ pub struct BriefObjective {
     pub minimum_practical_change_units: i64,
     pub regression_tolerance_units: i64,
     pub acceptance_threshold_units: Option<i64>,
+    pub measurement: crate::measurement::MeasurementContract,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BriefResourceCost {
+    pub key: String,
+    pub measurement: crate::measurement::MeasurementContract,
 }
 
 /// Exhaustive objective roles shared by planning briefs and admitted Mise
@@ -252,6 +261,7 @@ pub struct CompiledCampaignDraft {
     pub inference_scope: String,
     pub anti_goodhart: AntiGoodhartControls,
     pub objectives: Vec<BriefObjective>,
+    pub resource_costs: Vec<BriefResourceCost>,
     pub fixtures: Vec<BriefFixture>,
     pub environment_requirements: Vec<EnvironmentRequirement>,
     pub mutation_allowlist: Vec<String>,
@@ -269,6 +279,7 @@ pub fn builtin_paradigm_registry() -> Result<(ParadigmRegistry, String)> {
 fn paradigm_registry_for_digest(digest: &str) -> Result<ParadigmRegistry> {
     for bytes in [
         CURRENT_REGISTRY.as_bytes(),
+        HISTORICAL_REGISTRY_V2.as_bytes(),
         HISTORICAL_REGISTRY_V1.as_bytes(),
     ] {
         if sha256(bytes) == digest {
@@ -311,14 +322,18 @@ pub fn paradigm_registry_sha256(bytes: &[u8]) -> String {
 }
 
 pub fn validate_project_improvement_brief(bytes: &[u8]) -> Result<ProjectImprovementBrief> {
+    let header: serde_json::Value =
+        serde_json::from_slice(bytes).context("parse project improvement brief JSON")?;
+    if header["schema"] != PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V2 {
+        bail!(
+            "project improvement brief requires {PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V2} with typed objectives[].measurement and resource_costs; retain historical v1 bytes and author a new brief"
+        );
+    }
     let brief: ProjectImprovementBrief =
         serde_json::from_slice(bytes).context("parse project improvement brief JSON")?;
     let value: serde_json::Value =
         serde_json::from_slice(bytes).context("parse project improvement brief JSON")?;
     reject_unresolved_placeholders(&value, "brief")?;
-    if brief.schema != PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V1 {
-        bail!("project improvement brief schema must be {PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V1}");
-    }
     if brief.authority != "planning_input_only" {
         bail!("project improvement brief authority must be planning_input_only");
     }
@@ -405,7 +420,6 @@ pub fn validate_project_improvement_brief(bytes: &[u8]) -> Result<ProjectImprove
         ("negative_controls", &brief.opportunity.negative_controls),
         ("candidate_scope", &brief.opportunity.candidate_scope),
         ("uncertainties", &brief.opportunity.uncertainties),
-        ("resource_costs", &brief.opportunity.resource_costs),
         ("mutation_allowlist", &brief.opportunity.mutation_allowlist),
     ] {
         if values.is_empty() || values.iter().any(|value| value.trim().is_empty()) {
@@ -442,6 +456,22 @@ pub fn validate_project_improvement_brief(bytes: &[u8]) -> Result<ProjectImprove
         }
     }
     validate_objective_portfolio(&brief.opportunity.objectives)?;
+    let mut cost_keys = BTreeSet::new();
+    for cost in &brief.opportunity.resource_costs {
+        if cost.key.trim().is_empty() || !cost_keys.insert(cost.key.as_str()) {
+            bail!("resource_costs require unique nonblank keys");
+        }
+        cost.measurement
+            .validate(&cost.measurement.unit, ObjectiveRole::Diagnostic)?;
+        if !matches!(
+            cost.measurement.metric_kind,
+            crate::measurement::MetricKind::Resource(_)
+        ) {
+            bail!(
+                "resource_costs entries require a resource metric and its measured process scope"
+            );
+        }
+    }
     if brief.opportunity.budgets.is_empty()
         || brief
             .opportunity
@@ -504,6 +534,9 @@ fn validate_objective_portfolio(objectives: &[BriefObjective]) -> Result<()> {
     let mut keys = BTreeSet::new();
     let mut roles = BTreeSet::new();
     for objective in objectives {
+        objective
+            .measurement
+            .validate(&objective.unit, objective.role)?;
         if !keys.insert(objective.key.as_str()) {
             bail!("duplicate brief objective '{}'", objective.key);
         }
@@ -547,6 +580,16 @@ fn validate_objective_portfolio(objectives: &[BriefObjective]) -> Result<()> {
         }) {
             bail!("brief objective portfolio requires a '{required}' hard constraint");
         }
+    }
+    if objectives
+        .iter()
+        .any(|o| o.measurement.resource_constraint.is_some())
+        && !objectives.iter().any(|o| {
+            o.role == ObjectiveRole::Primary
+                && o.measurement.metric_kind == crate::measurement::MetricKind::Behavior
+        })
+    {
+        bail!("hard resource constraints cannot replace the primary behavioral outcome");
     }
     Ok(())
 }
@@ -631,7 +674,7 @@ pub fn compile_project_improvement_brief(
         },
     ];
     Ok(CompiledImprovementDraft {
-        schema: COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V1.to_owned(),
+        schema: COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V2.to_owned(),
         authority: "non_admitted_draft".to_owned(),
         brief_sha256,
         approval_sha256: sha256(approval_bytes),
@@ -643,6 +686,7 @@ pub fn compile_project_improvement_brief(
             inference_scope: brief.opportunity.inference_scope,
             anti_goodhart: brief.opportunity.anti_goodhart,
             objectives: brief.opportunity.objectives,
+            resource_costs: brief.opportunity.resource_costs,
             fixtures: brief.opportunity.fixtures,
             environment_requirements: brief.opportunity.environment_requirements,
             mutation_allowlist: brief.opportunity.mutation_allowlist,
@@ -789,7 +833,7 @@ mod tests {
             registry
                 .templates
                 .iter()
-                .all(|template| template.version == 2)
+                .all(|template| template.version == 3)
         );
         assert_eq!(digest.len(), 64);
         assert!(!CURRENT_REGISTRY.to_ascii_lowercase().contains("canary"));
@@ -806,6 +850,14 @@ mod tests {
                 .all(|template| template.version == 1)
         );
         assert_ne!(digest, builtin_paradigm_registry().unwrap().1);
+        let previous =
+            paradigm_registry_for_digest(&sha256(HISTORICAL_REGISTRY_V2.as_bytes())).unwrap();
+        assert!(
+            previous
+                .templates
+                .iter()
+                .all(|template| template.version == 2)
+        );
     }
 
     #[test]
@@ -956,6 +1008,7 @@ mod tests {
             .find(|objective| objective.role == ObjectiveRole::Primary)
             .expect("primary objective");
         primary.unit = "boolean".to_owned();
+        primary.measurement.unit = "boolean".to_owned();
         assert!(compile_error(brief).contains("must be quantitative"));
 
         let mut brief = compilable_brief();
@@ -1039,6 +1092,12 @@ mod tests {
         .expect("compile draft");
         assert_eq!(draft.authority, "non_admitted_draft");
         assert!(draft.campaign.admission_requires_explicit_command);
+        assert_eq!(draft.schema, COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V2);
+        assert_eq!(
+            draft.campaign.resource_costs,
+            brief.opportunity.resource_costs
+        );
+        assert_eq!(draft.campaign.objectives, brief.opportunity.objectives);
         assert!(!draft.campaign.inference_scope.is_empty());
         assert!(!draft.campaign.anti_goodhart.self_certification.is_empty());
         assert_eq!(draft.task_graph.len(), 4);

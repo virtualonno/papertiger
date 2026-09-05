@@ -36,3 +36,7 @@ windows-sys = { version = "0.61", features = [
 [[bin]]
 name = "papertiger-mise"
 path = "src/main.rs"
+
+[[example]]
+name = "deterministic_evaluator"
+path = "tests/fixtures/deterministic_evaluator.rs"

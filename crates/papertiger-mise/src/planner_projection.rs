@@ -114,6 +114,12 @@ fn build_projection(
     limitations: Vec<String>,
 ) -> Result<MisePlannerProjection> {
     let manifest = &verified.manifest;
+    let mut limitations = limitations;
+    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
+        limitations.push(
+            "measurement-provenance-trusts-the-collector-and-does-not-attest-the-host".to_owned(),
+        );
+    }
     let budgets = budget_balances(connection, &manifest.campaign_id)?
         .into_iter()
         .map(|budget| MiseBudgetProjection {

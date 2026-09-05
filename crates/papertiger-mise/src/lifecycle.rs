@@ -1777,7 +1777,7 @@ pub(crate) fn complete_deterministic_trial(
         &baseline,
         &durable_trial.working_directory,
     )?;
-    validate_completion_binding(&durable_trial, &receipt, credential, &manifest)?;
+    validate_completion_binding(connection, &durable_trial, &receipt, credential, &manifest)?;
     validate_completion_usage(
         connection,
         &durable_trial,
@@ -1918,6 +1918,7 @@ fn verify_trial_worktrees_live(
 }
 
 fn validate_completion_binding(
+    connection: &Connection,
     trial: &TrialRecord,
     receipt: &TrialReceipt,
     credential: &TrialCompletionCredential,
@@ -1968,6 +1969,24 @@ fn validate_completion_binding(
     if &receipt.fixture_sha256 != expected_fixture {
         bail!("trial completion differs from the frozen fixture identity");
     }
+    let baseline =
+        materialization_by_receipt(connection, &trial.baseline_materialization_receipt_sha256)?
+            .context("measurement baseline materialization disappeared")?;
+    for observation in &receipt.observations {
+        if let Some(provenance) = &observation.provenance {
+            let environment_sha256 = sha256(&serde_json::to_vec(&trial.environment)?);
+            provenance.baseline.validate_runtime_binding(
+                &baseline.result_tree,
+                expected_fixture,
+                &environment_sha256,
+            )?;
+            provenance.candidate.validate_runtime_binding(
+                &trial.result_tree,
+                expected_fixture,
+                &environment_sha256,
+            )?;
+        }
+    }
     let observed_objectives = receipt
         .observations
         .iter()
@@ -1988,11 +2007,41 @@ fn validate_completion_binding(
     Ok(())
 }
 
+fn deterministic_trial_receipt_schema(manifest: &CampaignManifest) -> &'static str {
+    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
+        "papertiger-mise.trial-receipt.v4"
+    } else if manifest.evaluator.judge_build.is_some() {
+        "papertiger-mise.trial-receipt.v3"
+    } else if manifest.evaluator.rust_build_environment.is_some() {
+        "papertiger-mise.trial-receipt.v2"
+    } else {
+        "papertiger-mise.trial-receipt.v1"
+    }
+}
+
 fn validate_trial_receipt_schema(
     trial: &TrialRecord,
     receipt: &TrialReceipt,
     manifest: &CampaignManifest,
 ) -> Result<()> {
+    let expected_schema = deterministic_trial_receipt_schema(manifest);
+    if receipt.schema != expected_schema {
+        bail!("trial receipt requires schema={expected_schema} for this frozen campaign");
+    }
+    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
+        let expected = sha256(&serde_json::to_vec(&trial.environment)?);
+        if receipt.environment_sha256.as_deref() != Some(expected.as_str()) {
+            bail!(
+                "provenance-bound trial receipt requires the exact runtime-owned environment_sha256"
+            );
+        }
+        if receipt.judge_build.is_some() != manifest.evaluator.judge_build.is_some() {
+            bail!(
+                "provenance-bound trial receipt must include judge_build exactly when the manifest admits it"
+            );
+        }
+        return Ok(());
+    }
     match (
         &manifest.evaluator.rust_build_environment,
         &manifest.evaluator.judge_build,

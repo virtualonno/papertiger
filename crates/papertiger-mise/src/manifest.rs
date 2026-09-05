@@ -11,6 +11,7 @@ use crate::budget::{BudgetLimit, BudgetResource};
 use crate::digest::sha256;
 
 pub const CAMPAIGN_SCHEMA_V1: &str = "papertiger-mise.campaign.v1";
+pub const CAMPAIGN_SCHEMA_V2: &str = "papertiger-mise.campaign.v2";
 const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 /// Immutable, content-bound admission contract for one Mise campaign.
@@ -193,6 +194,9 @@ pub struct ObjectiveSpec {
     pub regression_tolerance: f64,
     /// Absolute acceptance boundary, required for hard constraints.
     pub acceptance_threshold: Option<f64>,
+    /// Absent only in historical v1 manifests; every v2 objective binds meaning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<crate::measurement::MeasurementContract>,
     /// Absolute target, required only for target-directed objectives.
     pub target_value: Option<f64>,
 }
@@ -347,9 +351,12 @@ pub struct Sha256Digest(pub String);
 
 impl CampaignManifest {
     pub fn validate(&self) -> Result<()> {
-        if self.schema != CAMPAIGN_SCHEMA_V1 {
+        if !matches!(
+            self.schema.as_str(),
+            CAMPAIGN_SCHEMA_V1 | CAMPAIGN_SCHEMA_V2
+        ) {
             bail!(
-                "unsupported campaign schema '{}' (expected '{CAMPAIGN_SCHEMA_V1}')",
+                "unsupported campaign schema '{}' (expected '{CAMPAIGN_SCHEMA_V2}'; v1 is historical)",
                 self.schema
             );
         }
@@ -384,6 +391,7 @@ impl CampaignManifest {
         }
         self.execution_limits.validate(&self.budgets)?;
         validate_objectives(&self.objectives)?;
+        self.validate_measurement_contracts()?;
         if let Some(plan) = &self.paired_analysis {
             plan.validate(&self.objectives)?;
             if self.evaluator.protocol != crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V1 {
@@ -478,6 +486,57 @@ impl CampaignManifest {
             .validate(self.candidate_material.as_ref())?;
         self.validate_fixture_access_boundary()?;
         self.validate_cross_contract()?;
+        Ok(())
+    }
+
+    pub(crate) fn validate_for_admission(&self) -> Result<()> {
+        if self.schema != CAMPAIGN_SCHEMA_V2 {
+            bail!(
+                "new campaign admission requires {CAMPAIGN_SCHEMA_V2} and objectives[].measurement; retain historical manifests unchanged and author a new campaign"
+            );
+        }
+        self.validate()
+    }
+
+    fn validate_measurement_contracts(&self) -> Result<()> {
+        use crate::measurement::MetricKind;
+        let mut hard_resource = false;
+        let mut behavioral_primary = false;
+        for objective in &self.objectives {
+            let Some(contract) = &objective.measurement else {
+                if self.schema == CAMPAIGN_SCHEMA_V2 {
+                    bail!(
+                        "objective '{}' requires measurement process/workload provenance",
+                        objective.key
+                    );
+                }
+                continue;
+            };
+            if self.schema == CAMPAIGN_SCHEMA_V1 {
+                bail!(
+                    "historical campaign.v1 cannot add measurement contracts; author a new campaign.v2 manifest"
+                );
+            }
+            contract.validate(&objective.unit, objective.role)?;
+            behavioral_primary |= objective.role == ObjectiveRole::Primary
+                && contract.metric_kind == MetricKind::Behavior;
+            if let Some(basis) = &contract.resource_constraint {
+                hard_resource = true;
+                if basis.no_op_fixture_sha256 != self.calibration.no_op.fixture_sha256.0
+                    || basis.known_bad_fixture_sha256 != self.calibration.known_bad.fixture_sha256.0
+                {
+                    bail!(
+                        "hard resource constraint '{}' must bind the campaign's exact no-op and known-bad calibration fixtures",
+                        objective.key
+                    );
+                }
+            }
+        }
+        if hard_resource && !behavioral_primary {
+            bail!(
+                "hard resource constraints require a quantitative primary behavioral objective; resource thresholds cannot displace it"
+            );
+        }
         Ok(())
     }
 
@@ -1543,6 +1602,84 @@ pub(crate) mod tests {
         })
     }
 
+    fn round_trip_objectives_have_no_measurement(manifest: &CampaignManifest) -> bool {
+        serde_json::to_value(&manifest.objectives)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|o| o.get("measurement").is_none())
+    }
+
+    #[test]
+    fn measurement_cutover_preserves_history_and_refuses_unscoped_admission() {
+        let historical = valid_manifest();
+        let bytes = historical.canonical_bytes().unwrap();
+        assert!(round_trip_objectives_have_no_measurement(&historical));
+        let round_trip: CampaignManifest = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(round_trip.canonical_bytes().unwrap(), bytes);
+        assert!(historical.validate_for_admission().is_err());
+        let mut current = historical;
+        current.schema = CAMPAIGN_SCHEMA_V2.to_owned();
+        assert!(current.validate_for_admission().is_err());
+        for objective in &mut current.objectives {
+            objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
+        }
+        current.validate_for_admission().unwrap();
+    }
+
+    #[test]
+    fn hard_resource_constraints_need_calibrated_controls_and_behavioral_primary() {
+        use crate::measurement::{
+            MeasurementPhase, MetricKind, ProcessRole, ResourceConstraintBasis, ResourceMetric,
+        };
+        let mut manifest = valid_manifest();
+        manifest.schema = CAMPAIGN_SCHEMA_V2.to_owned();
+        for objective in &mut manifest.objectives {
+            objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
+        }
+        let mut resource = manifest.objectives[0].clone();
+        resource.key = "runtime-peak-bytes".to_owned();
+        resource.role = ObjectiveRole::HardConstraint;
+        resource.unit = "bytes".to_owned();
+        resource.acceptance_threshold = Some(1024.0);
+        let mut contract = crate::measurement::tests::contract("bytes");
+        contract.process_role = ProcessRole::CandidateRuntime;
+        contract.phase = MeasurementPhase::Runtime;
+        contract.metric_kind = MetricKind::Resource(ResourceMetric::Memory);
+        resource.measurement = Some(contract.clone());
+        manifest.objectives.push(resource);
+        assert!(manifest.validate_measurement_contracts().is_err());
+        contract.resource_constraint = Some(ResourceConstraintBasis {
+            domain_rationale:
+                "The complete workload must fit a fixed embedded target memory allocation"
+                    .to_owned(),
+            no_op_fixture_sha256: manifest.calibration.no_op.fixture_sha256.0.clone(),
+            known_bad_fixture_sha256: manifest.calibration.known_bad.fixture_sha256.0.clone(),
+        });
+        manifest.objectives.last_mut().unwrap().measurement = Some(contract);
+        manifest.validate_measurement_contracts().unwrap();
+        let mut substituted = manifest.clone();
+        substituted
+            .objectives
+            .last_mut()
+            .unwrap()
+            .measurement
+            .as_mut()
+            .unwrap()
+            .resource_constraint
+            .as_mut()
+            .unwrap()
+            .known_bad_fixture_sha256 = "0".repeat(64);
+        assert!(substituted.validate_measurement_contracts().is_err());
+        manifest
+            .objectives
+            .iter_mut()
+            .filter(|o| o.role == ObjectiveRole::Primary)
+            .for_each(|o| o.role = ObjectiveRole::Diagnostic);
+        assert!(manifest.validate_measurement_contracts().is_err());
+    }
+
     pub(crate) fn valid_manifest() -> CampaignManifest {
         let (judge_locator, judge_sha256) = test_executable_identity().clone();
         CampaignManifest {
@@ -1601,6 +1738,7 @@ pub(crate) mod tests {
                     minimum_practical_change: 0.0,
                     regression_tolerance: 0.0,
                     acceptance_threshold: Some(1.0),
+                    measurement: None,
                     target_value: None,
                 },
                 ObjectiveSpec {
@@ -1611,6 +1749,7 @@ pub(crate) mod tests {
                     minimum_practical_change: 1.0,
                     regression_tolerance: 0.0,
                     acceptance_threshold: None,
+                    measurement: None,
                     target_value: None,
                 },
             ],

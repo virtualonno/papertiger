@@ -12,6 +12,8 @@ pub struct DeterministicObservation {
     pub objective: String,
     pub baseline: f64,
     pub candidate: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::measurement::ObservationProvenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +26,8 @@ pub struct ObjectiveResult {
     pub candidate: f64,
     pub improvement: f64,
     pub acceptance_passed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<crate::measurement::MeasurementContract>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -63,6 +67,15 @@ pub fn classify_deterministic(
     let mut primary_improvement = false;
     for definition in definitions {
         let observation = observations[definition.key.as_str()];
+        if let Some(contract) = &definition.measurement {
+            contract.validate(&definition.unit, definition.role)?;
+        }
+        crate::measurement::validate_deterministic_provenance(
+            definition.measurement.as_ref(),
+            observation.provenance.as_ref(),
+            observation.baseline,
+            observation.candidate,
+        )?;
         if !observation.baseline.is_finite() || !observation.candidate.is_finite() {
             bail!("objective '{}' contains a non-finite value", definition.key);
         }
@@ -101,6 +114,7 @@ pub fn classify_deterministic(
             candidate: observation.candidate,
             improvement,
             acceptance_passed,
+            measurement: definition.measurement.clone(),
         });
     }
 
@@ -168,6 +182,7 @@ mod tests {
                 minimum_practical_change: 0.0,
                 regression_tolerance: 0.0,
                 acceptance_threshold: Some(1.0),
+                measurement: None,
                 target_value: None,
             },
             ObjectiveSpec {
@@ -178,6 +193,7 @@ mod tests {
                 minimum_practical_change: 1.0,
                 regression_tolerance: 0.0,
                 acceptance_threshold: None,
+                measurement: None,
                 target_value: None,
             },
             ObjectiveSpec {
@@ -188,6 +204,7 @@ mod tests {
                 minimum_practical_change: 0.0,
                 regression_tolerance: 2.0,
                 acceptance_threshold: None,
+                measurement: None,
                 target_value: None,
             },
         ]
@@ -196,16 +213,19 @@ mod tests {
     fn observations(correct: f64, latency: f64, memory: f64) -> Vec<DeterministicObservation> {
         vec![
             DeterministicObservation {
+                provenance: None,
                 objective: "correct".to_owned(),
                 baseline: 1.0,
                 candidate: correct,
             },
             DeterministicObservation {
+                provenance: None,
                 objective: "latency".to_owned(),
                 baseline: 10.0,
                 candidate: latency,
             },
             DeterministicObservation {
+                provenance: None,
                 objective: "memory".to_owned(),
                 baseline: 100.0,
                 candidate: memory,
