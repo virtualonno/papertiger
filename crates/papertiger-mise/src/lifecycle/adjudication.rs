@@ -196,13 +196,18 @@ fn derive_deterministic_candidate_result(
         .context("candidate has no successful deterministic trials")?
         .observations
         .clone();
-    if candidate_trials
-        .iter()
-        .any(|trial| trial.observations != observations)
-    {
-        bail!("deterministic candidate trials disagree; use a noisy evaluation protocol instead");
-    }
     let classification = classify_deterministic(&manifest.objectives, &observations, true)?;
+    for trial in candidate_trials.iter().skip(1) {
+        // Validate every sample against its frozen contract. Process identities,
+        // trial environments and raw evidence belong to each individual receipt;
+        // deterministic repetition requires the exact declared objective values.
+        let repeated = classify_deterministic(&manifest.objectives, &trial.observations, true)?;
+        if repeated != classification {
+            bail!(
+                "deterministic candidate trials disagree; use a noisy evaluation protocol instead"
+            );
+        }
+    }
     let disposition = classification.disposition;
     let trial_ids = candidate_trials
         .iter()
@@ -582,6 +587,9 @@ fn qualified_candidate_trials(
             .into_iter()
             .map(|raw| serde_json::from_str(&raw).context("parse durable measurement"))
             .collect::<Result<Vec<_>>>()?;
+        let durable = trial(connection, &trial_id)?
+            .context("successful candidate trial disappeared during adjudication")?;
+        validate_observation_bindings(connection, &durable, &observations, manifest)?;
         trials.push(QualifiedTrial {
             trial_id,
             tier,

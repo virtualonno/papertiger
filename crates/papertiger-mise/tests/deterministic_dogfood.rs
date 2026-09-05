@@ -82,6 +82,12 @@ fn deterministic_public_api_campaign_preserves_every_outcome() {
         "lower-score",
         &replace_score_patch("10", "8"),
     );
+    let varying = fixture.record_and_materialize(
+        &connection,
+        "varying",
+        "non-deterministic-objective",
+        &replace_score_patch("10", "varying"),
+    );
     let crashed = fixture.record_and_materialize(
         &connection,
         "crashed",
@@ -189,6 +195,25 @@ fn deterministic_public_api_campaign_preserves_every_outcome() {
         events_before.len(),
         "successful replay must not execute or append lifecycle events"
     );
+    let repeated = fixture
+        .run_success(
+            &connection,
+            &improved.candidate_id,
+            "improved-2",
+            "exploration",
+        )
+        .expect("independent repeated improved trial");
+    assert_eq!(repeated.classification, first.classification);
+    assert_ne!(repeated.receipt, first.receipt);
+    let first_receipt: serde_json::Value =
+        serde_json::from_slice(&read_object(&fixture.objects, &first.receipt).unwrap()).unwrap();
+    let repeated_receipt: serde_json::Value =
+        serde_json::from_slice(&read_object(&fixture.objects, &repeated.receipt).unwrap()).unwrap();
+    assert_ne!(
+        first_receipt["observations"][0]["provenance"],
+        repeated_receipt["observations"][0]["provenance"],
+        "fresh native processes and trial environments must retain distinct provenance"
+    );
     let nomination = adjudicate_deterministic_candidate(&connection, ACTOR, &improved.candidate_id)
         .expect("adjudicate improved candidate")
         .expect("qualified nomination");
@@ -200,6 +225,43 @@ fn deterministic_public_api_campaign_preserves_every_outcome() {
         verified
             .relied_upon_trial_ids
             .contains(&"improved-1".to_owned())
+    );
+    assert!(
+        verified
+            .relied_upon_trial_ids
+            .contains(&"improved-2".to_owned())
+    );
+    let varying_first = fixture
+        .run_success(
+            &connection,
+            &varying.candidate_id,
+            "varying-1",
+            "exploration",
+        )
+        .expect("first varying objective trial");
+    let varying_second = fixture
+        .run_success(
+            &connection,
+            &varying.candidate_id,
+            "varying-2",
+            "exploration",
+        )
+        .expect("second varying objective trial");
+    assert_ne!(varying_first.classification, varying_second.classification);
+    let disagreement =
+        adjudicate_deterministic_candidate(&connection, ACTOR, &varying.candidate_id)
+            .expect_err("different measured values must refuse deterministic adjudication");
+    assert!(
+        disagreement
+            .to_string()
+            .contains("deterministic candidate trials disagree")
+    );
+    assert!(
+        papertiger_mise::candidate(&connection, &varying.candidate_id)
+            .unwrap()
+            .unwrap()
+            .result
+            .is_none()
     );
     let projection = derive_nomination_planner_projection(
         &connection,
@@ -614,9 +676,10 @@ impl DogfoodFixture {
             budgets: CumulativeBudgetCaps {
                 caps: vec![
                     budget_limit(BudgetResource::Candidates, 12),
-                    budget_limit(BudgetResource::Trials, 12),
+                    // Eleven native trials plus the four-trial child envelope.
+                    budget_limit(BudgetResource::Trials, 15),
                     budget_limit(BudgetResource::Failures, 4),
-                    budget_limit(BudgetResource::HoldoutDisclosures, 8),
+                    budget_limit(BudgetResource::HoldoutDisclosures, 9),
                     budget_limit(BudgetResource::WallTimeMilliseconds, 60_000),
                     budget_limit(BudgetResource::DiskBytesWritten, 16 * 1024 * 1024),
                     budget_limit(BudgetResource::ArtifactBytes, 2 * 1024 * 1024),

@@ -155,6 +155,13 @@ runtime-selected evaluator environment for deterministic trials and the frozen
 environment profile for paired trials. A collector's declared host compliance
 is not independently attested by these hashes.
 
+Deterministic repetitions must agree on every declared objective value. Each
+repetition validates its own canonical objective order, measurement scope,
+zero numeric scale, process identity, and runtime-selected source, fixture and
+environment bindings. Fresh process IDs and raw collector evidence may differ;
+the exact per-trial provenance remains in its receipt and is rechecked on CAS
+rederivation.
+
 This is a trusted-collector contract. Mise cannot prove that a collector which
 fabricates matching scope and raw evidence measured the declared process.
 Adapters remain responsible for native measurement semantics; planner
