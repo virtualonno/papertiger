@@ -53,6 +53,15 @@ fn run() -> Result<()> {
             }
             (7.0, 1.0, None)
         }
+        "varying" => (
+            if request.trial_id.ends_with("-2") {
+                7.0
+            } else {
+                8.0
+            },
+            1.0,
+            None,
+        ),
         "8" => (8.0, 1.0, None),
         _ => (10.0, 1.0, None),
     };

@@ -1952,43 +1952,39 @@ fn validate_completion_binding(
     {
         bail!("trial completion differs from the frozen evaluator identity or protocol");
     }
-    let expected_fixture = if trial.tier == "calibration.no_op" {
-        &manifest.calibration.no_op.fixture_sha256.0
-    } else if trial.tier == "calibration.known_bad" {
-        &manifest.calibration.known_bad.fixture_sha256.0
-    } else {
-        &manifest
-            .holdouts
-            .tiers
-            .iter()
-            .find(|tier| tier.key == trial.tier)
-            .with_context(|| format!("unknown trial tier '{}'", trial.tier))?
-            .fixture_sha256
-            .0
-    };
-    if &receipt.fixture_sha256 != expected_fixture {
+    let expected_fixture = expected_fixture_sha256(manifest, &trial.tier)?;
+    if receipt.fixture_sha256 != expected_fixture {
         bail!("trial completion differs from the frozen fixture identity");
     }
+    validate_observation_bindings(connection, trial, &receipt.observations, manifest)
+}
+
+fn validate_observation_bindings(
+    connection: &Connection,
+    trial: &TrialRecord,
+    observations: &[DeterministicObservation],
+    manifest: &CampaignManifest,
+) -> Result<()> {
+    let expected_fixture = expected_fixture_sha256(manifest, &trial.tier)?;
     let baseline =
         materialization_by_receipt(connection, &trial.baseline_materialization_receipt_sha256)?
             .context("measurement baseline materialization disappeared")?;
-    for observation in &receipt.observations {
+    let environment_sha256 = sha256(&serde_json::to_vec(&trial.environment)?);
+    for observation in observations {
         if let Some(provenance) = &observation.provenance {
-            let environment_sha256 = sha256(&serde_json::to_vec(&trial.environment)?);
             provenance.baseline.validate_runtime_binding(
                 &baseline.result_tree,
-                expected_fixture,
+                &expected_fixture,
                 &environment_sha256,
             )?;
             provenance.candidate.validate_runtime_binding(
                 &trial.result_tree,
-                expected_fixture,
+                &expected_fixture,
                 &environment_sha256,
             )?;
         }
     }
-    let observed_objectives = receipt
-        .observations
+    let observed_objectives = observations
         .iter()
         .map(|observation| observation.objective.as_str())
         .collect::<Vec<_>>();
