@@ -39,6 +39,26 @@ fn backup_inner(source: &Path, output: &Path) -> Result<BackupReceipt> {
     if output.as_os_str().is_empty() || output.file_name().is_none() {
         bail!("backup --output requires a nonblank new file path");
     }
+    let name = output
+        .file_name()
+        .unwrap()
+        .to_str()
+        .context("backup --output file name must be UTF-8")?;
+    // Reserve these suffixes on every host, including case-insensitive and
+    // Unicode-normalizing filesystems. Parent aliases cannot bypass a suffix.
+    let name = name.trim_end_matches([' ', '.']).to_ascii_lowercase();
+    if ["-journal", "-wal", "-shm"]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+    {
+        bail!(
+            "backup destination could name a source database or its SQLite sidecar; choose a new --output file without a SQLite sidecar suffix"
+        );
+    }
+    #[cfg(windows)]
+    if name.contains(':') {
+        bail!("backup --output must name a standalone file, not a Windows alternate data stream");
+    }
     require_absent(output)?;
     require_no_sidecars(output)?;
     let source = fs::canonicalize(source).context(
@@ -74,9 +94,6 @@ fn backup_inner(source: &Path, output: &Path) -> Result<BackupReceipt> {
         "Papertiger backup",
         "`papertiger backup --output <new-path>`",
         |staged| {
-            // Resolve the now-existing parent so aliases such as new/../source-wal
-            // cannot publish a recovery file into the live database's sidecars.
-            require_distinct_from_source(&source, output, staged.parent().unwrap())?;
             require_no_sidecars(staged)?;
             let mut destination = configure_connection(Connection::open_with_flags(
                 staged,
@@ -160,41 +177,6 @@ fn require_no_sidecars(path: &Path) -> Result<()> {
         let mut sidecar = path.as_os_str().to_owned();
         sidecar.push(suffix);
         require_absent(Path::new(&sidecar))?;
-    }
-    Ok(())
-}
-
-fn require_distinct_from_source(source: &Path, output: &Path, parent: &Path) -> Result<()> {
-    let name = output
-        .file_name()
-        .unwrap()
-        .to_str()
-        .context("backup --output file name must be UTF-8")?;
-    #[cfg(windows)]
-    if name.contains(':') {
-        bail!("backup --output must name a standalone file, not a Windows alternate data stream");
-    }
-    let parent = fs::canonicalize(parent)?;
-    let identity = |path: &Path| -> Result<String> {
-        let text = portable_absolute(path)?;
-        #[cfg(windows)]
-        {
-            Ok(text.trim_end_matches([' ', '.']).to_uppercase())
-        }
-        #[cfg(not(windows))]
-        {
-            Ok(text)
-        }
-    };
-    let output_identity = identity(&parent.join(name))?;
-    for suffix in ["", "-journal", "-wal", "-shm"] {
-        let mut reserved = source.as_os_str().to_owned();
-        reserved.push(suffix);
-        if output_identity == identity(Path::new(&reserved))? {
-            bail!(
-                "backup destination names the source database or its SQLite sidecar; choose a new --output path"
-            );
-        }
     }
     Ok(())
 }

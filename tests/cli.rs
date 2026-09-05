@@ -246,7 +246,7 @@ fn backup_refuses_existing_destinations_and_sidecars_without_touching_them() {
             .success()
     );
     assert_eq!(std::fs::read(&source).unwrap(), source_before);
-    for suffix in ["-journal", "-wal", "-shm"] {
+    for suffix in ["-journal", "-wal", "-shm", "-JOURNAL", "-WAL", "-SHM"] {
         let sidecar = directory.0.join(format!("source.sqlite{suffix}"));
         let aliased_sidecar = directory
             .0
@@ -258,10 +258,7 @@ fn backup_refuses_existing_destinations_and_sidecars_without_touching_them() {
             &["backup", "--output", aliased_sidecar.to_str().unwrap()],
         );
         assert!(!result.status.success());
-        assert!(
-            String::from_utf8_lossy(&result.stderr)
-                .contains("source database or its SQLite sidecar")
-        );
+        assert!(String::from_utf8_lossy(&result.stderr).contains("SQLite sidecar suffix"));
         assert!(!sidecar.exists());
     }
     assert_eq!(std::fs::read(&source).unwrap(), source_before);

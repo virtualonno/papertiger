@@ -1,4 +1,4 @@
-//! Crash-resistant single-file installation shared by setup and recovery export.
+//! Crash-resistant single-file publication shared by setup and recovery.
 
 use std::fs;
 use std::path::Path;

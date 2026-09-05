@@ -299,8 +299,9 @@ produced it, migrate that temporary authority, and re-export it.
 [online backup API](https://www.sqlite.org/backup.html). It publishes one recovery
 file after SQLite integrity verification and returns its SHA-256, byte count,
 original schema, and task/event counts. It refuses foreign authorities, newer
-schemas, and existing destination files or sidecars. It records no event and
-performs no migration or task/evidence semantic validation: historical records
+schemas, and existing destination files or sidecars. SQLite sidecar filename
+suffixes are reserved on every platform. It records no event and performs no
+migration or task/evidence semantic validation: historical records
 that JSON import refuses can still be retained exactly. Inspect a recovery copy
 with its matching release using `--db`; restoration is a deliberate operator
 action, and the copy must never become a second live planning authority.
