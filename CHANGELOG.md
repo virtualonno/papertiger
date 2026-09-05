@@ -51,6 +51,9 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Fixed
 
+- Project setup preserves the position of its managed `.gitignore` block when
+  later rules cannot unignore protected files, avoiding changes to adjacent tool
+  integrations. Later negations still move the protection block after them.
 - Mise candidate authoring uses portable Git paths when creating worktrees,
   including repositories in Windows paths with spaces.
 

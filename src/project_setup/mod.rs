@@ -1008,8 +1008,20 @@ fn gitignore_content(existing: Option<&str>, entries: &[String]) -> Result<Strin
             existing[..*start].to_owned()
         }
         ([(start, _)], [(_, end)]) if start < end => {
+            let suffix = &existing[*end..];
+            if !suffix
+                .lines()
+                .any(|line| line.trim_start().starts_with('!'))
+            {
+                // Positive rules cannot undo the owned protection. Preserve the
+                // repository's ordering unless a later negation may override it.
+                let mut content = existing[..*start].to_owned();
+                content.push_str(&managed_block);
+                content.push_str(suffix);
+                return Ok(content);
+            }
             let mut content = existing[..*start].to_owned();
-            content.push_str(&existing[*end..]);
+            content.push_str(suffix);
             content
         }
         _ => {
@@ -2234,6 +2246,28 @@ mod tests {
             SetupOperation::Unchanged
         );
         cleanup(&project);
+    }
+
+    #[test]
+    fn gitignore_positive_suffix_keeps_repeat_setup_byte_identical() {
+        for newline in ["\n", "\r\n"] {
+            let (project, binary) = fixture("gitignore-positive-suffix");
+            setup_project(request(&project, &binary)).unwrap();
+            let path = project.join(".gitignore");
+            let existing = fs::read_to_string(&path).unwrap().replace('\n', newline);
+            let suffix = format!(
+                "{newline}# Another tool's binary policy{newline}/tools/contextmink/bin/{newline}\\!literal{newline}# !comment{newline}"
+            );
+            let expected = format!("{existing}{suffix}");
+            fs::write(&path, &expected).unwrap();
+
+            assert_eq!(
+                setup_project(request(&project, &binary)).unwrap().operation,
+                SetupOperation::Unchanged
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+            cleanup(&project);
+        }
     }
 
     #[test]
