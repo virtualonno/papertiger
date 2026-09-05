@@ -71,6 +71,8 @@ each under 32 KiB.
   this session, use the Papertiger contract proactively; do not create
   same-session checklist tasks or interrupt authorized work unnecessarily.
 
+Before broad or potentially high-output file, text, structured-data, or command-output reads, load `.agents/skills/contextmink/SKILL.md`. Skip known-small direct reads and project-native compact or domain-query commands.
+
 ## Coding Contract
 
 - Toolchain is pinned by `rust-toolchain.toml`. Gates before claiming done:
