@@ -396,6 +396,31 @@ jobs:
             throw "uninstall changed retained policy or authority data"
           }
 
+      - name: Verify packaged planner recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify="dist/verify-${{ matrix.platform }}"
+          planner="$verify/${{ steps.names.outputs.bundle }}/papertiger${{ matrix.executable_suffix }}"
+          authority="$verify/consumer/state/papertiger.sqlite"
+          recovery="$verify/planner-recovery.sqlite"
+          authority_before="$(cksum "$authority")"
+          "$planner" --db "$authority" export > "$verify/before-recovery.json"
+          "$planner" --db "$authority" backup --output "$recovery" --json > "$verify/backup.json"
+          grep -Fq '"schema": "papertiger.backup.v1"' "$verify/backup.json"
+          grep -Fq '"semantic_validation": "not_performed"' "$verify/backup.json"
+          "$planner" --db "$recovery" export > "$verify/after-recovery.json"
+          cmp "$verify/before-recovery.json" "$verify/after-recovery.json"
+          for suffix in -journal -wal -shm; do
+            test ! -e "${recovery}${suffix}"
+          done
+          if "$planner" --db "$authority" backup --output "${authority}-WAL" > "$verify/refused-backup.txt" 2>&1; then
+            echo "backup accepted a reserved SQLite sidecar name" >&2
+            exit 1
+          fi
+          grep -Fq 'SQLite sidecar suffix' "$verify/refused-backup.txt"
+          test "$(cksum "$authority")" = "$authority_before"
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: papertiger-${{ inputs.artifact_version }}-${{ matrix.platform }}
