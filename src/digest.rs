@@ -1,6 +1,18 @@
 use anyhow::{Result, bail};
 use sha2::{Digest as _, Sha256};
 
+/// Stream bytes through the shared digest implementation without buffering a file.
+pub(crate) fn sha256_reader(reader: &mut impl std::io::Read) -> std::io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        match reader.read(&mut buffer)? {
+            0 => return Ok(format!("{:x}", hasher.finalize())),
+            read => hasher.update(&buffer[..read]),
+        }
+    }
+}
+
 /// Refuse any value that is not exactly 64 lowercase hexadecimal characters.
 pub fn validate_sha256(value: &str, name: &str) -> Result<()> {
     if value.len() != 64

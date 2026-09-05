@@ -319,6 +319,12 @@ enum Cmd {
         #[arg(long, requires = "output")]
         replace: bool,
     },
+    /// Write a consistent standalone SQLite recovery copy without migrating
+    Backup {
+        /// New destination; existing files and SQLite sidecars always refuse
+        #[arg(long, value_name = "PATH")]
+        output: std::path::PathBuf,
+    },
     /// Import a papertiger.dump.v8 JSON file
     Import {
         /// Dump file to validate and import atomically
@@ -666,6 +672,7 @@ impl Cmd {
                 | Self::Audit
                 | Self::Evidence { .. }
                 | Self::Export { .. }
+                | Self::Backup { .. }
                 | Self::Plan { cmd: PlanCmd::List }
                 | Self::Gate {
                     cmd: GateCmd::List { .. }
@@ -1225,6 +1232,23 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    if let Cmd::Backup { output } = &cli.cmd {
+        let receipt = pt::backup_authority(std::path::Path::new(&db_path), output)?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&receipt)?);
+        } else {
+            println!(
+                "backed up {} to {} (schema v{}, {} bytes, SHA-256 {}); historical task and evidence semantics were preserved without validation",
+                receipt.source,
+                receipt.output,
+                receipt.source_schema_version,
+                receipt.bytes,
+                receipt.sha256
+            );
+        }
+        return Ok(());
+    }
+
     let conn = if cli.cmd.opens_authority_read_only() {
         pt::open_existing_read_only(&db_path)?
     } else {
@@ -1246,6 +1270,7 @@ fn run() -> Result<()> {
         Cmd::UninstallProject { .. } => unreachable!(),
         Cmd::Init => unreachable!(),
         Cmd::Schema => unreachable!(),
+        Cmd::Backup { .. } => unreachable!(),
         Cmd::Status {} => {
             let status = pt::status_response(&conn, &db_path)?;
             if json {
@@ -2284,6 +2309,9 @@ mod command_access_tests {
         for command in [
             Cmd::Status {},
             Cmd::Audit,
+            Cmd::Backup {
+                output: "recovery.sqlite".into(),
+            },
             Cmd::Export {
                 plan: None,
                 output: None,

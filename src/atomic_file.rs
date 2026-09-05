@@ -1,7 +1,6 @@
 //! Crash-resistant single-file installation shared by setup and recovery export.
 
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -33,6 +32,39 @@ fn atomic_write_file(
     subject: &str,
     corrective_command: &str,
     create_new: bool,
+) -> Result<()> {
+    atomic_write_with(path, subject, corrective_command, create_new, |staged| {
+        fs::write(staged, content)
+            .with_context(|| format!("write staged {subject} {}", staged.display()))
+    })?;
+    let installed = fs::read(path)
+        .with_context(|| format!("verify atomically installed {subject} {}", path.display()))?;
+    if installed != content {
+        return Err(anyhow!(
+            "atomic {subject} verification failed at {}; inspect the filesystem, then run {corrective_command}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Populate a private file before publishing it with exclusive create semantics.
+/// The writer must close any database/file handles before returning.
+pub(crate) fn atomic_create_with(
+    path: &Path,
+    subject: &str,
+    corrective_command: &str,
+    populate: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    atomic_write_with(path, subject, corrective_command, true, populate)
+}
+
+fn atomic_write_with(
+    path: &Path,
+    subject: &str,
+    corrective_command: &str,
+    create_new: bool,
+    populate: impl FnOnce(&Path) -> Result<()>,
 ) -> Result<()> {
     let parent = path
         .parent()
@@ -66,18 +98,20 @@ fn atomic_write_file(
         file_name.to_string_lossy(),
         std::process::id()
     ));
+    let mut staged_created = false;
     let result = (|| -> Result<()> {
-        let mut output = fs::OpenOptions::new()
+        let output = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&staged)
             .with_context(|| format!("create staged {subject} {}", staged.display()))?;
-        output
-            .write_all(content)
-            .with_context(|| format!("write staged {subject} {}", staged.display()))?;
-        output
-            .flush()
-            .with_context(|| format!("flush staged {subject} {}", staged.display()))?;
+        staged_created = true;
+        drop(output);
+        populate(&staged)?;
+        let output = fs::OpenOptions::new()
+            .write(true)
+            .open(&staged)
+            .with_context(|| format!("reopen staged {subject} {}", staged.display()))?;
         output
             .sync_all()
             .with_context(|| format!("sync staged {subject} {}", staged.display()))?;
@@ -95,17 +129,12 @@ fn atomic_write_file(
         } else {
             replace_existing_file(&staged, path, subject)?;
         }
-        let installed = fs::read(path)
-            .with_context(|| format!("verify atomically installed {subject} {}", path.display()))?;
-        if installed != content {
-            return Err(anyhow!(
-                "atomic {subject} verification failed at {}; inspect the filesystem, then run {corrective_command}",
-                path.display()
-            ));
-        }
         Ok(())
     })();
     if let Err(error) = result {
+        if !staged_created {
+            return Err(error);
+        }
         match fs::remove_file(&staged) {
             Ok(()) => return Err(error),
             Err(cleanup) if cleanup.kind() == std::io::ErrorKind::NotFound => return Err(error),
@@ -184,6 +213,33 @@ fn replace_existing_file(staged: &Path, destination: &Path, subject: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_destination_and_failed_population_never_publish_partial_bytes() {
+        let directory = std::env::temp_dir().join(format!(
+            "papertiger-atomic-populate-{}-{}",
+            std::process::id(),
+            NEXT_STAGED_WRITE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).unwrap();
+        let destination = directory.join("snapshot.sqlite");
+        let result = atomic_create_with(&destination, "snapshot", "retry", |staged| {
+            fs::write(staged, b"partial")?;
+            Err(anyhow!("fixture population failed"))
+        });
+        assert!(result.is_err());
+        assert!(!destination.exists());
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+        let result = atomic_create_with(&destination, "snapshot", "retry", |staged| {
+            fs::write(staged, b"complete snapshot")?;
+            fs::write(&destination, b"concurrent file")?;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read(&destination).unwrap(), b"concurrent file");
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn create_and_replace_refusals_bind_exact_corrective_messages() {

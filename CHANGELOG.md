@@ -8,6 +8,11 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Added
 
+- `backup --output <new-path> --json` creates a standalone SQLite recovery copy
+  with a digest receipt, preserving committed WAL data and planner schemas 1–9
+  without migration. It refuses existing destinations and foreign authorities.
+  Historical records are preserved without semantic validation, including legacy
+  evidence that JSON import refuses.
 - Planner mutations accept `--json`, returning committed events and task/plan
   snapshots in `papertiger.mutation.v1` so clients can create dependent tasks
   without parsing prose. Concurrent writers cannot enter another command's receipt.
@@ -32,7 +37,8 @@ All notable user-visible changes are documented here. Papertiger follows
 ### Changed
 
 - Planner schema v9 requires explicit `init` after archiving an export with the
-  previous release. Current recovery uses `papertiger.dump.v8`; restore older
+  previous release and taking a SQLite `backup` with the new release. Current
+  portable recovery uses `papertiger.dump.v8`; restore older
   dumps with their matching release, migrate the temporary authority, and re-export.
   Plan-scoped exports retain moved tasks' original history and required former-plan
   definitions, and refuse missing task identities instead of omitting history.

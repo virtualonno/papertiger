@@ -1,13 +1,11 @@
 use std::{
     fs::File,
-    io::Read,
     path::{Component, Path},
 };
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use crate::{get_task, portable_absolute, validate_sha256};
 
@@ -274,19 +272,14 @@ fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerific
             return add_corrective_commands(result, &binding);
         }
     };
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        match file.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(read) => hasher.update(&buffer[..read]),
-            Err(error) => {
-                result.status = "unreadable".into();
-                result.detail = Some(format!("read evidence file: {error}"));
-                return add_corrective_commands(result, &binding);
-            }
+    let actual = match crate::digest::sha256_reader(&mut file) {
+        Ok(actual) => actual,
+        Err(error) => {
+            result.status = "unreadable".into();
+            result.detail = Some(format!("read evidence file: {error}"));
+            return add_corrective_commands(result, &binding);
         }
-    }
+    };
     let after = match file.metadata() {
         Ok(metadata) => metadata,
         Err(error) => {
@@ -301,7 +294,6 @@ fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerific
             Some("evidence file metadata changed while its bytes were read; retry".into());
         return add_corrective_commands(result, &binding);
     }
-    let actual = format!("{:x}", hasher.finalize());
     result.actual_sha256 = Some(actual.clone());
     let Some(expected) = binding.expected_sha256.as_deref() else {
         result.status = "unhashed".into();

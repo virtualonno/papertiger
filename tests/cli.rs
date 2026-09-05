@@ -111,6 +111,237 @@ fn mutation_receipts_model_attribution_and_task_moves_are_cli_usable() {
 
 struct TestDatabase(PathBuf);
 
+#[test]
+fn backup_preserves_legacy_schema_and_committed_wal_without_importing_evidence() {
+    let directory = TestDirectory::new("backup-wal");
+    let source = directory.0.join("source.sqlite");
+    let output = directory.0.join("recovery.sqlite");
+    for args in [
+        vec!["init"],
+        vec!["plan", "add", "work", "Work"],
+        vec!["add", "historical outcome", "--plan", "work"],
+        vec![
+            "gate",
+            "add",
+            "1",
+            "proof",
+            "--kind",
+            "test",
+            "--requirement",
+            "historical evidence",
+        ],
+    ] {
+        assert_success(&papertiger(&source, &args));
+    }
+    let writer = rusqlite::Connection::open(&source).unwrap();
+    writer
+        .execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+        DROP TABLE external_references;
+        UPDATE meta SET value='8' WHERE key='schema_version';
+        UPDATE gates SET status='closed', evidence_locator='commit:ca9ff90';
+        BEGIN IMMEDIATE;
+        UPDATE tasks SET title='uncommitted change';",
+        )
+        .unwrap();
+    let wal = source.with_file_name("source.sqlite-wal");
+    assert!(std::fs::metadata(&wal).unwrap().len() > 0);
+    let before = std::fs::read(&source).unwrap();
+    let wal_before = std::fs::read(&wal).unwrap();
+    let backup = papertiger(
+        &source,
+        &["backup", "--output", output.to_str().unwrap(), "--json"],
+    );
+    assert_success(&backup);
+    let receipt: serde_json::Value = serde_json::from_slice(&backup.stdout).unwrap();
+    assert_eq!(receipt["schema"], "papertiger.backup.v1");
+    assert_eq!(receipt["source_schema_version"], 8);
+    assert_eq!(receipt["tasks"], 1);
+    assert_eq!(receipt["semantic_validation"], "not_performed");
+    assert_eq!(
+        receipt["sha256"],
+        papertiger::sha256(&std::fs::read(&output).unwrap())
+    );
+    assert_eq!(std::fs::read(&source).unwrap(), before);
+    assert_eq!(std::fs::read(&wal).unwrap(), wal_before);
+    for suffix in ["-journal", "-wal", "-shm"] {
+        assert!(
+            !directory
+                .0
+                .join(format!("recovery.sqlite{suffix}"))
+                .exists()
+        );
+    }
+    let recovered =
+        rusqlite::Connection::open_with_flags(&output, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    assert_eq!(
+        recovered
+            .query_row("SELECT title FROM tasks", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "historical outcome"
+    );
+    assert_eq!(
+        recovered
+            .query_row("SELECT evidence_locator FROM gates", [], |r| r
+                .get::<_, String>(0))
+            .unwrap(),
+        "commit:ca9ff90"
+    );
+    assert_eq!(
+        recovered
+            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        receipt["events"].as_i64().unwrap()
+    );
+    assert!(!papertiger(&output, &["status"]).status.success());
+    drop(recovered);
+    writer.execute_batch("ROLLBACK").unwrap();
+    drop(writer);
+    assert_success(&papertiger(&output, &["init"]));
+    assert_success(&papertiger(&output, &["status", "--json"]));
+    // Recovery deliberately preserves a historical locator that semantic import refuses.
+    let recovered = papertiger::open_existing_read_only(output.to_str().unwrap()).unwrap();
+    let dump = papertiger::export(&recovered, None).unwrap();
+    let fresh = rusqlite::Connection::open_in_memory().unwrap();
+    papertiger::init(&fresh).unwrap();
+    assert!(
+        papertiger::import(&fresh, "test", &dump)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid evidence_locator")
+    );
+}
+
+#[test]
+fn backup_refuses_existing_destinations_and_sidecars_without_touching_them() {
+    let directory = TestDirectory::new("backup-paths");
+    let source = directory.0.join("source.sqlite");
+    assert_success(&papertiger(&source, &["init"]));
+    let source_before = std::fs::read(&source).unwrap();
+    for suffix in ["", "-journal", "-wal", "-shm"] {
+        let output = directory.0.join(format!("out{suffix}.sqlite"));
+        let occupied = directory.0.join(format!("out{suffix}.sqlite{suffix}"));
+        std::fs::write(&occupied, b"preserve existing bytes").unwrap();
+        let result = papertiger(
+            &source,
+            &["backup", "--output", output.to_str().unwrap(), "--json"],
+        );
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("choose a new --output path"));
+        assert_eq!(
+            std::fs::read(&occupied).unwrap(),
+            b"preserve existing bytes"
+        );
+        if !suffix.is_empty() {
+            assert!(!output.exists());
+        }
+    }
+    let alias = directory.0.join("source-alias.sqlite");
+    std::fs::hard_link(&source, &alias).unwrap();
+    assert!(
+        !papertiger(&source, &["backup", "--output", alias.to_str().unwrap()])
+            .status
+            .success()
+    );
+    assert_eq!(std::fs::read(&source).unwrap(), source_before);
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let sidecar = directory.0.join(format!("source.sqlite{suffix}"));
+        let aliased_sidecar = directory
+            .0
+            .join("nested")
+            .join("..")
+            .join(sidecar.file_name().unwrap());
+        let result = papertiger(
+            &source,
+            &["backup", "--output", aliased_sidecar.to_str().unwrap()],
+        );
+        assert!(!result.status.success());
+        assert!(
+            String::from_utf8_lossy(&result.stderr)
+                .contains("source database or its SQLite sidecar")
+        );
+        assert!(!sidecar.exists());
+    }
+    assert_eq!(std::fs::read(&source).unwrap(), source_before);
+}
+
+#[test]
+fn backup_refuses_missing_foreign_empty_and_unsupported_authorities() {
+    let directory = TestDirectory::new("backup-admission");
+    for fixture in ["missing", "empty", "foreign", "mise", "future", "corrupt"] {
+        let source = directory.0.join(format!("{fixture}.sqlite"));
+        let output = directory.0.join(format!("{fixture}-backup.sqlite"));
+        match fixture {
+            "empty" => {
+                std::fs::write(&source, b"").unwrap();
+            }
+            "foreign" => {
+                rusqlite::Connection::open(&source)
+                    .unwrap()
+                    .execute_batch("CREATE TABLE foreign_data (value TEXT)")
+                    .unwrap();
+            }
+            "mise" | "future" => {
+                assert_success(&papertiger(&source, &["init"]));
+                let conn = rusqlite::Connection::open(&source).unwrap();
+                conn.execute_batch(if fixture == "mise" {
+                    "UPDATE meta SET value='papertiger.mise' WHERE key='authority'"
+                } else {
+                    "UPDATE meta SET value='999' WHERE key='schema_version'"
+                })
+                .unwrap();
+            }
+            "corrupt" => {
+                std::fs::write(&source, b"not sqlite").unwrap();
+            }
+            _ => {}
+        }
+        let before = source.exists().then(|| std::fs::read(&source).unwrap());
+        let result = papertiger(
+            &source,
+            &["backup", "--output", output.to_str().unwrap(), "--json"],
+        );
+        assert!(!result.status.success(), "{fixture}");
+        assert!(result.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("backup --output <new-path>"));
+        assert!(!output.exists());
+        assert_eq!(
+            source.exists().then(|| std::fs::read(&source).unwrap()),
+            before
+        );
+    }
+}
+
+#[test]
+fn backup_records_no_events_and_refuses_model_attribution() {
+    let directory = TestDirectory::new("backup-events");
+    let source = directory.0.join("source.sqlite");
+    let output = directory.0.join("recovery.sqlite");
+    assert_success(&papertiger(&source, &["init"]));
+    let rejected = papertiger(
+        &source,
+        &[
+            "backup",
+            "--output",
+            output.to_str().unwrap(),
+            "--model",
+            "invented",
+        ],
+    );
+    assert!(!rejected.status.success());
+    assert!(!output.exists());
+    let before = papertiger(&source, &["export"]);
+    assert_success(&before);
+    assert_success(&papertiger(
+        &source,
+        &["backup", "--output", output.to_str().unwrap(), "--json"],
+    ));
+    assert_eq!(papertiger(&source, &["export"]).stdout, before.stdout);
+    assert_eq!(papertiger(&output, &["export"]).stdout, before.stdout);
+}
+
 impl TestDatabase {
     fn new(label: &str) -> Self {
         let nonce = SystemTime::now()

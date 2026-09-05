@@ -14,6 +14,8 @@ mod atomic_file;
 pub use atomic_file::{atomic_create_file, atomic_replace_file};
 mod export_file;
 pub use export_file::{ExportFileReceipt, write_export_file};
+mod backup;
+pub use backup::{BackupReceipt, backup_authority};
 mod evidence;
 pub use evidence::{CorrectiveCommand, EvidenceBindingVerification, EvidenceClassification};
 mod evidence_projection;
