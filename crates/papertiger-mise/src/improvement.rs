@@ -827,6 +827,10 @@ mod tests {
 
     #[test]
     fn builtin_registry_is_complete_and_content_addressed() {
+        assert!(
+            !CURRENT_REGISTRY.contains('\r'),
+            "the embedded current registry must use the LF bytes required by .gitattributes; normalize line endings before binding its SHA-256"
+        );
         let (registry, digest) = builtin_paradigm_registry().expect("validate built-in registry");
         assert_eq!(registry.templates.len(), REQUIRED_PARADIGMS.len());
         assert!(
