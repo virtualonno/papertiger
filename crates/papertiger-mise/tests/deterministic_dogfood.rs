@@ -1341,6 +1341,18 @@ impl DogfoodFixture {
         )
         .expect("fresh verified successor admission");
         assert_eq!(
+            fresh.proof().promoted_judge_build_trial_receipts.len(),
+            2,
+            "the successor must retain both independently executed parent build trials"
+        );
+        let canonical_proof: papertiger_mise::ParentPromotionProof =
+            serde_json::from_slice(&fresh.proof().canonical_bytes().unwrap()).unwrap();
+        assert_eq!(
+            fresh.proof(),
+            &canonical_proof,
+            "derived proof must equal its canonical CAS representation before admission"
+        );
+        assert_eq!(
             admit_verified_successor(connection, ACTOR, &fresh).expect("admit successor"),
             AdmissionOutcome::Admitted
         );

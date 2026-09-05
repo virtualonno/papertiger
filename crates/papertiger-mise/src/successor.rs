@@ -315,6 +315,7 @@ pub fn derive_parent_promotion_proof(
     relied_upon_trial_ids.sort();
     let mut relied_upon_paired_cohort_ids = verified.relied_upon_paired_cohort_ids;
     relied_upon_paired_cohort_ids.sort();
+    promoted_judge_build_trial_receipts.sort();
     let proof = ParentPromotionProof {
         schema: PARENT_PROMOTION_PROOF_SCHEMA_V2.to_owned(),
         scope: SUCCESSOR_ADMISSION_SCOPE_V1.to_owned(),
