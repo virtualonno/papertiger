@@ -1,5 +1,5 @@
 {
-  "schema": "papertiger.project-improvement-brief.v1",
+  "schema": "papertiger.project-improvement-brief.v2",
   "brief_id": "example-project-runtime-readiness-b01",
   "authority": "planning_input_only",
   "project": {
@@ -11,8 +11,8 @@
   },
   "template": {
     "key": "reliability_recovery",
-    "version": 1,
-    "registry_sha256": "d86225f9e2ffc3a87808884df79a5320a1810aad7e887c88b783552af729cfc5"
+    "version": 3,
+    "registry_sha256": "22130f89c4e8557913ae7d01df8c751a9c352aa4fd03b981c070b1071604b228"
   },
   "evidence": [
     {
@@ -154,27 +154,349 @@
       "The synthetic checkout is marked dirty and cannot compile into a campaign draft."
     ],
     "resource_costs": [
-      "Each participant requires a build unless an independently verified source-bound artifact is available.",
-      "A paired calibration and research series executes every matrix twice per block.",
-      "Disclosed workspace evidence supports development decisions but not sealed promotion."
+      {
+        "key": "compiler-peak-memory-bytes",
+        "measurement": {
+          "schema": "papertiger-mise.measurement-contract.v1",
+          "subject": "Participant compilation",
+          "process_role": "compiler",
+          "executable_name": "rustc",
+          "category": "development_cost",
+          "phase": "build",
+          "metric_kind": {
+            "kind": "resource",
+            "resource": "memory"
+          },
+          "metric_semantics": "Peak compiler resident bytes for a cold participant build",
+          "unit": "bytes",
+          "workload": {
+            "name": "Complete disclosed runtime readiness matrix",
+            "cardinality": 4,
+            "cardinality_unit": "cases"
+          },
+          "host_class": "Declared native fixture host",
+          "environment_class": "Frozen toolchain and readiness fixture environment",
+          "aggregation": "maximum",
+          "sampling_method": "whole_workload",
+          "sample_count": 1,
+          "sampling_interval_ms": null,
+          "cache_state": "cold",
+          "rationale": "Preserve the exact readiness behavior and its declared cost across the complete fixture.",
+          "tradeoff": "Correctness and compatibility remain hard constraints; resource savings cannot replace correct diagnosis.",
+          "limitations": [
+            "Planning example only; concrete host and collector observations are required before campaign admission.",
+            "Disclosed deterministic cases support no unseen-population or independent host-attestation claim."
+          ],
+          "resource_constraint": null
+        }
+      },
+      {
+        "key": "diagnostic-latency-ms",
+        "measurement": {
+          "schema": "papertiger-mise.measurement-contract.v1",
+          "subject": "Runtime readiness fixture",
+          "process_role": "candidate_runtime",
+          "executable_name": "runtime-readiness",
+          "category": "product_behavior",
+          "phase": "runtime",
+          "metric_kind": {
+            "kind": "resource",
+            "resource": "wall_time"
+          },
+          "metric_semantics": "diagnostic-latency-ms",
+          "unit": "milliseconds",
+          "workload": {
+            "name": "Complete disclosed runtime readiness matrix",
+            "cardinality": 4,
+            "cardinality_unit": "cases"
+          },
+          "host_class": "Declared native fixture host",
+          "environment_class": "Frozen toolchain and readiness fixture environment",
+          "aggregation": "maximum",
+          "sampling_method": "whole_workload",
+          "sample_count": 1,
+          "sampling_interval_ms": null,
+          "cache_state": "not_applicable",
+          "rationale": "Preserve the exact readiness behavior and its declared cost across the complete fixture.",
+          "tradeoff": "Correctness and compatibility remain hard constraints; resource savings cannot replace correct diagnosis.",
+          "limitations": [
+            "Planning example only; concrete host and collector observations are required before campaign admission.",
+            "Disclosed deterministic cases support no unseen-population or independent host-attestation claim."
+          ],
+          "resource_constraint": null
+        }
+      }
     ],
     "objectives": [
-      {"key":"correctness","role":"hard_constraint","direction":"maximize","unit":"boolean","minimum_practical_change_units":0,"regression_tolerance_units":0,"acceptance_threshold_units":1},
-      {"key":"compatibility","role":"hard_constraint","direction":"maximize","unit":"boolean","minimum_practical_change_units":0,"regression_tolerance_units":0,"acceptance_threshold_units":1},
-      {"key":"exact-diagnoses","role":"primary","direction":"maximize","unit":"cases","minimum_practical_change_units":1,"regression_tolerance_units":0,"acceptance_threshold_units":null},
-      {"key":"false-faults","role":"protected","direction":"minimize","unit":"cases","minimum_practical_change_units":0,"regression_tolerance_units":0,"acceptance_threshold_units":null},
-      {"key":"diagnostic-latency-ms","role":"protected","direction":"minimize","unit":"milliseconds","minimum_practical_change_units":0,"regression_tolerance_units":10000,"acceptance_threshold_units":null},
-      {"key":"external-probes","role":"protected","direction":"minimize","unit":"count","minimum_practical_change_units":0,"regression_tolerance_units":0,"acceptance_threshold_units":null}
+      {
+        "key": "correctness",
+        "role": "hard_constraint",
+        "direction": "maximize",
+        "unit": "boolean",
+        "minimum_practical_change_units": 0,
+        "regression_tolerance_units": 0,
+        "acceptance_threshold_units": 1,
+        "measurement": {
+          "schema": "papertiger-mise.measurement-contract.v1",
+          "subject": "Runtime readiness fixture",
+          "process_role": "candidate_runtime",
+          "executable_name": "runtime-readiness",
+          "category": "product_behavior",
+          "phase": "runtime",
+          "metric_kind": {
+            "kind": "behavior"
+          },
+          "metric_semantics": "correctness",
+          "unit": "boolean",
+          "workload": {
+            "name": "Complete disclosed runtime readiness matrix",
+            "cardinality": 4,
+            "cardinality_unit": "cases"
+          },
+          "host_class": "Declared native fixture host",
+          "environment_class": "Frozen toolchain and readiness fixture environment",
+          "aggregation": "single_value",
+          "sampling_method": "whole_workload",
+          "sample_count": 1,
+          "sampling_interval_ms": null,
+          "cache_state": "not_applicable",
+          "rationale": "Preserve the exact readiness behavior and its declared cost across the complete fixture.",
+          "tradeoff": "Correctness and compatibility remain hard constraints; resource savings cannot replace correct diagnosis.",
+          "limitations": [
+            "Planning example only; concrete host and collector observations are required before campaign admission.",
+            "Disclosed deterministic cases support no unseen-population or independent host-attestation claim."
+          ],
+          "resource_constraint": null
+        }
+      },
+      {
+        "key": "compatibility",
+        "role": "hard_constraint",
+        "direction": "maximize",
+        "unit": "boolean",
+        "minimum_practical_change_units": 0,
+        "regression_tolerance_units": 0,
+        "acceptance_threshold_units": 1,
+        "measurement": {
+          "schema": "papertiger-mise.measurement-contract.v1",
+          "subject": "Runtime readiness fixture",
+          "process_role": "candidate_runtime",
+          "executable_name": "runtime-readiness",
+          "category": "product_behavior",
+          "phase": "runtime",
+          "metric_kind": {
+            "kind": "behavior"
+          },
+          "metric_semantics": "compatibility",
+          "unit": "boolean",
+          "workload": {
+            "name": "Complete disclosed runtime readiness matrix",
+            "cardinality": 4,
+            "cardinality_unit": "cases"
+          },
+          "host_class": "Declared native fixture host",
+          "environment_class": "Frozen toolchain and readiness fixture environment",
+          "aggregation": "single_value",
+          "sampling_method": "whole_workload",
+          "sample_count": 1,
+          "sampling_interval_ms": null,
+          "cache_state": "not_applicable",
+          "rationale": "Preserve the exact readiness behavior and its declared cost across the complete fixture.",
+          "tradeoff": "Correctness and compatibility remain hard constraints; resource savings cannot replace correct diagnosis.",
+          "limitations": [
+            "Planning example only; concrete host and collector observations are required before campaign admission.",
+            "Disclosed deterministic cases support no unseen-population or independent host-attestation claim."
+          ],
+          "resource_constraint": null
+        }
+      },
+      {
+        "key": "exact-diagnoses",
+        "role": "primary",
+        "direction": "maximize",
+        "unit": "cases",
+        "minimum_practical_change_units": 1,
+        "regression_tolerance_units": 0,
+        "acceptance_threshold_units": null,
+        "measurement": {
+          "schema": "papertiger-mise.measurement-contract.v1",
+          "subject": "Runtime readiness fixture",
+          "process_role": "candidate_runtime",
+          "executable_name": "runtime-readiness",
+          "category": "product_behavior",
+          "phase": "runtime",
+          "metric_kind": {
+            "kind": "behavior"
+          },
+          "metric_semantics": "exact-diagnoses",
+          "unit": "cases",
+          "workload": {
+            "name": "Complete disclosed runtime readiness matrix",
+            "cardinality": 4,
+            "cardinality_unit": "cases"
+          },
+          "host_class": "Declared native fixture host",
+          "environment_class": "Frozen toolchain and readiness fixture environment",
+          "aggregation": "count",
+          "sampling_method": "whole_workload",
+          "sample_count": 1,
+          "sampling_interval_ms": null,
+          "cache_state": "not_applicable",
+          "rationale": "Preserve the exact readiness behavior and its declared cost across the complete fixture.",
+          "tradeoff": "Correctness and compatibility remain hard constraints; resource savings cannot replace correct diagnosis.",
+          "limitations": [
+            "Planning example only; concrete host and collector observations are required before campaign admission.",
+            "Disclosed deterministic cases support no unseen-population or independent host-attestation claim."
+          ],
+          "resource_constraint": null
+        }
+      },
+      {
+        "key": "false-faults",
+        "role": "protected",
+        "direction": "minimize",
+        "unit": "cases",
+        "minimum_practical_change_units": 0,
+        "regression_tolerance_units": 0,
+        "acceptance_threshold_units": null,
+        "measurement": {
+          "schema": "papertiger-mise.measurement-contract.v1",
+          "subject": "Runtime readiness fixture",
+          "process_role": "candidate_runtime",
+          "executable_name": "runtime-readiness",
+          "category": "product_behavior",
+          "phase": "runtime",
+          "metric_kind": {
+            "kind": "behavior"
+          },
+          "metric_semantics": "false-faults",
+          "unit": "cases",
+          "workload": {
+            "name": "Complete disclosed runtime readiness matrix",
+            "cardinality": 4,
+            "cardinality_unit": "cases"
+          },
+          "host_class": "Declared native fixture host",
+          "environment_class": "Frozen toolchain and readiness fixture environment",
+          "aggregation": "count",
+          "sampling_method": "whole_workload",
+          "sample_count": 1,
+          "sampling_interval_ms": null,
+          "cache_state": "not_applicable",
+          "rationale": "Preserve the exact readiness behavior and its declared cost across the complete fixture.",
+          "tradeoff": "Correctness and compatibility remain hard constraints; resource savings cannot replace correct diagnosis.",
+          "limitations": [
+            "Planning example only; concrete host and collector observations are required before campaign admission.",
+            "Disclosed deterministic cases support no unseen-population or independent host-attestation claim."
+          ],
+          "resource_constraint": null
+        }
+      },
+      {
+        "key": "diagnostic-latency-ms",
+        "role": "protected",
+        "direction": "minimize",
+        "unit": "milliseconds",
+        "minimum_practical_change_units": 0,
+        "regression_tolerance_units": 10000,
+        "acceptance_threshold_units": null,
+        "measurement": {
+          "schema": "papertiger-mise.measurement-contract.v1",
+          "subject": "Runtime readiness fixture",
+          "process_role": "candidate_runtime",
+          "executable_name": "runtime-readiness",
+          "category": "product_behavior",
+          "phase": "runtime",
+          "metric_kind": {
+            "kind": "resource",
+            "resource": "wall_time"
+          },
+          "metric_semantics": "diagnostic-latency-ms",
+          "unit": "milliseconds",
+          "workload": {
+            "name": "Complete disclosed runtime readiness matrix",
+            "cardinality": 4,
+            "cardinality_unit": "cases"
+          },
+          "host_class": "Declared native fixture host",
+          "environment_class": "Frozen toolchain and readiness fixture environment",
+          "aggregation": "maximum",
+          "sampling_method": "whole_workload",
+          "sample_count": 1,
+          "sampling_interval_ms": null,
+          "cache_state": "not_applicable",
+          "rationale": "Preserve the exact readiness behavior and its declared cost across the complete fixture.",
+          "tradeoff": "Correctness and compatibility remain hard constraints; resource savings cannot replace correct diagnosis.",
+          "limitations": [
+            "Planning example only; concrete host and collector observations are required before campaign admission.",
+            "Disclosed deterministic cases support no unseen-population or independent host-attestation claim."
+          ],
+          "resource_constraint": null
+        }
+      },
+      {
+        "key": "external-probes",
+        "role": "protected",
+        "direction": "minimize",
+        "unit": "count",
+        "minimum_practical_change_units": 0,
+        "regression_tolerance_units": 0,
+        "acceptance_threshold_units": null,
+        "measurement": {
+          "schema": "papertiger-mise.measurement-contract.v1",
+          "subject": "Runtime readiness fixture",
+          "process_role": "candidate_runtime",
+          "executable_name": "runtime-readiness",
+          "category": "product_behavior",
+          "phase": "runtime",
+          "metric_kind": {
+            "kind": "behavior"
+          },
+          "metric_semantics": "external-probes",
+          "unit": "count",
+          "workload": {
+            "name": "Complete disclosed runtime readiness matrix",
+            "cardinality": 4,
+            "cardinality_unit": "cases"
+          },
+          "host_class": "Declared native fixture host",
+          "environment_class": "Frozen toolchain and readiness fixture environment",
+          "aggregation": "count",
+          "sampling_method": "whole_workload",
+          "sample_count": 1,
+          "sampling_interval_ms": null,
+          "cache_state": "not_applicable",
+          "rationale": "Preserve the exact readiness behavior and its declared cost across the complete fixture.",
+          "tradeoff": "Correctness and compatibility remain hard constraints; resource savings cannot replace correct diagnosis.",
+          "limitations": [
+            "Planning example only; concrete host and collector observations are required before campaign admission.",
+            "Disclosed deterministic cases support no unseen-population or independent host-attestation claim."
+          ],
+          "resource_constraint": null
+        }
+      }
     ],
     "mutation_allowlist": [
       "src/runtime_readiness.rs",
       "tests/runtime_readiness.rs"
     ],
     "budgets": [
-      {"resource":"candidates","hard_limit":3},
-      {"resource":"trials","hard_limit":48},
-      {"resource":"failures","hard_limit":3},
-      {"resource":"wall_time_milliseconds","hard_limit":72000000}
+      {
+        "resource": "candidates",
+        "hard_limit": 3
+      },
+      {
+        "resource": "trials",
+        "hard_limit": 48
+      },
+      {
+        "resource": "failures",
+        "hard_limit": 3
+      },
+      {
+        "resource": "wall_time_milliseconds",
+        "hard_limit": 72000000
+      }
     ],
     "stop_rules": {
       "maximum_candidate_analyses": 1,

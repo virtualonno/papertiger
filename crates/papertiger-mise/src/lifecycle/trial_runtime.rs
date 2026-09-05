@@ -23,6 +23,8 @@ pub struct DeterministicEvaluatorRequest {
     pub tier: String,
     pub fixture_locator: String,
     pub fixture_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_sha256: Option<String>,
     pub evaluator_protocol: String,
     pub objectives: Vec<crate::manifest::ObjectiveSpec>,
 }
@@ -453,7 +455,12 @@ pub fn execute_workspace_trial(
     let baseline_result_tree = baseline_materialization.result_tree.clone();
     let (fixture_locator, fixture_sha256) = expected_fixture_binding(&manifest, &spec.tier)?;
     let request = DeterministicEvaluatorRequest {
-        schema: "papertiger-mise.deterministic-evaluator-request.v1".to_owned(),
+        schema: if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
+            "papertiger-mise.deterministic-evaluator-request.v2"
+        } else {
+            "papertiger-mise.deterministic-evaluator-request.v1"
+        }
+        .to_owned(),
         trial_id: spec.trial_id.clone(),
         campaign_id: spec.campaign_id.clone(),
         candidate_id: spec.candidate_id.clone(),
@@ -463,6 +470,11 @@ pub fn execute_workspace_trial(
         tier: spec.tier.clone(),
         fixture_locator,
         fixture_sha256: fixture_sha256.clone(),
+        environment_sha256: if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
+            Some(sha256(&serde_json::to_vec(&trial_environment)?))
+        } else {
+            None
+        },
         evaluator_protocol: manifest.evaluator.protocol.clone(),
         objectives: manifest.objectives.clone(),
     };
@@ -587,8 +599,12 @@ pub fn execute_workspace_trial(
             return Err(error).context("parse deterministic evaluator output");
         }
     };
-    if evaluator_output.schema != "papertiger-mise.deterministic-evaluator-output.v1"
-        || serde_json::to_vec(&evaluator_output)? != stdout
+    let output_schema = if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
+        "papertiger-mise.deterministic-evaluator-output.v2"
+    } else {
+        "papertiger-mise.deterministic-evaluator-output.v1"
+    };
+    if evaluator_output.schema != output_schema || serde_json::to_vec(&evaluator_output)? != stdout
     {
         reconcile_supervisor_failure_with_capture(
             connection,
@@ -598,12 +614,12 @@ pub fn execute_workspace_trial(
             &SupervisorFailureCapture {
                 process_birth_identity: Some(&process_birth_identity),
                 reason: "noncanonical-evaluator-output",
-                detail: "evaluator output is not canonical typed v1 JSON",
+                detail: "evaluator output is not canonical JSON under the requested schema",
                 stdout: Some(&stdout),
                 stderr: Some(&stderr),
             },
         )?;
-        bail!("WorkspaceOnly evaluator output is not canonical typed v1 JSON");
+        bail!("WorkspaceOnly evaluator output must be canonical typed JSON under {output_schema}");
     }
     let judge_build = match preserve_judge_build(
         &manifest,
@@ -638,7 +654,8 @@ pub fn execute_workspace_trial(
         elapsed_ms,
         u64::try_from(stdout.len())?.saturating_add(u64::try_from(stderr.len())?),
     )?;
-    let environment_sha256 = if manifest.evaluator.rust_build_environment.is_some()
+    let environment_sha256 = if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2
+        || manifest.evaluator.rust_build_environment.is_some()
         || manifest.evaluator.judge_build.is_some()
     {
         Some(sha256(&serde_json::to_vec(&trial_environment)?))
@@ -646,14 +663,7 @@ pub fn execute_workspace_trial(
         None
     };
     let receipt = TrialReceipt {
-        schema: if manifest.evaluator.judge_build.is_some() {
-            "papertiger-mise.trial-receipt.v3"
-        } else if manifest.evaluator.rust_build_environment.is_some() {
-            "papertiger-mise.trial-receipt.v2"
-        } else {
-            "papertiger-mise.trial-receipt.v1"
-        }
-        .to_owned(),
+        schema: deterministic_trial_receipt_schema(&manifest).to_owned(),
         environment_sha256,
         judge_build,
         trial_id: spec.trial_id.clone(),

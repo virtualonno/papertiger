@@ -132,13 +132,43 @@ belong only in hard constraints. This prevents a development campaign from
 qualifying on feature presence, command success, or another self-certifying
 yes/no proxy.
 
-Resource observations currently have metric names, units, and values, but the
-generic schemas do not bind the measured process, workload cardinality, phase,
-cache state, or cost category. Brief `resource_costs` entries are orientation
-text. Until typed provenance connects the brief, manifest, and retained
-observation, operators must review that linkage independently: compiler or test
-harness cost cannot establish product-runtime performance, and a numerical
-threshold alone is not a justified acceptance requirement.
+New campaign admission requires `papertiger-mise.campaign.v2`. Every objective
+includes a `papertiger-mise.measurement-contract.v1`: measured subject and
+process role, executable name, product behavior versus development or
+infrastructure cost, phase, metric meaning and unit, complete workload and
+cardinality, host and environment class, aggregation, sampling, cache state,
+rationale, tradeoff, and limitations. Compiler and test-harness resource costs
+cannot claim to measure product behavior. A hard resource constraint also
+requires a domain rationale and the campaign's exact no-op and known-bad
+calibration fixture identities; it cannot replace the quantitative behavioral
+primary. At calibration, that resource constraint must pass the no-op control
+and reject the known-bad control; an unrelated behavioral rejection cannot
+calibrate its resource threshold.
+
+Deterministic and paired observations retain baseline and candidate measurement
+samples with that exact scope, process PID and birth identity, executable
+locator and digest, participant revision, fixture and environment identity,
+exact value and scale, and raw collector evidence. Completion and CAS
+rederivation refuse missing provenance or differences from the frozen scope,
+selected inputs, and classified values. The environment binding is the
+runtime-selected evaluator environment for deterministic trials and the frozen
+environment profile for paired trials. A collector's declared host compliance
+is not independently attested by these hashes.
+
+This is a trusted-collector contract. Mise cannot prove that a collector which
+fabricates matching scope and raw evidence measured the declared process.
+Adapters remain responsible for native measurement semantics; planner
+projections preserve this limitation. For example, a compiler-memory sample
+declaring `compiler`, `build`, or a compiler executable cannot satisfy an
+indexer-runtime contract. Relabeling all evidence dishonestly is outside this
+local trust boundary.
+
+Historical campaign v1 manifests and their receipts remain readable with their
+original bytes and no inferred provenance. They cannot be newly admitted or
+upgraded in place. The provenance cutover changes JSON protocols, not the Mise
+SQLite schema. Brief v2 and compiled draft v2 preserve the same typed contracts;
+historical brief v1 input is refused with the command's required replacement
+fields rather than silently converted.
 
 A targeted structural campaign may use an exact target-module measurement as
 its primary objective, but it must retain the repository-wide largest-module
@@ -453,12 +483,21 @@ proof as isolation evidence.
 Admission canonicalizes objective keys lexicographically. A deterministic
 evaluator must emit exactly one observation for every admitted objective in that
 canonical order, and its successful stdout must be the compact exact Rust-typed
-serialization of `papertiger-mise.deterministic-evaluator-output.v1`. Field
+serialization of `papertiger-mise.deterministic-evaluator-output.v2`. Field
 order is therefore part of the byte contract; arbitrary valid or sorted JSON is
 not canonical. The
 objective-order refusal prints both the expected and observed sequences; adapter
 authors should treat the admitted manifest returned by `campaign show`, not the
 authoring file's display order, as the executable contract.
+
+Campaign v2 uses deterministic request v2, output v2, and environment-bound
+trial receipt v4, or paired request v3 with provenance-bearing measurements.
+Historical campaign v1 keeps its original protocol versions. The
+`deterministic_evaluator` and `paired_fixture_adapter` examples exercise the
+current contract with explicitly synthetic data. The structural
+`debt_campaign_evaluator` and `lifecycle_campaign_evaluator` sources retain
+their historical v1 protocol for earlier experiments; author a v2 collector
+with explicit measurement scope before starting a new structural campaign.
 
 The evaluator request binds both result-tree IDs and the runtime-verified
 baseline worktree locator. Successor-safe evaluators measure the candidate and

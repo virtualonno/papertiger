@@ -9,8 +9,14 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use papertiger_mise::manifest::Sha256Digest;
+use papertiger_mise::measurement::{
+    MEASUREMENT_SAMPLE_SCHEMA_V1, MeasuredProcess, MeasurementSample,
+};
 use papertiger_mise::{DomainTrialMeasurement, DomainTrialResult, PairedTrialRequest};
 use serde_json::json;
+
+#[path = "support/synthetic_measurement.rs"]
+mod synthetic_measurement;
 
 const RESULT_SCHEMA: &str = "contextmink.synthetic-paired-trial-result.v1";
 
@@ -24,6 +30,11 @@ fn main() -> Result<()> {
     }
     let request: PairedTrialRequest =
         serde_json::from_value(request_value).context("type paired request")?;
+    if request.schema != papertiger_mise::adapter::PAIRED_TRIAL_REQUEST_SCHEMA_V3 {
+        bail!(
+            "synthetic fixture adapter requires paired-trial-request.v3 with measurement contracts"
+        );
+    }
     let root = participant_root(&request.participant.identity_sha256.0)?;
     let cargo = std::fs::read(root.join("Cargo.toml"))
         .with_context(|| format!("read Contextmink Cargo.toml in {}", root.display()))?;
@@ -41,6 +52,11 @@ fn main() -> Result<()> {
         (10_000, sha256(b"contextmink.synthetic-baseline.v1"))
     };
     let executable = std::fs::canonicalize(std::env::current_exe()?)?;
+    let process = MeasuredProcess::current()?;
+    let executable_name = executable
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("adapter executable filename")?;
     let result = DomainTrialResult {
         schema: RESULT_SCHEMA.to_owned(),
         execution_id: request.execution_id.clone(),
@@ -67,7 +83,20 @@ fn main() -> Result<()> {
                     "memory-mib" => 100_000,
                     unknown => bail!("unsupported synthetic objective '{unknown}'"),
                 };
+                let unit = if objective.objective == "correct" { "boolean" } else { "synthetic-units" };
+                let observed = synthetic_measurement::contract(unit, executable_name);
+                if objective.measurement.as_ref() != Some(&observed) {
+                    bail!("synthetic fixture measurement contract differs from the admitted scope");
+                }
                 Ok(DomainTrialMeasurement {
+                    provenance: Some(MeasurementSample {
+                        schema: MEASUREMENT_SAMPLE_SCHEMA_V1.to_owned(), observed,
+                        process: process.clone(), participant_revision: request.participant.revision.clone(),
+                        fixture_sha256: request.fixture_sha256.0.clone(),
+                        environment_sha256: request.environment_profile_sha256.0.clone(),
+                        value: units.into(), scale10: objective.scale10,
+                        evidence: json!({"synthetic_score": score, "score_source_sha256": score_source_sha256, "objective": objective.objective}),
+                    }),
                     objective: objective.objective.clone(),
                     units,
                 })

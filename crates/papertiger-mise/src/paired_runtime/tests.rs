@@ -543,6 +543,10 @@ impl Fixture {
             ContainmentGrade::Sealed => crate::manifest::HoldoutTierKind::Confirmation,
         };
         manifest.objectives = statistic_fixtures::objectives();
+        manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V2.to_owned();
+        for objective in &mut manifest.objectives {
+            objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
+        }
         manifest.evaluator.protocol = crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V1.to_owned();
         manifest.calibration.no_op.minimum_repetitions = 16;
         manifest.calibration.known_bad.minimum_repetitions = 16;
@@ -730,7 +734,7 @@ impl Fixture {
                 (CalibrationMode::Research, PairedParticipantRole::Candidate) => (1, 8_000),
                 _ => (1, 10_000),
             };
-            let result = DomainTrialResult {
+            let mut result = DomainTrialResult {
                 schema: binding.result_schema.clone(),
                 execution_id: request.execution_id.clone(),
                 request_sha256: Sha256Digest(sha256(&request_bytes)),
@@ -743,19 +747,38 @@ impl Fixture {
                 domain_authority: json!({"fixture": true}),
                 measurements: vec![
                     crate::adapter::DomainTrialMeasurement {
+                        provenance: None,
                         objective: "correct".to_owned(),
                         units: correct,
                     },
                     crate::adapter::DomainTrialMeasurement {
+                        provenance: None,
                         objective: "frame-ms".to_owned(),
                         units: frame_ms,
                     },
                     crate::adapter::DomainTrialMeasurement {
+                        provenance: None,
                         objective: "memory-mib".to_owned(),
                         units: 100_000,
                     },
                 ],
             };
+            for measurement in &mut result.measurements {
+                let objective = request
+                    .objectives
+                    .iter()
+                    .find(|o| o.objective == measurement.objective)
+                    .unwrap();
+                let mut sample = crate::measurement::tests::sample(
+                    objective.measurement.as_ref().unwrap(),
+                    measurement.units,
+                );
+                sample.scale10 = objective.scale10;
+                sample.participant_revision = request.participant.revision.clone();
+                sample.fixture_sha256 = request.fixture_sha256.0.clone();
+                sample.environment_sha256 = request.environment_profile_sha256.0.clone();
+                measurement.provenance = Some(sample);
+            }
             let result_bytes = serde_json::to_vec(&serde_json::to_value(&result).unwrap()).unwrap();
             let birth_identity = format!("fixture-birth-{}", run.execution_id);
             let capabilities = ExecutionCapabilities {

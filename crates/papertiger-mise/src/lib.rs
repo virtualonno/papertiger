@@ -18,6 +18,7 @@ mod git_materialization;
 pub mod improvement;
 mod lifecycle;
 pub mod manifest;
+pub mod measurement;
 pub mod object;
 pub mod paired_evidence;
 pub mod paired_runtime;

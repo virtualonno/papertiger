@@ -203,7 +203,7 @@ fn main() -> Result<()> {
     };
     let objectives = objectives();
     let manifest = CampaignManifest {
-        schema: "papertiger-mise.campaign.v1".to_owned(),
+        schema: "papertiger-mise.campaign.v2".to_owned(),
         campaign_id: CAMPAIGN_ID.to_owned(),
         source: source_binding.clone(),
         mutation_scope: MutationScope {
@@ -463,6 +463,9 @@ fn fixture_entry(key: &str, locator: &str, sha256: &str) -> FixtureBundleEntry {
     }
 }
 
+#[path = "support/synthetic_measurement.rs"]
+mod synthetic_measurement;
+
 fn objectives() -> Vec<ObjectiveSpec> {
     vec![
         ObjectiveSpec {
@@ -473,6 +476,10 @@ fn objectives() -> Vec<ObjectiveSpec> {
             minimum_practical_change: 0.0,
             regression_tolerance: 0.0,
             acceptance_threshold: Some(1.0),
+            measurement: Some(synthetic_measurement::contract(
+                "boolean",
+                &format!("paired_fixture_adapter{}", std::env::consts::EXE_SUFFIX),
+            )),
             target_value: None,
         },
         ObjectiveSpec {
@@ -483,6 +490,10 @@ fn objectives() -> Vec<ObjectiveSpec> {
             minimum_practical_change: 1.0,
             regression_tolerance: 0.5,
             acceptance_threshold: None,
+            measurement: Some(synthetic_measurement::contract(
+                "synthetic-units",
+                &format!("paired_fixture_adapter{}", std::env::consts::EXE_SUFFIX),
+            )),
             target_value: None,
         },
         ObjectiveSpec {
@@ -493,6 +504,10 @@ fn objectives() -> Vec<ObjectiveSpec> {
             minimum_practical_change: 0.0,
             regression_tolerance: 2.0,
             acceptance_threshold: None,
+            measurement: Some(synthetic_measurement::contract(
+                "synthetic-units",
+                &format!("paired_fixture_adapter{}", std::env::consts::EXE_SUFFIX),
+            )),
             target_value: None,
         },
     ]

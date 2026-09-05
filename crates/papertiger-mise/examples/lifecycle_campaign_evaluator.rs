@@ -210,6 +210,7 @@ fn objective_observations(
                 unknown => bail!("unsupported frozen campaign objective '{unknown}'"),
             };
             Ok(DeterministicObservation {
+                provenance: None,
                 objective: objective.key.clone(),
                 baseline: baseline_value as f64,
                 candidate: candidate_value as f64,

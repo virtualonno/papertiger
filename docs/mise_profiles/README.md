@@ -17,16 +17,16 @@ cannot:
 
 The generic registry uses schema
 `papertiger.improvement-paradigm-registry.v1` at
-`docs/mise_templates/v2/registry.json`. The content-addressed v1 registry
-remains at `docs/mise_templates/v1/registry.json` so old briefs remain
-verifiable, while new briefs bind the digest reported by
+`docs/mise_templates/v3/registry.json`. The content-addressed v1 and v2
+registries retain their original bytes for historical template verification,
+while new briefs bind the digest reported by
 `papertiger-mise improvement paradigms`. `papertiger-mise improvement verify <file>`
 refuses missing canonical paradigms or project command, path,
 numeric-threshold, and verdict leakage. Project facts remain in a separately
 versioned project brief; the registry supplies question and objective shapes,
 never campaign authority.
 
-A brief uses `papertiger.project-improvement-brief.v1` and remains
+A brief uses `papertiger.project-improvement-brief.v2` and remains
 `planning_input_only`. Derive it read-first from the consuming project's live
 source, tests, docs, task authority, runtime evidence, known failures,
 invariants, candidate surfaces, fixtures, environment, and resource costs.
@@ -42,12 +42,22 @@ quantitative primary, distinct correctness and compatibility hard constraints,
 and protected countermetrics; results remain per-objective rather than a
 weighted scalar.
 
-Resource-cost prose currently carries no typed measurement provenance. A
-reviewer must distinguish the measured subject (product, compiler, harness, or
-external service), workload and cardinality, phase, host, cache state, units,
-and aggregation before using a cost as a constraint. The brief compiler cannot
-enforce that correspondence with later trial observations. A successful draft
-therefore establishes neither resource acceptance nor performance improvement.
+Every objective and `resource_costs` entry carries a typed measurement contract:
+subject, process role and executable name, cost category, phase, metric meaning
+and units, workload and cardinality, host and environment classes, sampling and
+aggregation, cache state, rationale, tradeoff, and limitations. Resource-cost
+entries describe diagnostic costs; objectives separately decide which costs
+are protected or constrained. Compiler and test-harness costs cannot be labeled
+as product behavior. Hard resource constraints require domain rationale and
+exact no-op and known-bad fixture hashes, alongside a behavioral primary.
+
+The compiler preserves these contracts in draft v2. Campaign v2 requires them
+at admission and compares them with retained samples during completion and CAS
+rederivation. Collectors remain trusted for raw measurement truth and host
+compliance. A successful planning draft supplies no observations and therefore
+establishes neither resource acceptance nor performance improvement. Historical
+brief v1 bytes remain historical input; author a new v2 brief to validate or
+compile under the current contract.
 
 Proposal and follow-up decisions belong to the external operator or agent.
 The proposed task graph is advisory draft content; there is no built-in
@@ -69,7 +79,7 @@ brief bytes. The public example intentionally has no approval file.
 <new-file>` refuses an existing output, dirty or abbreviated source identity,
 unavailable fixtures, and environment requirements that are not live and
 located. Success writes only a
-`papertiger.compiled-improvement-draft.v1` with `authority=non_admitted_draft`,
+`papertiger.compiled-improvement-draft.v2` with `authority=non_admitted_draft`,
 a proposed task graph, exact objective portfolio, fixtures, environment,
 mutation scope, budgets, and stop rules. It never opens a database or admits a
 campaign; admission remains a separate explicit Mise command.

@@ -184,6 +184,8 @@ pub struct PairedObjectiveObservation {
     pub objective: String,
     pub baseline_units: i64,
     pub candidate_units: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::measurement::ObservationProvenance>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -231,6 +233,8 @@ pub struct PairedObjectiveResult {
     pub median_improvement: MedianOrderStatistics,
     pub acceptance_passed_in_every_block: Option<bool>,
     pub hypotheses: Vec<PairedHypothesisResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<crate::measurement::MeasurementContract>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -891,6 +895,7 @@ pub fn classify_paired_fixed(
                 median_improvement: median(&improvements)?,
                 acceptance_passed_in_every_block,
                 hypotheses,
+                measurement: definition.measurement.clone(),
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -1034,6 +1039,16 @@ pub fn assess_no_op_cohort(
             && hypothesis(objective, PairedHypothesisKind::PracticalImprovement)
                 .is_some_and(|result| result.significant)
     });
+    crate::measurement::validate_resource_calibration(
+        classification.objectives.iter().map(|result| {
+            (
+                result.key.as_str(),
+                result.measurement.as_ref(),
+                result.acceptance_passed_in_every_block,
+            )
+        }),
+        false,
+    )?;
     if practical_false_positive {
         passed = false;
         reasons.push("no-op calibration produced a significant practical improvement".to_owned());
@@ -1064,6 +1079,16 @@ pub fn assess_known_bad_cohort(
             "known-bad calibration was not rejected; paired evaluator integrity is not established"
         );
     }
+    crate::measurement::validate_resource_calibration(
+        classification.objectives.iter().map(|result| {
+            (
+                result.key.as_str(),
+                result.measurement.as_ref(),
+                result.acceptance_passed_in_every_block,
+            )
+        }),
+        true,
+    )?;
     Ok(classification)
 }
 
@@ -1298,6 +1323,41 @@ fn validate_blocks<'a>(
             bail!("each paired block requires exactly one observation per objective");
         }
         for (key, observation) in observations {
+            let definition = objectives
+                .iter()
+                .find(|objective| objective.key == key)
+                .context("paired measurement definition disappeared")?;
+            let policy = plan
+                .objective_policy(key)
+                .context("paired measurement policy disappeared")?;
+            if let Some(contract) = &definition.measurement {
+                contract.validate(&definition.unit, definition.role)?;
+            }
+            for (sample, units) in [
+                (
+                    observation.provenance.as_ref().map(|p| &p.baseline),
+                    observation.baseline_units,
+                ),
+                (
+                    observation.provenance.as_ref().map(|p| &p.candidate),
+                    observation.candidate_units,
+                ),
+            ] {
+                crate::measurement::validate_paired_sample(
+                    definition.measurement.as_ref(),
+                    sample,
+                    units,
+                    policy.scale10,
+                )?;
+                if sample.is_some_and(|sample| {
+                    sample.fixture_sha256 != block.fixture_sha256.0
+                        || sample.environment_sha256 != block.environment_profile_sha256.0
+                }) {
+                    bail!(
+                        "paired provenance fixture_sha256 and environment_sha256 must equal the frozen block fixture and environment profile"
+                    );
+                }
+            }
             parsed
                 .get_mut(key)
                 .context("paired objective disappeared from parsed cohort")?
@@ -1620,6 +1680,7 @@ pub(crate) mod tests {
                 minimum_practical_change: 0.0,
                 regression_tolerance: 0.0,
                 acceptance_threshold: Some(1.0),
+                measurement: None,
                 target_value: None,
             },
             ObjectiveSpec {
@@ -1630,6 +1691,7 @@ pub(crate) mod tests {
                 minimum_practical_change: 1.0,
                 regression_tolerance: 0.5,
                 acceptance_threshold: None,
+                measurement: None,
                 target_value: None,
             },
             ObjectiveSpec {
@@ -1640,6 +1702,7 @@ pub(crate) mod tests {
                 minimum_practical_change: 0.0,
                 regression_tolerance: 2.0,
                 acceptance_threshold: None,
+                measurement: None,
                 target_value: None,
             },
         ]
@@ -1824,16 +1887,19 @@ pub(crate) mod tests {
                     )),
                     observations: vec![
                         PairedObjectiveObservation {
+                            provenance: None,
                             objective: "correct".to_owned(),
                             baseline_units: 1,
                             candidate_units: correct_units,
                         },
                         PairedObjectiveObservation {
+                            provenance: None,
                             objective: "frame-ms".to_owned(),
                             baseline_units: 10_000 + i64::from(block_index) * 100,
                             candidate_units: frame_candidate_units + i64::from(block_index) * 100,
                         },
                         PairedObjectiveObservation {
+                            provenance: None,
                             objective: "memory-mib".to_owned(),
                             baseline_units: 100_000,
                             candidate_units: memory_candidate_units,
