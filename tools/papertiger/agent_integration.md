@@ -52,10 +52,12 @@ supplied project root.
 - Ensure the database plus `-journal`, `-wal`, and `-shm` sidecars are ignored
   before `init`. Never replace a missing authority with a fresh one when prior
   work clearly existed.
-- `init` is the only creation and migration command. Read commands never
+- `init` is the only command that initializes or migrates the selected live authority. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current planner authority schema is v9. Before migrating an older authority, use
-  its matching release to archive its current export. Older dump files require
+- The current planner authority schema is v9. Before migrating an older authority,
+  archive its export with the matching release and create a standalone SQLite
+  recovery file with the new release's `--db <source> backup --output <new-path>`.
+  Older dump files require
   their matching release, a temporary authority migration, and current-format
   re-export before import.
   Current dumps use `papertiger.dump.v8`; schema v9 preserves former-plan
@@ -64,6 +66,14 @@ supplied project root.
   `export --output <path>` writes a canonical UTF-8 recovery file atomically
   and prints a digest/count receipt; replacing an existing file requires
   `--replace`.
+- `backup --output <new-path> --json` creates a consistent standalone SQLite
+  recovery file, including committed WAL data. It supports planner schemas 1–9
+  without migration or new events, refuses foreign authorities and existing
+  destinations or sidecars, and reports the output hash and original schema.
+  Historical evidence is preserved without semantic validation; this can retain
+  legacy records that a matching release's JSON import refuses. Inspect recovery
+  copies with the matching release's `--db`; never use one as a second live
+  authority. Restoration is a deliberate operator action.
 
 Papertiger owns modeled plans, tasks, dependencies, blockers, gates, and event
 history. Domain evidence and issue systems remain authoritative for their own

@@ -6,6 +6,8 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-05
+
 ### Added
 
 - `backup --output <new-path> --json` creates a standalone SQLite recovery copy
@@ -33,6 +35,12 @@ All notable user-visible changes are documented here. Papertiger follows
 - Mise `budget release <campaign> <reservation> --reason <reason>` releases an
   unused reservation at zero cost. It refuses reservations already bound to
   lifecycle work, and released reservation identifiers cannot be reused.
+- Mise measurement contracts bind declared process, workload, phase, units,
+  sampling and cost category to each retained observation and its selected inputs.
+  Compiler or test-harness resource cost cannot satisfy a product-runtime contract.
+  Hard resource thresholds must pass their no-op control and reject their known-bad
+  control. The collector remains trusted; matching metadata cannot attest an
+  untrusted host or fabricated measurements.
 
 ### Changed
 
@@ -54,6 +62,12 @@ All notable user-visible changes are documented here. Papertiger follows
   `--db` requires `status --objects <object-root>` because the authority does not
   bind its object-store location. The status reports directory presence only;
   it does not verify the stored evidence.
+- New Mise campaigns require `papertiger-mise.campaign.v2` with measurement
+  contracts on every objective. Update adapters for deterministic request/output
+  v2 and trial receipt v4, or paired request v3. Brief and compiled-draft inputs
+  use v2. Historical campaign v1 bytes remain readable with their original
+  protocols and no inferred provenance; they cannot be newly admitted or upgraded
+  in place. This protocol cutover adds no SQLite migration beyond schema v9.
 
 ### Fixed
 
@@ -62,6 +76,14 @@ All notable user-visible changes are documented here. Papertiger follows
   integrations. Later negations still move the protection block after them.
 - Mise candidate authoring uses portable Git paths when creating worktrees,
   including repositories in Windows paths with spaces.
+- Mise Git mutation diagnostics go to stderr so a successful materialization
+  returns a complete JSON receipt that clients can parse directly.
+- Deterministic Mise repetitions compare validated objective values while
+  retaining each trial's distinct process and environment evidence. Matching
+  values from separately launched processes no longer cause false disagreement;
+  changed values or mismatched measurement bindings still refuse adjudication.
+- Mise successor admission preserves canonical ordering when a parent proof
+  includes multiple build receipts, allowing exact replay after reopening CAS.
 
 ## [0.11.0] - 2026-08-30
 
