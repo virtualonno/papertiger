@@ -23,11 +23,11 @@ use papertiger_mise::{
     admit_verified_successor, bind_candidate, budget_balances, build_git_change_set_material,
     campaign, campaign_events, derive_candidate_planner_projection,
     derive_nomination_planner_projection, derive_parent_promotion_proof, derive_promotion_proof,
-    execute_workspace_trial, init, inspect_source_binding, materialize_candidate,
-    negative_fingerprint_candidates, open_existing, open_for_init, preserve_object,
-    preserve_parent_promotion_proof, read_object, record_candidate, recover_workspace_trial,
-    reserve_budget, successor_admission, trial, verify_campaign_admission,
-    verify_nomination_integrity, verify_parent_promotion_gate, verify_successor_admission,
+    execute_workspace_trial, init, inspect_source_binding, negative_fingerprint_candidates,
+    open_existing, open_for_init, preserve_object, preserve_parent_promotion_proof, read_object,
+    record_candidate, recover_workspace_trial, reserve_budget, successor_admission, trial,
+    verify_campaign_admission, verify_nomination_integrity, verify_parent_promotion_gate,
+    verify_successor_admission,
 };
 use tempfile::TempDir;
 
@@ -784,15 +784,31 @@ impl DogfoodFixture {
             ],
         )
         .expect("materialization reservation");
-        materialize_candidate(
-            connection,
-            ACTOR,
-            &self.objects,
-            &materialization_reservation,
-            &candidate.candidate_id,
-            &self.runs.join(key),
-        )
-        .expect("materialize candidate");
+        let output = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+            .arg("--project-root")
+            .arg(&self.manifest.source.repository_locator)
+            .arg("--db")
+            .arg(&self.database)
+            .args(["--actor", ACTOR, "candidate", "materialize"])
+            .arg(&candidate.candidate_id)
+            .arg("--reservation")
+            .arg(&materialization_reservation)
+            .arg("--worktree")
+            .arg(self.runs.join(key))
+            .arg("--objects")
+            .arg(&self.objects)
+            .output()
+            .expect("launch native candidate materialization");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let receipt: papertiger_mise::MaterializationRecord =
+            serde_json::from_slice(&output.stdout)
+                .expect("materialization stdout must contain exactly one JSON receipt");
+        assert_eq!(receipt.candidate_id, candidate.candidate_id);
+        assert_eq!(receipt.reservation_id, materialization_reservation);
         candidate
     }
 

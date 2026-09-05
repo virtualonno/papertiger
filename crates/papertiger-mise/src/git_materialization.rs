@@ -43,7 +43,8 @@ pub(crate) fn git_run(
     command
         .arg("-C")
         .arg(portable_absolute(repository)?)
-        .args(arguments);
+        .args(arguments)
+        .stdout(Stdio::from(std::io::stderr()));
     if let Some(path) = path_argument {
         command.arg(portable_absolute(path)?);
     }
@@ -144,6 +145,9 @@ pub fn git_worktree_add_without_hooks(
         .args(["worktree", "add", "--detach"])
         .arg(&worktree)
         .arg(base_commit)
+        // Git announces the checked-out HEAD on stdout. Keep the caller's
+        // machine-readable receipt channel free of mutation diagnostics.
+        .stdout(Stdio::from(std::io::stderr()))
         .status()
         .context("launch controlled Git worktree creation")?;
     if !status.success() {
@@ -478,6 +482,7 @@ pub(crate) fn verify_materialized_worktree(
         .arg("-C")
         .arg(&process_worktree)
         .args(["diff", "--quiet", "--no-ext-diff"])
+        .stdout(Stdio::from(std::io::stderr()))
         .status()?;
     if !unstaged.success() {
         bail!("materialized worktree has unstaged drift");
@@ -990,7 +995,8 @@ fn git_with_index(
             "GIT_ALTERNATE_OBJECT_DIRECTORIES",
             portable_absolute(alternate_object_directory)?,
         )
-        .args(arguments);
+        .args(arguments)
+        .stdout(Stdio::from(std::io::stderr()));
     if stdin_bytes.is_some() {
         command.stdin(Stdio::piped());
     }
