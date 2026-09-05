@@ -1,0 +1,35 @@
+{
+  "schema": "papertiger.structural-detector-revalidation.v1",
+  "date": "2026-09-05",
+  "source_change_commit": "562530f44373d7f999681e5ca0751681e5de402d",
+  "source_files": [
+    {
+      "path": "crates/papertiger-mise/examples/debt_campaign_evaluator.rs",
+      "sha256": "1e76fd65b065fd4662545d67ee0efcfee7ff4cddcafc08d019dc0a2f1fdc2ebb"
+    },
+    {
+      "path": "crates/papertiger-mise/examples/lifecycle_campaign_evaluator.rs",
+      "sha256": "5cecc8686ca14c7800e4f9998ee0c3452d3999aa7ce6aa7510fd04f69513cff5"
+    }
+  ],
+  "previous_debt_evaluator_sha256": "37363472742650291e6c060bb42a01be8bfcb856237c4434e04119b4fa5dc2cf",
+  "review": "The provenance cutover adds provenance: None to the historical debt evaluator observation. Its structural detector and anti-golf behavior are unchanged. The retained lifecycle evaluator has also been retested.",
+  "command": "cargo test -p papertiger-mise --example debt_campaign_evaluator --example lifecycle_campaign_evaluator",
+  "package_version": "0.12.0",
+  "build_context": "Root master source with the pending 0.12.0 release version in Cargo.toml and Cargo.lock.",
+  "result": {
+    "exit_code": 0,
+    "passed": 10,
+    "failed": 0,
+    "ignored": 0
+  },
+  "output": {
+    "path": "state/structural-detector-revalidation.txt",
+    "sha256": "08e74ae5c4a5217cadee2f677177c9e057c293f89c79dbd69c40f23ddf7725e1"
+  },
+  "limitations": [
+    "This records source review and the ten named structural-detector tests, not a campaign result or measured product improvement.",
+    "Both structural examples retain historical v1 protocol. MISE.md requires a separately authored v2 collector with explicit measurement scope for a new structural campaign.",
+    "The local test output is retained outside Git. This committed record and exact source identities remain the durable review evidence."
+  ]
+}
