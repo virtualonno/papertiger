@@ -6,6 +6,13 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-09-05
+
+### Fixed
+
+- The top-level `reference` help describes task reference locators instead of
+  repeating the `commit` command description.
+
 ## [0.12.0] - 2026-09-05
 
 ### Added

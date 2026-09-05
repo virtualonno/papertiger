@@ -236,7 +236,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: BlockerCmd,
     },
-    /// Manage caller-resolved local commit associations without invoking Git
+    /// Manage exact task reference locators without fetching external state
     Reference {
         #[command(subcommand)]
         cmd: ReferenceCmd,
