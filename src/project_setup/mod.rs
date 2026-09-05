@@ -248,7 +248,11 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     for target in &skill_targets {
         managed.push(ManagedFile {
             relative_path: PathBuf::from(target.managed_path()),
-            content: canonical_managed_text(AGENT_SKILL).into_owned(),
+            content: if *target == SkillTarget::Claude {
+                claude_skill_router()
+            } else {
+                canonical_managed_text(AGENT_SKILL).into_owned()
+            },
             executable: false,
             content_kind: ManagedContentKind::ReceiptText,
         });
@@ -639,7 +643,7 @@ fn select_skill_targets(
     requested: Option<SkillTargetRequest>,
     prior_receipt: Option<&InstallReceipt>,
 ) -> Vec<SkillTarget> {
-    match requested {
+    let mut targets = match requested {
         None => prior_receipt
             .map(|receipt| receipt.skill_targets.clone())
             .unwrap_or_else(|| detect_skill_targets(root)),
@@ -648,7 +652,22 @@ fn select_skill_targets(
         Some(SkillTargetRequest::Claude) => vec![SkillTarget::Claude],
         Some(SkillTargetRequest::Both) => vec![SkillTarget::Agents, SkillTarget::Claude],
         Some(SkillTargetRequest::None) => Vec::new(),
+    };
+    if targets.contains(&SkillTarget::Claude) && !targets.contains(&SkillTarget::Agents) {
+        targets.insert(0, SkillTarget::Agents);
     }
+    targets
+}
+
+fn claude_skill_router() -> Vec<u8> {
+    let canonical = std::str::from_utf8(AGENT_SKILL)
+        .expect("bundled skill is UTF-8")
+        .replace("\r\n", "\n");
+    let (frontmatter, _) = canonical
+        .split_once("\n---\n")
+        .expect("bundled skill has complete frontmatter");
+    format!("{frontmatter}\n---\n\nRead and follow [the canonical skill](../../../.agents/skills/papertiger/SKILL.md).\n")
+        .into_bytes()
 }
 
 fn detect_skill_targets(root: &Path) -> Vec<SkillTarget> {
@@ -1278,7 +1297,11 @@ mod tests {
                 &["opencode.jsonc"],
                 vec![SkillTarget::Agents],
             ),
-            ("claude", &["CLAUDE.md"], vec![SkillTarget::Claude]),
+            (
+                "claude",
+                &["CLAUDE.md"],
+                vec![SkillTarget::Agents, SkillTarget::Claude],
+            ),
             (
                 "both",
                 &["AGENTS.md", "CLAUDE.md"],
@@ -1543,7 +1566,7 @@ mod tests {
         );
         assert_eq!(
             fs::read(project.join(".claude/skills/papertiger/SKILL.md")).unwrap(),
-            AGENT_SKILL
+            claude_skill_router()
         );
         let receipt = load_install_receipt(&project.join(INSTALL_RECEIPT_PATH))
             .unwrap()
@@ -1621,6 +1644,72 @@ mod tests {
             fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap(),
             AGENT_INTEGRATION
         );
+        cleanup(&project);
+    }
+
+    #[test]
+    fn claude_router_upgrades_an_owned_claude_only_install() {
+        let (project, binary) = fixture("canonical-claude-router");
+        let mut selected = request(&project, &binary);
+        selected.skill_target = Some(SkillTargetRequest::Claude);
+        let installed = setup_project(selected).unwrap();
+        assert_eq!(
+            installed.skill_targets,
+            vec![SkillTarget::Agents, SkillTarget::Claude]
+        );
+        let canonical = project.join(".agents/skills/papertiger/SKILL.md");
+        let router = project.join(".claude/skills/papertiger/SKILL.md");
+        let expected = fs::read(&router).unwrap();
+        let router_text = String::from_utf8(expected.clone()).unwrap();
+        let canonical_text = fs::read_to_string(&canonical)
+            .unwrap()
+            .replace("\r\n", "\n");
+        assert_eq!(
+            router_text.split_once("\n---\n").unwrap().0,
+            canonical_text.split_once("\n---\n").unwrap().0
+        );
+        let target = router_text
+            .split_once("](")
+            .unwrap()
+            .1
+            .split_once(')')
+            .unwrap()
+            .0;
+        assert_eq!(
+            fs::canonicalize(router.parent().unwrap().join(target)).unwrap(),
+            fs::canonicalize(&canonical).unwrap()
+        );
+        assert!(expected.len() < canonical_text.len());
+
+        fs::write(&router, AGENT_SKILL).unwrap();
+        fs::remove_file(&canonical).unwrap();
+        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
+        let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
+        receipt.skill_targets = vec![SkillTarget::Claude];
+        receipt
+            .managed_files
+            .retain(|file| file.path != SkillTarget::Agents.managed_path());
+        receipt
+            .managed_files
+            .iter_mut()
+            .find(|file| file.path == SkillTarget::Claude.managed_path())
+            .unwrap()
+            .sha256 = receipt::managed_text_sha256(AGENT_SKILL);
+        let old_receipt = receipt_bytes(&receipt).unwrap();
+        fs::write(&receipt_path, &old_receipt).unwrap();
+        let mut upgrade = request(&project, &binary);
+        upgrade.skill_target = None;
+        upgrade.dry_run = true;
+        let preview = setup_project(upgrade).unwrap();
+        assert_eq!(preview.operation, SetupOperation::Upgrade);
+        assert_eq!(fs::read(&router).unwrap(), AGENT_SKILL);
+        assert!(!canonical.exists());
+        assert_eq!(fs::read(&receipt_path).unwrap(), old_receipt);
+        let mut upgrade = request(&project, &binary);
+        upgrade.skill_target = None;
+        setup_project(upgrade).unwrap();
+        assert_eq!(fs::read(router).unwrap(), expected);
+        assert_eq!(fs::read(canonical).unwrap(), AGENT_SKILL);
         cleanup(&project);
     }
 

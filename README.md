@@ -213,9 +213,10 @@ Setup never invokes Git, and ignore rules do not untrack an existing path. If
 the host binary or selected authority is already tracked, review it and remove
 only its index entry with `git rm --cached -- <path>`, preserving the local
 file.
-This source repository retains the single skill template; selected discovery
-copies in consuming projects stay byte-identical to it. Harnesses that do not
-load either skill location can use the canonical contract through concise
+This source repository retains one skill template, installed canonically under
+`.agents/skills`. Claude gets a thin router with inherited discovery metadata
+and a link to that file; Claude selection also installs its canonical dependency.
+Harnesses that do not load either skill location can use the canonical contract through concise
 repository-owned guidance without installing a generic resident skill.
 
 After installation, inspect that repository-owned discovery surface from the
