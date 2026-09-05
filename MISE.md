@@ -6,6 +6,14 @@ retains failures and measurements; and derives development nominations from
 reopened evidence. Its useful local scope is trusted Git-backed engineering
 with deterministic or fixed-sample paired evaluation.
 
+Mise's present value is reproducible experiment control and retained evidence,
+not a demonstrated general improvement in agent capability. Before investing
+in a campaign, compare the decision with ordinary engineering and establish
+headroom on the chosen primary. A perfect exact-output baseline on a fixed
+case matrix cannot gain another correct case. That matrix can expose regressions
+without establishing improvement utility. Domain bounds and value judgments
+remain the caller's responsibility; admission does not infer them today.
+
 Candidate proposal belongs to the operator or an external agent. Mise does not
 select planner tasks, invoke an agent provider, or decide which project should
 change next. The external caller may propose another candidate within the

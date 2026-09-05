@@ -18,6 +18,14 @@ this evaluator can distinguish improvement from breakage. Instruction length,
 test success, a synthetic score, and compiler cost alone do not prove better
 agent or product behavior.
 
+Check improvement headroom on the frozen workload. A primary counting exact
+outcomes cannot improve when the baseline already matches every case. Such a
+matrix can prove regression rejection, but cannot demonstrate an improvement
+nomination. Preserve correctness as a constraint and choose a defensible primary
+with real headroom, or keep the work as an ordinary regression comparison.
+Do not weaken controls, invent a proxy, or expand the framework to rescue a
+value claim. Record setup and operator cost separately from runtime ledgers.
+
 For instruction changes, measure actual unprompted agent behavior on positive
 requests and negative controls: appropriate invocation, omitted obligations,
 duplicates, tool failures, and unnecessary work. A lexical skill check verifies

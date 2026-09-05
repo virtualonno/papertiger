@@ -1,0 +1,186 @@
+{
+  "schema": "mise.value-comparison-summary.v1",
+  "raw_report_sha256": "9d702ecc410fe9adf0ea28a02f9b1364eb6301ed1fab74db8a27981c9a21a045",
+  "reports": [
+    {
+      "domain": "contextmink",
+      "campaign": "contextmink-native-behavior-a02",
+      "manifest_sha256": "c97ee3be007e51556a2a0e3df32026dfa7db765d1dcfda1cc5d008628bffe02b",
+      "profile_sha256": "2bd802ea12b183482a02d416304a47db476e9a39c8f572455d5e38a479d0afcd",
+      "fixture_sha256": "daac90b36364f7fb9859ea6c72fc9b8d37742a604ff9c2cba1226bc8e52158bf",
+      "ordinary_research_passes_regression": false,
+      "mise_recorded_disposition": "rejected",
+      "projection_sha256": "f723e7da926a91c1cc768b1dacc45c60c8a4bd08c2c849e8d3ec03643b87f791",
+      "primary_headroom_cases": 0,
+      "minimum_practical_change": 1.0,
+      "improvement_possible_on_this_primary": false,
+      "variants": [
+        {
+          "tree": "20d65166678ff04cc4fc6a06aa419aab0fc369e4",
+          "source_commit": "2d871e76072574d3b38b8d53a0772fd8f15191e1",
+          "executable": "F:\\AI\\contextmink\\state\\mise-native-behavior-a01\\normalized\\binaries\\baseline\\contextmink.exe",
+          "executable_sha256": "8d26e2afc66619cd633f8b0978706c032592d3b08df5f6500fcbfc7e89488847",
+          "runs": [
+            {
+              "repetition": 0,
+              "wall_seconds": 0.43201650003902614,
+              "case_count": 18,
+              "exact_outcomes": 18,
+              "unsafe_acceptances": 0,
+              "native_invocations": 18
+            },
+            {
+              "repetition": 1,
+              "wall_seconds": 0.12145480001345277,
+              "case_count": 18,
+              "exact_outcomes": 18,
+              "unsafe_acceptances": 0,
+              "native_invocations": 18
+            }
+          ]
+        },
+        {
+          "tree": "038e734a009cc4de8dc0cf593a8389ba3d29700c",
+          "source_commit": "da7599353543115819118b0d1b9f8ff1c972bc28",
+          "executable": "F:\\AI\\contextmink\\state\\mise-native-behavior-a01\\normalized\\binaries\\known-bad\\contextmink.exe",
+          "executable_sha256": "61490d5b3dfcffff69cb1b546be5ded7b2b7af88a43a36430b9892b843d9c481",
+          "runs": [
+            {
+              "repetition": 0,
+              "wall_seconds": 0.44880979997105896,
+              "case_count": 18,
+              "exact_outcomes": 6,
+              "unsafe_acceptances": 12,
+              "native_invocations": 18
+            },
+            {
+              "repetition": 1,
+              "wall_seconds": 0.12698890001047403,
+              "case_count": 18,
+              "exact_outcomes": 6,
+              "unsafe_acceptances": 12,
+              "native_invocations": 18
+            }
+          ]
+        },
+        {
+          "tree": "b21158d957077c1a7890f6a9c9922f1a1f61f5e3",
+          "source_commit": "cdc7f29ee9b00fae53e93021b57aa3c759d2dd9b",
+          "executable": "F:\\AI\\contextmink\\state\\mise-native-behavior-a01\\normalized\\binaries\\research\\contextmink.exe",
+          "executable_sha256": "02cafdc8820805f34dd60cdb3dd1243ddc8e2d2d10a9128c62837814dbc617ba",
+          "runs": [
+            {
+              "repetition": 0,
+              "wall_seconds": 0.44446839997544885,
+              "case_count": 18,
+              "exact_outcomes": 13,
+              "unsafe_acceptances": 5,
+              "native_invocations": 18
+            },
+            {
+              "repetition": 1,
+              "wall_seconds": 0.12311060004867613,
+              "case_count": 18,
+              "exact_outcomes": 13,
+              "unsafe_acceptances": 5,
+              "native_invocations": 18
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "ghidramink",
+      "campaign": "ghidramink-native-behavior-a03",
+      "manifest_sha256": "0f886ab1845be0d5ca89f28dae4d7beea5de911bfafc4b0c1e5c8c841eb8959a",
+      "profile_sha256": "b3393d86dbfdc690241d4941d3703b7254933b19126df85cef3a55a884bcbb44",
+      "fixture_sha256": "79badfbf9804a5ec23557fdc7fb5df805feb8801187afa2da6d1c90feaaeb477",
+      "ordinary_research_passes_regression": false,
+      "mise_recorded_disposition": "rejected",
+      "projection_sha256": "29f7b456330e16806f996eec194c222a540690f4327aa626d031b865abc32a4e",
+      "primary_headroom_cases": 0,
+      "minimum_practical_change": 1.0,
+      "improvement_possible_on_this_primary": false,
+      "variants": [
+        {
+          "tree": "52b381e1d7beb5acab985940a8a89bdfb2674f86",
+          "source_commit": "bf145db2198cb082b001d607f0b4ef370e9efc65",
+          "executable": "F:\\AI\\ghidramink\\state\\mise-native-behavior-a02\\binaries\\baseline\\ghidramink-environment-probe.exe",
+          "executable_sha256": "8fa7dc4db01bed925319bb87f2be0cac3bc1d5680ba4d23a6aa1706d84250cfb",
+          "runs": [
+            {
+              "repetition": 0,
+              "wall_seconds": 0.04831930005457252,
+              "case_count": 12,
+              "exact_outcomes": 12,
+              "unsafe_acceptances": 0,
+              "native_invocations": 1
+            },
+            {
+              "repetition": 1,
+              "wall_seconds": 0.004389000008814037,
+              "case_count": 12,
+              "exact_outcomes": 12,
+              "unsafe_acceptances": 0,
+              "native_invocations": 1
+            }
+          ]
+        },
+        {
+          "tree": "67d6ad73183eb138c9dfe57bd4b16f596ce87398",
+          "source_commit": "494156a7b878574bba57d1fb9675d7cf18b434ea",
+          "executable": "F:\\AI\\ghidramink\\state\\mise-native-behavior-a02\\binaries\\known-bad\\ghidramink-environment-probe.exe",
+          "executable_sha256": "74abdf5b31e6d72d8affbb285abf3ed3ab508390212e09b5188424532a663267",
+          "runs": [
+            {
+              "repetition": 0,
+              "wall_seconds": 0.04677259991876781,
+              "case_count": 12,
+              "exact_outcomes": 2,
+              "unsafe_acceptances": 10,
+              "native_invocations": 1
+            },
+            {
+              "repetition": 1,
+              "wall_seconds": 0.004003899986855686,
+              "case_count": 12,
+              "exact_outcomes": 2,
+              "unsafe_acceptances": 10,
+              "native_invocations": 1
+            }
+          ]
+        },
+        {
+          "tree": "fa244ff6d209b313c5bac1d6644662fba923cb97",
+          "source_commit": "c6f591a90cb031546498a73fcca066d4f2f6f9dc",
+          "executable": "F:\\AI\\ghidramink\\state\\mise-native-behavior-a02\\binaries\\research\\ghidramink-environment-probe.exe",
+          "executable_sha256": "6127d14ce06c50ab9bbfcf9ca99168a263d17d169c12904babbb47c7b985765c",
+          "runs": [
+            {
+              "repetition": 0,
+              "wall_seconds": 0.06321019993629307,
+              "case_count": 12,
+              "exact_outcomes": 9,
+              "unsafe_acceptances": 2,
+              "native_invocations": 1
+            },
+            {
+              "repetition": 1,
+              "wall_seconds": 0.005086999968625605,
+              "case_count": 12,
+              "exact_outcomes": 9,
+              "unsafe_acceptances": 2,
+              "native_invocations": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Same disclosed historical workloads and prebuilt candidates; no new candidate proposal or build.",
+    "Ordinary runner checks exact outputs and unsafe acceptance; it does not replace Mise lineage, calibration, CAS, budgets or recovery.",
+    "Warm prebuilt execution timings exclude setup, builds and operator work; do not compare them to historical campaign ledgers as end-to-end speedups.",
+    "Projection is a retained view; its CAS rederivation was independently checked in the accompanying historical-reopening evidence."
+  ]
+}
