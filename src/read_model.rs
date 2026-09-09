@@ -28,6 +28,7 @@ pub struct EventRecord {
     pub at: String,
     pub actor: String,
     pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
     pub entity: String,
     pub plan: Option<String>,
     pub task_seq: Option<i64>,
@@ -57,6 +58,7 @@ pub struct ActivityEvent {
     pub at: String,
     pub actor: String,
     pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
     pub entity: String,
     pub kind: String,
 }
@@ -251,6 +253,7 @@ impl StoredEvent {
         };
         Ok(EventRecord {
             model: crate::mutation::payload_model(payload.as_ref())?,
+            reasoning_effort: crate::mutation::payload_reasoning_effort(payload.as_ref())?,
             event_id: self.event_id,
             at: self.at,
             actor: self.actor,
@@ -273,6 +276,7 @@ impl StoredEvent {
             .transpose()?;
         Ok(ActivityEvent {
             model: crate::mutation::payload_model(payload.as_ref())?,
+            reasoning_effort: crate::mutation::payload_reasoning_effort(payload.as_ref())?,
             event_id: self.event_id,
             at: self.at.clone(),
             actor: self.actor.clone(),

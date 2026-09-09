@@ -48,6 +48,8 @@ CAS evidence or establish that a campaign can still execute.
 - `--model <model-id>` or `PAPERTIGER_MODEL` optionally records caller-reported
   event authorship independently of actor and meaning source. Creation,
   completion, and status history expose it; historical unknowns remain null.
+  `--reasoning-effort` or `PAPERTIGER_REASONING_EFFORT` records known configured
+  effort separately alongside the model, such as `gpt-6-astra` and `high`.
   This is attribution, not authenticated identity or a model-quality score.
 - `move-plan <N>... --plan <slug> --why <reason>` moves an explicitly selected
   related set atomically. Dependencies, hierarchy, replacement links, gates,

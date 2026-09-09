@@ -28,7 +28,9 @@ mod path_identity;
 pub use path_identity::portable_absolute;
 mod mutation;
 mod read_model;
-pub use mutation::{MutationEvent, MutationReceipt, MutationRecorder, validate_model};
+pub use mutation::{
+    MutationEvent, MutationReceipt, MutationRecorder, validate_model, validate_reasoning_effort,
+};
 mod plan_move;
 pub use plan_move::move_tasks_to_plan;
 pub use read_model::{
@@ -634,14 +636,23 @@ fn record_event_in_mutation(
     payload: Option<&serde_json::Value>,
 ) -> Result<()> {
     let mut payload = payload.cloned();
-    if let Some(model) = mutation::current_model(tx)? {
+    let (model, reasoning_effort) = mutation::current_attribution(tx)?;
+    if let Some(model) = model {
         let object = payload.get_or_insert_with(|| serde_json::json!({}));
         object
             .as_object_mut()
             .context("event payload must be an object to record model attribution")?
             .insert("model".into(), model.into());
     }
+    if let Some(effort) = reasoning_effort {
+        payload
+            .get_or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .context("event payload must be an object to record reasoning effort")?
+            .insert("reasoning_effort".into(), effort.into());
+    }
     mutation::payload_model(payload.as_ref())?;
+    mutation::payload_reasoning_effort(payload.as_ref())?;
     let (entity_plan, entity_seq, gate_name): (Option<String>, Option<i64>, Option<String>) =
         match (entity, entity_id) {
             ("plan", Some(plan_id)) => (
@@ -3460,6 +3471,12 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         if let Err(error) = mutation::payload_model(parsed_payload.as_ref()) {
             push("invalid_event_model", format!("event {event_id}: {error}"));
         }
+        if let Err(error) = mutation::payload_reasoning_effort(parsed_payload.as_ref()) {
+            push(
+                "invalid_event_reasoning_effort",
+                format!("event {event_id}: {error}"),
+            );
+        }
         if let Some(field) = meaning_source_field
             && let Some(value) = parsed_payload
                 .as_ref()
@@ -4870,6 +4887,7 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
     // and gate names rather than database-local row ids.
     for event in &dump.events {
         mutation::payload_model(event.payload.as_ref())?;
+        mutation::payload_reasoning_effort(event.payload.as_ref())?;
         let at = event.at.trim();
         if at.is_empty() || event.actor.trim().is_empty() || event.kind.trim().is_empty() {
             bail!("import event has a blank timestamp, actor, or kind");

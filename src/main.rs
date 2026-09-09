@@ -31,6 +31,9 @@ struct Cli {
     /// Caller-reported event author model; unknown attribution remains absent.
     #[arg(long, global = true)]
     model: Option<String>,
+    /// Caller-reported configured reasoning effort; requires a known model.
+    #[arg(long, global = true)]
+    reasoning_effort: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -1001,6 +1004,11 @@ fn run() -> Result<()> {
             "--model records planning event authorship; omit --model for commands that do not record events"
         );
     }
+    if cli.reasoning_effort.is_some() && !mutation {
+        bail!(
+            "--reasoning-effort records planning event authorship; omit --reasoning-effort for commands that do not record events"
+        );
+    }
     let model = if mutation {
         cli.model.or_else(|| std::env::var("PAPERTIGER_MODEL").ok())
     } else {
@@ -1008,6 +1016,20 @@ fn run() -> Result<()> {
     };
     if let Some(model) = &model {
         pt::validate_model(model)?;
+    }
+    let reasoning_effort = if mutation {
+        cli.reasoning_effort
+            .or_else(|| std::env::var("PAPERTIGER_REASONING_EFFORT").ok())
+    } else {
+        None
+    };
+    if let Some(effort) = &reasoning_effort {
+        pt::validate_reasoning_effort(effort)?;
+        if model.is_none() {
+            bail!(
+                "reasoning effort requires a model identifier; supply --model <model-id> or PAPERTIGER_MODEL, or omit --reasoning-effort and PAPERTIGER_REASONING_EFFORT"
+            );
+        }
     }
     if json
         && matches!(
@@ -1260,7 +1282,11 @@ fn run() -> Result<()> {
     }
 
     let recorder = if mutation && (json || model.is_some()) {
-        Some(pt::MutationRecorder::new(&conn, model.as_deref())?)
+        Some(pt::MutationRecorder::with_reasoning_effort(
+            &conn,
+            model.as_deref(),
+            reasoning_effort.as_deref(),
+        )?)
     } else {
         None
     };

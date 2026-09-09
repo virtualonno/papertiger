@@ -112,6 +112,118 @@ fn mutation_receipts_model_attribution_and_task_moves_are_cli_usable() {
 struct TestDatabase(PathBuf);
 
 #[test]
+fn reasoning_effort_uses_environment_and_explicit_flags_without_inference() {
+    let db = TestDatabase::new("reasoning-effort");
+    assert_success(&papertiger(&db.0, &["init"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
+    let run = |args: &[&str], model: Option<&str>, effort: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_papertiger"));
+        command
+            .arg("--db")
+            .arg(&db.0)
+            .args(args)
+            .env_remove("PAPERTIGER_MODEL")
+            .env_remove("PAPERTIGER_REASONING_EFFORT");
+        if let Some(model) = model {
+            command.env("PAPERTIGER_MODEL", model);
+        }
+        if let Some(effort) = effort {
+            command.env("PAPERTIGER_REASONING_EFFORT", effort);
+        }
+        command.output().unwrap()
+    };
+    let created = run(
+        &["add", "precise identity", "--json"],
+        Some("gpt-6-astra"),
+        Some("high"),
+    );
+    assert_success(&created);
+    let created: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let seq = created["events"][0]["task"]["seq"]
+        .as_i64()
+        .unwrap()
+        .to_string();
+    assert_eq!(created["events"][0]["event"]["model"], "gpt-6-astra");
+    assert_eq!(created["events"][0]["event"]["reasoning_effort"], "high");
+    let edited = run(
+        &[
+            "edit",
+            &seq,
+            "--title",
+            "updated identity",
+            "--why",
+            "exercise a different event author",
+            "--model",
+            "other-model",
+            "--reasoning-effort",
+            "low",
+            "--json",
+        ],
+        Some("gpt-6-astra"),
+        Some("high"),
+    );
+    assert_success(&edited);
+    let edited: serde_json::Value = serde_json::from_slice(&edited.stdout).unwrap();
+    assert_eq!(edited["events"][0]["event"]["model"], "other-model");
+    assert_eq!(edited["events"][0]["event"]["reasoning_effort"], "low");
+    assert_success(&run(
+        &["done", &seq, "--result", "verified fixture"],
+        Some("gpt-6-astra"),
+        Some("medium"),
+    ));
+    let shown = run(&["show", &seq, "--json"], None, None);
+    assert_success(&shown);
+    let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(
+        shown["activity"]["created_event"]["reasoning_effort"],
+        "high"
+    );
+    assert_eq!(
+        shown["activity"]["completed_event"]["reasoning_effort"],
+        "medium"
+    );
+    let known_model = run(
+        &["add", "unknown effort", "--json"],
+        Some("gpt-6-astra"),
+        None,
+    );
+    assert_success(&known_model);
+    let known_model: serde_json::Value = serde_json::from_slice(&known_model.stdout).unwrap();
+    assert!(known_model["events"][0]["event"]["reasoning_effort"].is_null());
+    let before = run(&["export"], None, None);
+    assert_success(&before);
+    for output in [
+        run(
+            &["add", "orphan", "--reasoning-effort", "high", "--json"],
+            None,
+            None,
+        ),
+        run(
+            &["add", "invalid", "--json"],
+            Some("gpt-6-astra"),
+            Some("very high"),
+        ),
+        run(
+            &["show", &seq, "--reasoning-effort", "high", "--json"],
+            None,
+            None,
+        ),
+    ] {
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+    }
+    let after = run(&["export"], None, None);
+    assert_success(&after);
+    assert_eq!(before.stdout, after.stdout);
+    // Inherited metadata must not affect ordinary read-only operations.
+    assert_success(&run(
+        &["show", &seq],
+        Some("invalid model"),
+        Some("invalid effort"),
+    ));
+}
+
+#[test]
 fn backup_preserves_legacy_schema_and_committed_wal_without_importing_evidence() {
     let directory = TestDirectory::new("backup-wal");
     let source = directory.0.join("source.sqlite");

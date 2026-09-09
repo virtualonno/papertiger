@@ -9,13 +9,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::{EventRecord, Plan, TaskSummary, get_plan, get_task};
 
-pub fn validate_model(model: &str) -> Result<()> {
-    if model.is_empty()
-        || model.len() > 160
-        || !model
+fn valid_identifier(value: &str, max_length: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_length
+        && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"._:/-".contains(&byte))
-    {
+}
+
+pub fn validate_model(model: &str) -> Result<()> {
+    if !valid_identifier(model, 160) {
         bail!(
             "model must be a nonblank identifier of at most 160 ASCII letters, digits, '.', '_', ':', '/', or '-'; supply --model <model-id> or omit unknown attribution"
         );
@@ -32,6 +35,35 @@ pub(crate) fn payload_model(payload: Option<&serde_json::Value>) -> Result<Optio
         }
         Some(_) => bail!(
             "event model must be a string identifier or null; run `papertiger audit` and restore a verified export"
+        ),
+    }
+}
+
+pub fn validate_reasoning_effort(effort: &str) -> Result<()> {
+    if !valid_identifier(effort, 80) {
+        bail!(
+            "reasoning effort must be a nonblank identifier of at most 80 ASCII letters, digits, '.', '_', ':', '/', or '-'; supply --reasoning-effort <effort> or omit unknown attribution"
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn payload_reasoning_effort(
+    payload: Option<&serde_json::Value>,
+) -> Result<Option<String>> {
+    match payload.and_then(|value| value.get("reasoning_effort")) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(effort)) => {
+            validate_reasoning_effort(effort)?;
+            if payload_model(payload)?.is_none() {
+                bail!(
+                    "event reasoning effort requires a model identifier; run `papertiger audit` and restore a verified export"
+                );
+            }
+            Ok(Some(effort.clone()))
+        }
+        Some(_) => bail!(
+            "event reasoning effort must be a string identifier or null; run `papertiger audit` and restore a verified export"
         ),
     }
 }
@@ -60,8 +92,26 @@ impl<'a> MutationRecorder<'a> {
     /// Drop the recorder before starting another recording scope.
     /// Dropping the scope rolls back any transaction still open within it.
     pub fn new(conn: &'a Connection, model: Option<&str>) -> Result<Self> {
+        Self::with_reasoning_effort(conn, model, None)
+    }
+
+    /// Record the known model and its configured reasoning effort for this scope.
+    /// These are caller-reported identifiers, not inferred provider settings.
+    pub fn with_reasoning_effort(
+        conn: &'a Connection,
+        model: Option<&str>,
+        reasoning_effort: Option<&str>,
+    ) -> Result<Self> {
         if let Some(model) = model {
             validate_model(model)?;
+        }
+        if let Some(effort) = reasoning_effort {
+            validate_reasoning_effort(effort)?;
+            if model.is_none() {
+                bail!(
+                    "reasoning effort requires a model identifier; supply --model <model-id> or PAPERTIGER_MODEL, or omit --reasoning-effort and PAPERTIGER_REASONING_EFFORT"
+                );
+            }
         }
         if active(conn)? {
             bail!(
@@ -70,12 +120,12 @@ impl<'a> MutationRecorder<'a> {
         }
         let tx = crate::begin_mutation(conn)?;
         tx.execute_batch(
-            "CREATE TEMP TABLE papertiger_command_context(model TEXT);
+            "CREATE TEMP TABLE papertiger_command_context(model TEXT, reasoning_effort TEXT);
              CREATE TEMP TABLE papertiger_command_events(event_id INTEGER PRIMARY KEY, snapshot TEXT NOT NULL);",
         )?;
         tx.execute(
-            "INSERT INTO temp.papertiger_command_context VALUES (?1)",
-            params![model],
+            "INSERT INTO temp.papertiger_command_context VALUES (?1, ?2)",
+            params![model, reasoning_effort],
         )?;
         tx.commit()?;
         Ok(Self { conn })
@@ -125,14 +175,14 @@ fn active(conn: &Connection) -> Result<bool> {
     Ok(conn.query_row("SELECT 1 FROM sqlite_temp_master WHERE type='table' AND name='papertiger_command_context'", [], |_| Ok(())).optional()?.is_some())
 }
 
-pub(crate) fn current_model(conn: &Connection) -> Result<Option<String>> {
+pub(crate) fn current_attribution(conn: &Connection) -> Result<(Option<String>, Option<String>)> {
     if !active(conn)? {
-        return Ok(None);
+        return Ok((None, None));
     }
     Ok(conn.query_row(
-        "SELECT model FROM temp.papertiger_command_context",
+        "SELECT model, reasoning_effort FROM temp.papertiger_command_context",
         [],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?)
 }
 

@@ -134,6 +134,95 @@ fn model_history_and_receipts_capture_only_committed_operations() {
 }
 
 #[test]
+fn reasoning_effort_follows_each_author_and_survives_recovery() {
+    let conn = planner();
+    let seq;
+    {
+        let recorder =
+            pt::MutationRecorder::with_reasoning_effort(&conn, Some("gpt-6-astra"), Some("high"))
+                .unwrap();
+        seq = task(&conn, "precise attribution");
+        pt::add_gate(&conn, "creator", seq, "proof", "test", "must pass").unwrap();
+        let before = serde_json::to_value(recorder.receipt().unwrap()).unwrap();
+        assert_eq!(before["events"][0]["event"]["reasoning_effort"], "high");
+        assert!(pt::complete_task(&conn, "creator", seq, Some("unsupported")).is_err());
+        assert_eq!(
+            serde_json::to_value(recorder.receipt().unwrap()).unwrap(),
+            before
+        );
+    }
+    {
+        let _recorder =
+            pt::MutationRecorder::with_reasoning_effort(&conn, Some("other-model"), Some("medium"))
+                .unwrap();
+        pt::waive_gate(&conn, "reviewer", seq, "proof", "fixture waiver").unwrap();
+        let activity = pt::task_activity(&conn, seq).unwrap();
+        assert_eq!(
+            activity.last_event.unwrap().reasoning_effort.as_deref(),
+            Some("medium")
+        );
+        pt::complete_task(&conn, "reviewer", seq, Some("verified")).unwrap();
+    }
+    let activity = pt::task_activity(&conn, seq).unwrap();
+    let created = activity.created_event.unwrap();
+    let completed = activity.completed_event.unwrap();
+    assert_eq!(created.model.as_deref(), Some("gpt-6-astra"));
+    assert_eq!(created.reasoning_effort.as_deref(), Some("high"));
+    assert_eq!(completed.model.as_deref(), Some("other-model"));
+    assert_eq!(completed.reasoning_effort.as_deref(), Some("medium"));
+    let unknown = task(&conn, "after attributed scope");
+    assert!(
+        pt::task_activity(&conn, unknown)
+            .unwrap()
+            .created_event
+            .unwrap()
+            .reasoning_effort
+            .is_none()
+    );
+    let dump = pt::export(&conn, None).unwrap();
+    let restored = rusqlite::Connection::open_in_memory().unwrap();
+    pt::init(&restored).unwrap();
+    pt::import(&restored, "restore", &dump).unwrap();
+    assert_eq!(
+        pt::task_activity(&conn, seq).unwrap(),
+        pt::task_activity(&restored, seq).unwrap()
+    );
+    assert!(pt::audit(&restored).unwrap().is_empty());
+
+    for invalid in ["", " ", "high\nforged", "very high"] {
+        assert!(
+            pt::MutationRecorder::with_reasoning_effort(&conn, Some("model"), Some(invalid))
+                .is_err()
+        );
+    }
+    assert!(pt::MutationRecorder::with_reasoning_effort(&conn, None, Some("high")).is_err());
+    for invalid in [serde_json::json!(17), serde_json::json!("high\nforged")] {
+        let mut malformed = pt::export(&conn, None).unwrap();
+        let event = malformed
+            .events
+            .iter_mut()
+            .find(|event| event.entity_seq == Some(seq))
+            .unwrap();
+        event.payload.as_mut().unwrap()["reasoning_effort"] = invalid;
+        let empty = rusqlite::Connection::open_in_memory().unwrap();
+        pt::init(&empty).unwrap();
+        assert!(pt::import(&empty, "restore", &malformed).is_err());
+        assert!(pt::export(&empty, None).unwrap().tasks.is_empty());
+    }
+    let mut orphan = dump;
+    let event = orphan
+        .events
+        .iter_mut()
+        .find(|event| event.entity_seq == Some(seq))
+        .unwrap();
+    event.payload.as_mut().unwrap()["model"] = serde_json::Value::Null;
+    let empty = rusqlite::Connection::open_in_memory().unwrap();
+    pt::init(&empty).unwrap();
+    assert!(pt::import(&empty, "restore", &orphan).is_err());
+    assert!(pt::export(&empty, None).unwrap().tasks.is_empty());
+}
+
+#[test]
 fn receipt_snapshots_exclude_later_concurrent_writers() {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

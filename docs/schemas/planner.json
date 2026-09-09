@@ -65,6 +65,19 @@
         }
       ]
     },
+    "reasoning_effort": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:/-]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "plan": {
       "type": "object",
       "properties": {
@@ -212,6 +225,9 @@
         "model": {
           "$ref": "#/$defs/model"
         },
+        "reasoning_effort": {
+          "$ref": "#/$defs/reasoning_effort"
+        },
         "entity": {
           "type": "string"
         },
@@ -306,6 +322,9 @@
         },
         "model": {
           "$ref": "#/$defs/model"
+        },
+        "reasoning_effort": {
+          "$ref": "#/$defs/reasoning_effort"
         },
         "entity": {
           "type": "string"

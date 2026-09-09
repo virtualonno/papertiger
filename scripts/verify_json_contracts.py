@@ -19,6 +19,7 @@ def main():
     binary = str(Path(sys.argv[1]).resolve())
     environment = {**os.environ, "PAPERTIGER_ACTOR": "schema-fixture"}
     environment.pop("PAPERTIGER_MODEL", None)
+    environment.pop("PAPERTIGER_REASONING_EFFORT", None)
     schema = json.loads(subprocess.check_output([binary, "schema"], env=environment))
     Draft202012Validator.check_schema(schema)
     validator = Draft202012Validator(schema)
@@ -39,11 +40,12 @@ def main():
         run("init", validate=False)
         run("plan", "add", "source", "Source", "--json")
         run("plan", "add", "destination", "Destination", "--json")
-        run("add", "Selected work", "--plan", "source", "--model", "fixture-author", "--start", "--why", "verify structured entry", "--json")
+        run("add", "Selected work", "--plan", "source", "--model", "fixture-author", "--reasoning-effort", "high", "--start", "--why", "verify structured entry", "--json")
         run("add", "Related work", "--plan", "source", "--dep", "1", "--json")
         run("reference", "add", "1", "https://example.test/review", "--kind", "review", "--json")
         run("gate", "add", "1", "proof", "--kind", "test", "--requirement", "fixture proof", "--json")
         context = run("show", "1", "--json")
+        assert context["activity"]["created_event"]["reasoning_effort"] == "high"
         run("status", "--json")
         run("list", "--plan", "source", "--json")
         run("log", "--json")
@@ -51,10 +53,11 @@ def main():
         run("move-plan", "1", "2", "--plan", "destination", "--why", "relocate complete set", "--json")
         run("export", "--plan", "destination")
         run("gate", "waive", "1", "proof", "--why", "test waiver", "--json")
-        run("done", "1", "--result", "fixture outcome", "--model", "fixture-reviewer", "--json")
-        run("show", "1", "--json")
+        run("done", "1", "--result", "fixture outcome", "--model", "fixture-reviewer", "--reasoning-effort", "medium", "--json")
+        completed = run("show", "1", "--json")
+        assert completed["activity"]["completed_event"]["reasoning_effort"] == "medium"
         # Reject malformed structural values independently from runtime tests.
-        for path, bad in [(('task', 'status'), 'duplicate'), (('task', 'seq'), '1'), (('activity', 'created_event', 'model'), 'invalid model')]:
+        for path, bad in [(('task', 'status'), 'duplicate'), (('task', 'seq'), '1'), (('activity', 'created_event', 'model'), 'invalid model'), (('activity', 'created_event', 'reasoning_effort'), 17), (('activity', 'created_event', 'reasoning_effort'), 'very high')]:
             corrupt = copy.deepcopy(context)
             target = corrupt
             for key in path[:-1]:
@@ -64,7 +67,7 @@ def main():
         corrupt = copy.deepcopy(context)
         corrupt['dependents'][0]['intent'] = 'must be a summary'
         assert not validator.is_valid(corrupt)
-    print(json.dumps({"schema": "papertiger.schema-fixture-proof.v1", "validated_outputs": count, "negative_controls": 4}))
+    print(json.dumps({"schema": "papertiger.schema-fixture-proof.v1", "validated_outputs": count, "negative_controls": 6}))
 
 
 if __name__ == "__main__":

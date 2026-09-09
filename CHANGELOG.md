@@ -8,6 +8,7 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Added
 
+- Planner mutations accept `--reasoning-effort` or `PAPERTIGER_REASONING_EFFORT` alongside a known model. Event history and task activity preserve the reported effort separately; existing events retain null effort without a database migration.
 - Mise `guide` supplies the running driver's concise agent workflow; `guide --reference` emits its full operating reference without opening an authority.
 - Mise `campaign inspect` discovers candidates, trials, paired cohorts, and reservations through bounded read-only pages. Continuation arguments preserve project and database selection. Recorded state remains separate from CAS verification and execution readiness.
 
