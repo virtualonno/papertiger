@@ -15,6 +15,10 @@ All notable user-visible changes are documented here. Papertiger follows
 
 - The vendored Papertiger skill contains the ordinary task workflow and loads installation, recovery, and advanced-operation detail only when needed. Existing durable work remains tracked when its next step is a bounded edit or read-only check.
 
+### Fixed
+
+- Task search results report the owning plan slug in `plan` instead of the task status, including searches across multiple plans.
+
 ## [0.12.1] - 2026-09-05
 
 ### Fixed

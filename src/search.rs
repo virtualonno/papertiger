@@ -83,7 +83,7 @@ pub fn search_tasks(
     let plan_id = selected_plan.as_ref().map(|plan| plan.plan_id);
     let mut statement = conn.prepare(&format!(
         "SELECT {TASK_COLS},
-                (SELECT slug FROM plans WHERE plan_id=tasks.plan_id)
+                (SELECT slug FROM plans WHERE plan_id=tasks.plan_id) AS owning_plan_slug
            FROM tasks
           WHERE (?1 IS NULL OR plan_id=?1)
             AND (?2 IS NULL OR status=?2)
@@ -91,7 +91,10 @@ pub fn search_tasks(
     ))?;
     let rows = statement
         .query_map(params![plan_id, status], |row| {
-            Ok((task_from_row(row)?, row.get::<_, String>(11)?))
+            Ok((
+                task_from_row(row)?,
+                row.get::<_, String>("owning_plan_slug")?,
+            ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let phrase = terms.join(" ");

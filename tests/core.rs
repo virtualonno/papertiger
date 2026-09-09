@@ -4014,6 +4014,8 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         vec![title_hit, intent_hit, cross_field_hit]
     );
     assert_eq!(ranked.results[0].excerpt.field, "title");
+    assert_eq!(ranked.plan.as_ref().unwrap().slug, "primary");
+    assert!(ranked.results.iter().all(|hit| hit.plan == "primary"));
     assert!(ranked.results[0].score > ranked.results[1].score);
     let cross_field = ranked
         .results
@@ -4028,6 +4030,7 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
     let terminal = pt::search_tasks(&conn, "phantom checksum", None, None, 20).unwrap();
     assert_eq!(terminal.results[0].task.seq, rejected);
     assert_eq!(terminal.results[0].task.status, "rejected");
+    assert_eq!(terminal.results[0].plan, "primary");
     assert!(
         terminal.results[0]
             .matched_fields
@@ -4037,6 +4040,15 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
     assert!(filtered.results.is_empty());
 
     let all_plans = pt::search_tasks(&conn, "object store", None, None, 20).unwrap();
+    assert!(all_plans.plan.is_none());
+    for hit in &all_plans.results {
+        let expected = if hit.task.seq == other_plan_hit {
+            "secondary"
+        } else {
+            "primary"
+        };
+        assert_eq!(hit.plan, expected);
+    }
     assert!(
         all_plans
             .results

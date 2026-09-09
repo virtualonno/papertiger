@@ -2142,6 +2142,7 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     let search: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
     assert_eq!(search["schema"], "papertiger.search.v1");
     assert_eq!(search["results"][0]["task"]["seq"], 1);
+    assert_eq!(search["results"][0]["plan"], "work");
     assert_eq!(search["results"][0]["excerpt"]["field"], "title");
     assert_no_internal_identity_keys(&search);
 
