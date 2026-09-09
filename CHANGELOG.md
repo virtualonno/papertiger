@@ -6,6 +6,12 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-09
+
+Planner schema remains v9; this update needs no database migration. Retain the
+previous Mise driver for existing campaigns whose manifests bind its exact
+executable hash.
+
 ### Added
 
 - Planner mutations accept `--reasoning-effort` or `PAPERTIGER_REASONING_EFFORT` alongside a known model. Event history and task activity preserve the reported effort separately; existing events retain null effort without a database migration.
@@ -15,6 +21,8 @@ All notable user-visible changes are documented here. Papertiger follows
 ### Changed
 
 - The vendored Papertiger skill contains the ordinary task workflow and loads installation, recovery, and advanced-operation detail only when needed. Existing durable work remains tracked when its next step is a bounded edit or read-only check.
+- Agents are instructed to resolve the exact model variant and known reasoning effort once per execution context, then reuse those values until settings change.
+- Claude skill installation uses a thin router to the canonical `.agents/skills/papertiger/SKILL.md`. Selecting Claude also installs that dependency; receipt-owned full copies upgrade automatically.
 
 ### Fixed
 
@@ -380,7 +388,10 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/virtualonno/papertiger/compare/v0.12.1...v0.13.0
+[0.12.1]: https://github.com/virtualonno/papertiger/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/virtualonno/papertiger/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/virtualonno/papertiger/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/virtualonno/papertiger/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/virtualonno/papertiger/compare/v0.7.1...v0.9.0
