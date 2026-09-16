@@ -210,7 +210,7 @@ pub fn search_tasks(
     }
     hits.truncate(limit);
     Ok(SearchResponse {
-        schema: "papertiger.search.v1".into(),
+        schema: "papertiger.search.v2".into(),
         query: query.to_owned(),
         terms,
         plan: selected_plan,

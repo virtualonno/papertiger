@@ -25,6 +25,9 @@ struct Cli {
     /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator'); invalid with project integration commands
     #[arg(long, global = true)]
     actor: Option<String>,
+    /// Advisory pickup identity (default: PAPERTIGER_SESSION); never an exclusive lock or liveness signal
+    #[arg(long, global = true)]
+    session: Option<String>,
     /// Emit JSON: versioned reads or exact committed mutation receipts.
     #[arg(long, global = true)]
     json: bool,
@@ -206,7 +209,7 @@ enum Cmd {
         #[command(flatten)]
         why: WhyArgs,
     },
-    /// Mark a task in progress
+    /// Start or resume unfinished work; record advisory session pickup without locking the task
     Start {
         /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
@@ -346,7 +349,7 @@ enum Cmd {
         #[arg(long, value_name = "PATH")]
         output: std::path::PathBuf,
     },
-    /// Import a papertiger.dump.v8 JSON file
+    /// Import a papertiger.dump.v9 JSON file
     Import {
         /// Dump file to validate and import atomically
         file: String,
@@ -772,8 +775,25 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
     Ok(())
 }
 
+fn pickup_label(pickup: Option<&pt::TaskPickup>) -> String {
+    match pickup {
+        Some(p) => format!(
+            " [last pickup {} at {}]",
+            p.session.as_deref().unwrap_or("unattributed"),
+            p.at
+        ),
+        None => String::new(),
+    }
+}
+
 fn print_task_context(context: &pt::TaskContext) {
     let task = &context.task;
+    if let Some(pickup) = &task.pickup {
+        println!(
+            "pickup:{}; advisory, liveness unknown",
+            pickup_label(Some(pickup))
+        );
+    }
     let open_dependencies = context
         .dependencies
         .iter()
@@ -1011,6 +1031,12 @@ fn main() -> Result<()> {
 
 fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
+    let session = cli
+        .session
+        .or_else(|| std::env::var("PAPERTIGER_SESSION").ok());
+    if let Some(session) = &session {
+        pt::validate_session(session)?;
+    }
     if matches!(cli.cmd, Cmd::Schema) {
         println!(
             "{}",
@@ -1350,10 +1376,20 @@ fn run(cli: Cli) -> Result<()> {
                     counts.rejected
                 );
                 for entry in &active.in_progress.parents.entries {
-                    println!("> parent #{} {}", entry.task.seq, entry.task.title);
+                    println!(
+                        "> parent #{} {}{}",
+                        entry.task.seq,
+                        entry.task.title,
+                        pickup_label(entry.pickup.as_ref())
+                    );
                 }
                 for entry in &active.in_progress.leaves.entries {
-                    println!("> leaf #{} {}", entry.task.seq, entry.task.title);
+                    println!(
+                        "> leaf #{} {}{}",
+                        entry.task.seq,
+                        entry.task.title,
+                        pickup_label(entry.pickup.as_ref())
+                    );
                 }
                 for entry in &active.ready.entries {
                     println!("· #{} {}", entry.task.seq, entry.task.title);
@@ -1480,6 +1516,7 @@ fn run(cli: Cli) -> Result<()> {
                     priority,
                     why: why.as_deref(),
                     start,
+                    session: session.as_deref(),
                 },
             )?;
             if start {
@@ -1660,7 +1697,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Start { task, why } => {
             let why = why.optional()?;
             let seq = pt::parse_task_ref(&task)?;
-            pt::start_task(&conn, &actor, seq, why.as_deref())?;
+            pt::start_task(&conn, &actor, seq, why.as_deref(), session.as_deref())?;
             mutation_output!("#{seq} in progress");
         }
         Cmd::MovePlan { tasks, plan, why } => {
@@ -1986,7 +2023,7 @@ fn run(cli: Cli) -> Result<()> {
                 );
                 return Ok(());
             };
-            let response = pt::focus(&conn, plan_id, limit, all)?;
+            let response = pt::focus(&conn, plan_id, limit, all, session.as_deref())?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&response)?);
             } else if response.projection.entries.is_empty() {
@@ -2005,7 +2042,7 @@ fn run(cli: Cli) -> Result<()> {
                         format!(" [blocked by {}]", entry.blockers.join(" "))
                     };
                     println!(
-                        "  #{} {} [priority {} unlocks {} downstream {} gates {}]{}",
+                        "  #{} {} [priority {} unlocks {} downstream {} gates {}]{}{}",
                         entry.task.seq,
                         entry.task.title,
                         entry.task.priority,
@@ -2013,6 +2050,7 @@ fn run(cli: Cli) -> Result<()> {
                         entry.unfinished_downstream_count,
                         entry.open_gate_count,
                         blockers,
+                        pickup_label(entry.task.pickup.as_ref()),
                     );
                 }
                 if response.projection.omitted_count > 0

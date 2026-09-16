@@ -318,7 +318,7 @@ mod tests {
             "Authorize the exact Mise nomination",
         )
         .expect("promotion gate");
-        papertiger::start_task(&conn, "test", task, None).expect("start task");
+        papertiger::start_task(&conn, "test", task, None, None).expect("start task");
         let digest = "a".repeat(64);
         let nomination_id = "nomination-fixture";
         let evidence_locator = format!("papertiger-mise:nomination/{nomination_id}");

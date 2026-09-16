@@ -4,6 +4,61 @@ use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn session_pickup_is_visible_advisory_and_requires_no_release() {
+    let db = TestDatabase::new("session-pickup");
+    let invoke = |session: &str, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_papertiger"))
+            .arg("--db")
+            .arg(&db.0)
+            .args(args)
+            .env("PAPERTIGER_SESSION", session)
+            .env("PAPERTIGER_ACTOR", "same-harness")
+            .output()
+            .unwrap()
+    };
+    assert_success(&invoke("a", &["init"]));
+    assert_success(&invoke("a", &["plan", "add", "work", "Work"]));
+    assert_success(&invoke("a", &["add", "First", "--start", "--why", "begin"]));
+    assert_success(&invoke("a", &["add", "Second"]));
+    let focus = invoke("b", &["focus", "--limit", "1", "--json"]);
+    assert_success(&focus);
+    let focus: serde_json::Value = serde_json::from_slice(&focus.stdout).unwrap();
+    assert_eq!(focus["schema"], "papertiger.focus.v6");
+    assert_eq!(focus["entries"][0]["task"]["seq"], 2);
+    assert!(
+        focus["continuation_command"]
+            .as_str()
+            .unwrap()
+            .contains("--session b")
+    );
+    let status = invoke("b", &["status", "--json"]);
+    assert_success(&status);
+    let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(
+        status["active_plans"][0]["in_progress"]["leaves"]["entries"][0]["pickup"]["session"],
+        "a"
+    );
+
+    // Explicit session overrides the environment. The old session need not run
+    // again, and no release/recovery ceremony is required.
+    assert_success(&invoke("b", &["--session", "c", "start", "1"]));
+    let current = invoke("c", &["show", "1", "--no-history", "--json"]);
+    assert_success(&current);
+    let current: serde_json::Value = serde_json::from_slice(&current.stdout).unwrap();
+    assert_eq!(current["task"]["pickup"]["session"], "c");
+    let retry = invoke("c", &["start", "1", "--json"]);
+    assert_success(&retry);
+    let retry: serde_json::Value = serde_json::from_slice(&retry.stdout).unwrap();
+    assert_eq!(retry["changed"], false);
+    assert_eq!(retry["events"], serde_json::json!([]));
+    let invalid = invoke("bad session", &["start", "1"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("PAPERTIGER_SESSION"));
+    assert_success(&invoke("different-session", &["done", "1"]));
+    assert_success(&invoke("b", &["audit"]));
+}
+
+#[test]
 fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     let project = TestDirectory::new("progressive-reads");
     let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
@@ -125,7 +180,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     );
     let full = read(&["search", "discovery", "--limit", "2", "--json"]);
     let compact = read(&["search", "discovery", "--limit", "2", "--compact", "--json"]);
-    assert_eq!(full["schema"], "papertiger.search.v1");
+    assert_eq!(full["schema"], "papertiger.search.v2");
     assert_eq!(compact["schema"], "papertiger.search_compact.v1");
     assert_eq!(compact["total_matches"], full["total_matches"]);
     assert_eq!(compact["truncated"], true);
@@ -144,7 +199,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     let full = read(&["show", "1", "--json"]);
     let current = read(&["show", "1", "--no-history", "--json"]);
     assert_eq!(current["task"], full["task"]);
-    assert_eq!(current["schema"], "papertiger.task_current.v1");
+    assert_eq!(current["schema"], "papertiger.task_current.v2");
     assert!(current.get("recent_events").is_none());
     assert_eq!(current["history_command"], "papertiger log --task 1 --json");
     assert_eq!(
@@ -444,7 +499,9 @@ fn backup_preserves_legacy_schema_and_committed_wal_without_importing_evidence()
         .execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
         DROP TABLE external_references;
-        UPDATE meta SET value='8' WHERE key='schema_version';
+        ALTER TABLE tasks DROP COLUMN pickup_at;
+ALTER TABLE tasks DROP COLUMN pickup_session;
+UPDATE meta SET value='8' WHERE key='schema_version';
         UPDATE gates SET status='closed', evidence_locator='commit:ca9ff90';
         BEGIN IMMEDIATE;
         UPDATE tasks SET title='uncommitted change';",
@@ -992,7 +1049,7 @@ fn entry_bounds_tag_identity_and_focus_projection_are_explicit() {
     );
     assert_success(&focus);
     let focus: serde_json::Value = serde_json::from_slice(&focus.stdout).unwrap();
-    assert_eq!(focus["schema"], "papertiger.focus.v5");
+    assert_eq!(focus["schema"], "papertiger.focus.v6");
     assert_eq!(focus["eligible_count"], 3);
     assert_eq!(focus["returned_count"], 1);
     assert_eq!(focus["omitted_count"], 2);
@@ -1873,7 +1930,7 @@ fn focus_json_reports_a_structured_empty_selection_for_a_paused_plan() {
     assert_success(&output);
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("parse focus JSON");
-    assert_eq!(value["schema"], "papertiger.focus.v5");
+    assert_eq!(value["schema"], "papertiger.focus.v6");
     assert_eq!(value["selection_state"], "no_active_plan");
     assert!(value["plan"].is_null());
     assert_eq!(value["entries"].as_array().map(Vec::len), Some(0));
@@ -1967,7 +2024,7 @@ fn commit_lookup_lifecycle_json_and_activity_sort_are_agent_usable() {
     let show = papertiger(&db.0, &["show", "1", "--json"]);
     assert_success(&show);
     let value: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
-    assert_eq!(value["schema"], "papertiger.task_context.v6");
+    assert_eq!(value["schema"], "papertiger.task_context.v7");
     assert!(value["activity"]["created_event"]["at"].is_string());
     assert!(value["activity"]["last_event"]["at"].is_string());
     assert_eq!(value["commit_associations"][0]["commit_oid"], oid);
@@ -2256,7 +2313,7 @@ fn retire_into_is_visible_without_redirecting_show() {
     let json = papertiger(&db.0, &["show", "1", "--json"]);
     assert_success(&json);
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(value["schema"], "papertiger.task_context.v6");
+    assert_eq!(value["schema"], "papertiger.task_context.v7");
     assert_eq!(value["task"]["seq"], 1);
     assert_eq!(value["replacement"]["seq"], 2);
     assert_eq!(value["recent_events"][0]["payload"]["replacement_seq"], 2);
@@ -2416,8 +2473,11 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     let status = papertiger(&db.0, &["status", "--json"]);
     assert_success(&status);
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
-    assert_eq!(status["schema"], "papertiger.status.v2");
-    assert_eq!(status["authority"]["schema_version"], 9);
+    assert_eq!(status["schema"], "papertiger.status.v3");
+    assert_eq!(
+        status["authority"]["schema_version"],
+        papertiger::SCHEMA_VERSION
+    );
     assert!(
         status["authority"]["resolved_path"]
             .as_str()
@@ -2446,7 +2506,7 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     let search = papertiger(&db.0, &["search", "object store", "--json"]);
     assert_success(&search);
     let search: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
-    assert_eq!(search["schema"], "papertiger.search.v1");
+    assert_eq!(search["schema"], "papertiger.search.v2");
     assert_eq!(search["results"][0]["task"]["seq"], 1);
     assert_eq!(search["results"][0]["plan"], "work");
     assert_eq!(search["results"][0]["excerpt"]["field"], "title");
@@ -2481,10 +2541,10 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     assert_success(&export);
     let receipt: serde_json::Value = serde_json::from_slice(&export.stdout).unwrap();
     assert_eq!(receipt["schema"], "papertiger.export_file.v1");
-    assert_eq!(receipt["dump_schema"], "papertiger.dump.v8");
+    assert_eq!(receipt["dump_schema"], "papertiger.dump.v9");
     let dump: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&export_path).unwrap()).unwrap();
-    assert_eq!(dump["schema"], "papertiger.dump.v8");
+    assert_eq!(dump["schema"], "papertiger.dump.v9");
     let same_authority = papertiger(
         &db.0,
         &["export", "--output", db.0.to_str().unwrap(), "--replace"],
@@ -2555,7 +2615,7 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
     let status = papertiger(&db.0, &["status", "--json"]);
     assert_success(&status);
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
-    assert_eq!(status["schema"], "papertiger.status.v2");
+    assert_eq!(status["schema"], "papertiger.status.v3");
     let work = &status["active_plans"][0];
     assert_eq!(work["plan"]["slug"], "work");
     assert_eq!(work["counts"]["in_progress"], 10);

@@ -28,11 +28,13 @@ mod path_identity;
 pub use path_identity::portable_absolute;
 mod inventory;
 mod mutation;
+mod pickup;
 mod read_model;
 pub use inventory::{plan_inventory, task_inventory};
 pub use mutation::{
     MutationEvent, MutationReceipt, MutationRecorder, validate_model, validate_reasoning_effort,
 };
+pub use pickup::{TaskPickup, validate_session};
 mod plan_move;
 pub use plan_move::move_tasks_to_plan;
 pub use read_model::{
@@ -67,7 +69,7 @@ pub use mise_projection_contract::{
     MiseSourceProjection,
 };
 
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.planner";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
 pub const TASK_DEFINITION_REVISION_SCHEMA: &str = "papertiger.task_definition_revision.v1";
@@ -442,6 +444,7 @@ CREATE INDEX idx_events_entity_seq ON events(entity_seq, event_id);
 CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, commit_oid);
 "#,
     )?;
+    tx.execute_batch(pickup::SCHEMA)?;
     tx.execute_batch(external_reference::REFERENCE_SCHEMA)?;
     tx.execute_batch(mise_projection::MISE_PROJECTION_SCHEMA_V4)?;
     tx.execute(
@@ -586,6 +589,10 @@ ALTER TABLE tasks
         tx.execute_batch(external_reference::REFERENCE_SCHEMA)?;
         version = 9;
     }
+    if version == 9 {
+        tx.execute_batch(pickup::SCHEMA)?;
+        version = 10;
+    }
     if version != SCHEMA_VERSION {
         bail!("no papertiger migration path from schema v{from} to v{SCHEMA_VERSION}");
     }
@@ -728,6 +735,7 @@ pub struct Task {
     pub result_source: Option<String>,
     pub status: String,
     pub priority: i64,
+    pub pickup: Option<TaskPickup>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -783,10 +791,18 @@ pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         result_source: r.get(10)?,
         status: r.get(11)?,
         priority: r.get(12)?,
+        pickup: match (
+            r.get::<_, Option<String>>(13)?,
+            r.get::<_, Option<String>>(14)?,
+        ) {
+            (None, None) => None,
+            (session, Some(at)) => Some(TaskPickup { session, at }),
+            _ => return Err(rusqlite::Error::InvalidQuery),
+        },
     })
 }
 
-pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, intent_source, kind, result, result_source, status, priority";
+pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, intent_source, kind, result, result_source, status, priority, pickup_session, pickup_at";
 
 fn validate_task_kind(kind: &str) -> Result<()> {
     if !TASK_KINDS.contains(&kind) {
@@ -1122,6 +1138,7 @@ pub struct TaskCreation<'a> {
     pub priority: i64,
     pub why: Option<&'a str>,
     pub start: bool,
+    pub session: Option<&'a str>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1213,7 +1230,7 @@ pub fn add_task_for_plan_with_options(
         creation.why,
     )?;
     if creation.start {
-        start_task_in_mutation(&tx, actor, seq, creation.why, true)?;
+        start_task_in_mutation(&tx, actor, seq, creation.why, true, creation.session)?;
     }
     tx.commit()?;
     Ok((seq, slug))
@@ -1777,9 +1794,15 @@ fn entry_blockers(conn: &Connection, task: &Task) -> Result<Vec<String>> {
     Ok(blockers)
 }
 
-pub fn start_task(conn: &Connection, actor: &str, seq: i64, why: Option<&str>) -> Result<()> {
+pub fn start_task(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    why: Option<&str>,
+    session: Option<&str>,
+) -> Result<()> {
     let tx = begin_mutation(conn)?;
-    start_task_in_mutation(&tx, actor, seq, why, false)?;
+    start_task_in_mutation(&tx, actor, seq, why, false, session)?;
     tx.commit()?;
     Ok(())
 }
@@ -1790,7 +1813,11 @@ fn start_task_in_mutation(
     seq: i64,
     why: Option<&str>,
     created_in_same_mutation: bool,
+    session: Option<&str>,
 ) -> Result<()> {
+    if let Some(session) = session {
+        validate_session(session)?;
+    }
     let task = get_task(tx, seq)?;
     let task_label = if created_in_same_mutation {
         "the new task".to_owned()
@@ -1799,7 +1826,7 @@ fn start_task_in_mutation(
     };
     match task.status.as_str() {
         "proposed" => {}
-        "in_progress" => bail!("{task_label} is already in_progress"),
+        "in_progress" => return pickup::record_pickup(tx, actor, &task, session, why),
         "done" | "retired" | "rejected" => {
             bail!(
                 "{task_label} is {}; use `reopen` before starting it",
@@ -1828,6 +1855,10 @@ fn start_task_in_mutation(
             blockers.join(", ")
         );
     }
+    let pickup = TaskPickup {
+        session: session.map(str::to_owned),
+        at: now(),
+    };
     transition_task(
         tx,
         actor,
@@ -1838,6 +1869,7 @@ fn start_task_in_mutation(
             result: None,
             result_source: None,
             replacement: None,
+            pickup: Some(&pickup),
         },
     )?;
     Ok(())
@@ -1909,6 +1941,7 @@ pub fn complete_task_with_source(
             result,
             result_source,
             replacement: None,
+            pickup: None,
         },
     )?;
     tx.commit()?;
@@ -1966,6 +1999,7 @@ pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Resul
             result: None,
             result_source: None,
             replacement: None,
+            pickup: None,
         },
     )?;
     tx.commit()?;
@@ -2088,6 +2122,7 @@ fn terminate_task(
             result: Some(why),
             result_source: None,
             replacement: replacement.as_ref(),
+            pickup: None,
         },
     )?;
     if let Some(cycle) = find_cycle(
@@ -2113,6 +2148,7 @@ struct TaskTransition<'a> {
     result: Option<&'a str>,
     result_source: Option<&'a str>,
     replacement: Option<&'a Task>,
+    pickup: Option<&'a TaskPickup>,
 }
 
 fn transition_task(
@@ -2127,10 +2163,11 @@ fn transition_task(
         result,
         result_source,
         replacement,
+        pickup,
     } = transition;
     tx.execute(
         "UPDATE tasks
-            SET status=?1, result=?2, result_source=?3, replacement_task_id=?4, updated_at=?5
+            SET status=?1, result=?2, result_source=?3, replacement_task_id=?4, updated_at=?5, pickup_session=?7, pickup_at=?8
           WHERE task_id=?6",
         params![
             status,
@@ -2138,7 +2175,9 @@ fn transition_task(
             result_source,
             replacement.map(|task| task.task_id),
             now(),
-            task.task_id
+            task.task_id,
+            pickup.and_then(|p| p.session.as_deref()),
+            pickup.map(|p| &p.at),
         ],
     )?;
     let mut payload = serde_json::json!({
@@ -2147,6 +2186,8 @@ fn transition_task(
         "to": status,
         "result": result,
         "result_source": result_source,
+        "previous_pickup": task.pickup,
+        "pickup": pickup,
     });
     if let Some(replacement) = replacement {
         payload["replacement_seq"] = serde_json::json!(replacement.seq);
@@ -2810,7 +2851,7 @@ pub fn task_current(conn: &Connection, seq: i64) -> Result<serde_json::Value> {
     object.remove("recent_events");
     object.remove("recent_events_truncated");
     object.remove("older_events_cursor");
-    object.insert("schema".into(), "papertiger.task_current.v1".into());
+    object.insert("schema".into(), "papertiger.task_current.v2".into());
     object.insert(
         "history_command".into(),
         format!("papertiger log --task {seq} --json").into(),
@@ -2909,7 +2950,7 @@ fn task_context_with_history(
     };
 
     Ok(TaskContext {
-        schema: "papertiger.task_context.v6".into(),
+        schema: "papertiger.task_context.v7".into(),
         plan,
         tags,
         parent: parent.as_ref().map(TaskSummary::from),
@@ -2980,7 +3021,7 @@ pub struct FocusResponse {
 impl FocusResponse {
     pub fn no_active_plan() -> Self {
         Self {
-            schema: "papertiger.focus.v5".into(),
+            schema: "papertiger.focus.v6".into(),
             selection_state: "no_active_plan".into(),
             plan: None,
             projection: StatusProjection::new(
@@ -3002,7 +3043,11 @@ pub fn focus(
     plan_id: i64,
     limit: usize,
     include_blocked: bool,
+    session: Option<&str>,
 ) -> Result<FocusResponse> {
+    if let Some(session) = session {
+        validate_session(session)?;
+    }
     if limit == 0 {
         bail!("focus --limit must be at least 1");
     }
@@ -3022,13 +3067,7 @@ pub fn focus(
         .into_iter()
         .map(|task| {
             let blockers = entry_blockers(conn, &task)?;
-            let readiness = match (task.status.as_str(), blockers.is_empty()) {
-                ("in_progress", true) => "in_progress",
-                ("in_progress", false) => "in_progress_blocked",
-                ("proposed", true) => "ready",
-                ("proposed", false) => "blocked",
-                _ => "unknown",
-            };
+            let readiness = pickup::readiness(&task, session, blockers.is_empty());
             Ok(FocusEntry {
                 open_gate_count: open_gates(conn, task.task_id)?.len(),
                 immediate_unlock_count: immediate_unlock_count(conn, task.task_id)?,
@@ -3062,11 +3101,14 @@ pub fn focus(
     entries.truncate(limit);
     let blocked = if include_blocked { " --all" } else { "" };
     let continuation_command = format!(
-        "papertiger focus --plan {} --limit {eligible_count}{blocked} --json",
-        plan.slug
+        "papertiger focus --plan {} --limit {eligible_count}{blocked}{} --json",
+        plan.slug,
+        session
+            .map(|s| format!(" --session {s}"))
+            .unwrap_or_default()
     );
     Ok(FocusResponse {
-        schema: "papertiger.focus.v5".into(),
+        schema: "papertiger.focus.v6".into(),
         selection_state: "resolved".into(),
         plan: Some(plan),
         projection: StatusProjection::new(
@@ -3085,11 +3127,12 @@ pub fn focus(
 
 fn focus_readiness_rank(readiness: &str) -> u8 {
     match readiness {
-        "in_progress_blocked" => 0,
+        "mine" => 0,
         "in_progress" => 1,
         "ready" => 2,
-        "blocked" => 3,
-        _ => 4,
+        "picked_up_elsewhere" => 3,
+        "blocked" => 4,
+        _ => 5,
     }
 }
 
@@ -3289,6 +3332,28 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         })
     };
 
+    let mut pickups = conn.prepare("SELECT seq, status, pickup_session, pickup_at FROM tasks WHERE pickup_session IS NOT NULL OR pickup_at IS NOT NULL")?;
+    let rows = pickups.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+    for row in rows {
+        let (seq, status, session, at) = row?;
+        let validation = match at {
+            Some(at) => pickup::validate_pickup(&status, Some(&TaskPickup { session, at })),
+            None => Err(anyhow!("pickup session requires a timestamp")),
+        };
+        if let Err(error) = validation {
+            push(
+                "invalid_task_pickup",
+                format!("#{seq}: {error}; restore an intact export"),
+            );
+        }
+    }
     for (kind, detail) in mise_projection::audit_mise_projections(conn)? {
         push(&kind, detail);
     }
@@ -4008,6 +4073,7 @@ fn default_active() -> String {
 
 #[derive(Serialize, Deserialize)]
 pub struct TaskDump {
+    pub pickup: Option<TaskPickup>,
     #[serde(default)]
     pub seq: Option<i64>,
     pub plan: String,
@@ -4199,6 +4265,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
             let commit_associations = commit_associations(conn, t.seq)?;
             let external_references = external_references(conn, t.seq)?;
             tasks.push(TaskDump {
+                pickup: t.pickup,
                 seq: Some(t.seq),
                 plan: slug.clone(),
                 title: t.title,
@@ -4331,7 +4398,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
         mise_projection::export_mise_projections(conn, &selected_task_sequences)?;
 
     Ok(Dump {
-        schema: "papertiger.dump.v8".into(),
+        schema: "papertiger.dump.v9".into(),
         plans,
         tasks,
         events,
@@ -4340,9 +4407,9 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
 }
 
 pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usize)> {
-    if dump.schema != "papertiger.dump.v8" {
+    if dump.schema != "papertiger.dump.v9" {
         bail!(
-            "unsupported dump schema '{}'; use the Papertiger release that produced it to import it into a temporary authority, run current `papertiger --db <temporary-authority> init`, then re-export `papertiger.dump.v8`",
+            "unsupported dump schema '{}'; use the Papertiger release that produced it to import it into a temporary authority, run current `papertiger --db <temporary-authority> init`, then re-export `papertiger.dump.v9`",
             dump.schema
         );
     }
@@ -4506,11 +4573,12 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
                 td.title
             );
         }
+        pickup::validate_pickup(&td.status, td.pickup.as_ref())?;
         let t = now();
         tx.execute(
             "INSERT INTO tasks
-             (seq, plan_id, title, intent, intent_source, kind, result, result_source, status, priority, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+             (seq, plan_id, title, intent, intent_source, kind, result, result_source, status, priority, created_at, updated_at, pickup_session, pickup_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)",
             params![
                 seq,
                 plan_id,
@@ -4522,7 +4590,9 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
                 result_source,
                 td.status,
                 td.priority,
-                t
+                t,
+                td.pickup.as_ref().and_then(|p| p.session.as_deref()),
+                td.pickup.as_ref().map(|p| &p.at),
             ],
         )
         .with_context(|| format!("import task seq {seq} '{}'", td.title))?;

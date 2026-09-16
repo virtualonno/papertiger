@@ -239,7 +239,7 @@ fn receipt_snapshots_exclude_later_concurrent_writers() {
     {
         let recorder = pt::MutationRecorder::new(&first, Some("author-model")).unwrap();
         let seq = task(&first, "a concurrent task");
-        pt::start_task(&second, "concurrent", seq, Some("separate writer")).unwrap();
+        pt::start_task(&second, "concurrent", seq, Some("separate writer"), None).unwrap();
         let receipt = recorder.receipt().unwrap();
         assert_eq!(receipt.events.len(), 1);
         assert_eq!(receipt.events[0].task.as_ref().unwrap().status, "proposed");

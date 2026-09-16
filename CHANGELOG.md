@@ -6,6 +6,28 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Added
+
+- `--session <id>` and `PAPERTIGER_SESSION` record advisory pickup when starting
+  or resuming work. `focus` prefers the caller's work and available alternatives
+  over tasks last picked up by another session. `show`, `focus`, and `status`
+  expose pickup identity and time without claiming that the agent is still alive.
+
+### Changed
+
+- `start` can resume in-progress work without a release or takeover command.
+  Repeated pickup by the same identified session emits no event. Pickup never
+  blocks another session or guarantees exclusive execution; real dependencies,
+  blockers, gates, and completion checks remain enforced.
+- Planner schema v10 adds pickup context. Preserve an export and standalone
+  backup before explicitly running `init`; migration does not infer sessions
+  from historical actors. Recovery dumps use `papertiger.dump.v9`. Changed read
+  contracts are task context v7, current task v2, status v3, focus v6, and search v2.
+  Refresh consuming installations with `setup-project`; keep old Mise drivers
+  for campaigns that bind their executable identity.
+- Rust callers pass optional session context to `start_task`, `focus`, and
+  `TaskCreation`; pass `None` when no session identity is available.
+
 ## [0.14.0] - 2026-09-16
 
 Planner schema remains v9; upgrading from 0.13.0 needs no database migration. Run `setup-project` from the new release to refresh project binaries and skills. Keep the previous Mise driver for existing campaigns that bind its executable hash.

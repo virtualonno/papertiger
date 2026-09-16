@@ -113,6 +113,7 @@ pub struct TaskCounts {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusTask {
+    pub pickup: Option<crate::TaskPickup>,
     pub task: TaskSummary,
     pub activity: TaskActivity,
 }
@@ -607,6 +608,7 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
         let mut in_progress_leaves = Vec::new();
         for task in list_tasks(conn, plan_id, Some("in_progress"), None)? {
             let entry = StatusTask {
+                pickup: task.pickup.clone(),
                 activity: task_activity(conn, task.seq)?,
                 task: TaskSummary::from(&task),
             };
@@ -691,7 +693,7 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
         Some("papertiger log --json".into()),
     );
     Ok(StatusResponse {
-        schema: "papertiger.status.v2".into(),
+        schema: "papertiger.status.v3".into(),
         authority: authority_info(conn, requested_path)?,
         active_plans,
         recent_notes,

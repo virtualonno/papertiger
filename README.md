@@ -34,7 +34,7 @@ CAS evidence or establish that a campaign can still execute.
   currently done. Their actor fields record transition authorship, not task
   ownership. `list --sort activity` orders work by the latest meaningful event
   without inventing time tracking.
-- `show --json` is the task work record. Task context v6 includes full details
+- `show --json` is the task work record. Task context v7 includes full details
   for the selected task and compact identity/status summaries for related
   tasks; read a related task explicitly for its full context. `schema` prints
   the bundled JSON Schema for context, status, task lists, history, recovery,
@@ -72,9 +72,15 @@ CAS evidence or establish that a campaign can still execute.
 - Probe and decision tasks require `--result` or `--result-file` before they can
   close.
 - Open dependencies, blockers, gates, and child tasks prevent completion.
-- Every mutation records an actor and an event. Actor labels are provenance,
+- Every change records an actor and an event; idempotent identified pickup emits none. Actor labels are provenance,
   never assignees, leases, session handles, or liveness signals; unfinished
   work remains `in_progress` across agent replacement without reassignment.
+- `--session <id>` or `PAPERTIGER_SESSION` records advisory task pickup separately
+  from actor provenance. `focus` prefers your session's work and available
+  alternatives over work last picked up elsewhere. Another session's pickup is
+  never a blocker: `start` resumes unfinished work directly, with no release,
+  expiry, heartbeat, or harness integration. It does not detect liveness or
+  guarantee exclusive execution; concurrent explicit starts can both succeed.
 - `add --start` creates and starts a task atomically, rolling back task and
   events on readiness failure. Intent, result, and note text may separately
   record a `user`, `agent`, or `external` meaning source without confusing it
@@ -299,14 +305,16 @@ so an explicitly selected database can resolve `file:` locators beneath the
 supplied root. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 
-The current planner authority schema is v9. Before migrating an older authority,
+The current planner authority schema is v10. Before migrating an older authority,
 archive its export with the matching Papertiger release and use the new release's
 `--db <source> backup --output <new-path> --json` to create a standalone SQLite
 recovery file. Current import
-accepts only `papertiger.dump.v8`; restore an older dump with the release that
-produced it, migrate that temporary authority, and re-export it.
+accepts only `papertiger.dump.v9`; restore an older dump with the release that
+produced it, migrate that temporary authority, and re-export it. Migration preserves
+old in-progress tasks without inventing session identities. Exported pickup context
+remains advisory after recovery; it never becomes a lock.
 
-`backup` preserves planner schemas 1–9 and committed WAL data through SQLite's
+`backup` preserves planner schemas 1–10 and committed WAL data through SQLite's
 [online backup API](https://www.sqlite.org/backup.html). It publishes one recovery
 file after SQLite integrity verification and returns its SHA-256, byte count,
 original schema, and task/event counts. It refuses foreign authorities, newer

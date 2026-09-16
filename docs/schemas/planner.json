@@ -38,6 +38,9 @@
     },
     {
       "$ref": "#/$defs/search_compact"
+    },
+    {
+      "$ref": "#/$defs/focus"
     }
   ],
   "$defs": {
@@ -191,6 +194,9 @@
         },
         "result_source": {
           "$ref": "#/$defs/meaning_source"
+        },
+        "pickup": {
+          "$ref": "#/$defs/pickup"
         }
       },
       "required": [
@@ -202,7 +208,8 @@
         "intent",
         "intent_source",
         "result",
-        "result_source"
+        "result_source",
+        "pickup"
       ],
       "additionalProperties": false
     },
@@ -707,7 +714,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_context.v6"
+          "const": "papertiger.task_context.v7"
         },
         "plan": {
           "$ref": "#/$defs/plan"
@@ -1011,11 +1018,15 @@
                       },
                       "activity": {
                         "$ref": "#/$defs/activity"
+                      },
+                      "pickup": {
+                        "$ref": "#/$defs/pickup"
                       }
                     },
                     "required": [
                       "task",
-                      "activity"
+                      "activity",
+                      "pickup"
                     ],
                     "additionalProperties": false
                   }
@@ -1074,11 +1085,15 @@
                       },
                       "activity": {
                         "$ref": "#/$defs/activity"
+                      },
+                      "pickup": {
+                        "$ref": "#/$defs/pickup"
                       }
                     },
                     "required": [
                       "task",
-                      "activity"
+                      "activity",
+                      "pickup"
                     ],
                     "additionalProperties": false
                   }
@@ -1178,7 +1193,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.status.v2"
+          "const": "papertiger.status.v3"
         },
         "authority": {
           "type": "object",
@@ -1193,7 +1208,7 @@
               "type": "string"
             },
             "schema_version": {
-              "const": 9
+              "const": 10
             },
             "event_head": {
               "anyOf": [
@@ -1451,6 +1466,9 @@
           "items": {
             "$ref": "#/$defs/reference"
           }
+        },
+        "pickup": {
+          "$ref": "#/$defs/pickup"
         }
       },
       "required": [
@@ -1463,7 +1481,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.dump.v8"
+          "const": "papertiger.dump.v9"
         },
         "plans": {
           "type": "array",
@@ -1734,7 +1752,7 @@
         "source_schema_version": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 9
+          "maximum": 10
         },
         "sha256": {
           "type": "string",
@@ -1761,7 +1779,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_current.v1"
+          "const": "papertiger.task_current.v2"
         },
         "plan": {
           "$ref": "#/$defs/plan"
@@ -2078,6 +2096,150 @@
         "total_matches",
         "truncated",
         "results"
+      ],
+      "additionalProperties": false
+    },
+    "pickup": {
+      "description": "Advisory last pickup, never an exclusive claim or liveness signal. Null means no current pickup context.",
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "session",
+            "at"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "focus": {
+      "description": "Session-aware advisory ordering. Pickup elsewhere is never an execution blocker or proof of a live agent.",
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.focus.v6"
+        },
+        "selection_state": {
+          "enum": [
+            "resolved",
+            "no_active_plan"
+          ]
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/plan"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "type": "string"
+        },
+        "ordering": {
+          "type": "string"
+        },
+        "eligible_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "returned_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "omitted_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "continuation_command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "task": {
+                "$ref": "#/$defs/task"
+              },
+              "readiness": {
+                "enum": [
+                  "mine",
+                  "in_progress",
+                  "ready",
+                  "picked_up_elsewhere",
+                  "blocked"
+                ]
+              },
+              "blockers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "open_gate_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "immediate_unlock_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unfinished_downstream_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "task",
+              "readiness",
+              "blockers",
+              "open_gate_count",
+              "immediate_unlock_count",
+              "unfinished_downstream_count"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "selection_state",
+        "plan",
+        "scope",
+        "ordering",
+        "eligible_count",
+        "returned_count",
+        "omitted_count",
+        "complete",
+        "continuation_command",
+        "entries"
       ],
       "additionalProperties": false
     }

@@ -35,6 +35,12 @@ its skill does not create another task. From elsewhere, pass global
 `--project-root <canonical-project-root>`. An explicit `--db` or `PAPERTIGER_DB`
 is an exceptional operator override, not ordinary project selection.
 
+Choose one unique `PAPERTIGER_SESSION` for this agent session and reuse it;
+concurrent agents need different values even with the same actor. Use a known
+unique worker identity or generate one once; never generate one per command.
+If command shells do not retain environment, reuse global `--session <id>`.
+This is advisory pickup context, not a lease or proof that an agent is alive.
+
 Use `status` once to orient, then `focus --plan <slug> --json` to resume or
 `search "<terms>" --plan <slug>` to check for an existing outcome. Use
 `--compact --json` when discovery needs structured identities and excerpts.
@@ -45,6 +51,12 @@ payloads; follow its history command when prior notes or decisions matter.
 Inspect a rejected task's rationale before reviving its approach. Whole-backlog
 alignment uses `plan list --json` and `list --all-plans --status unfinished --json`,
 including paused plans; status/focus describe active work rather than that inventory.
+When choosing work freely, prefer your own pickup or available alternatives to
+`picked_up_elsewhere`. The latter is a historical hint, never a blocker. For a
+requested task or when no alternative remains, read its context and resume with
+`start <N>` directly. Do not wait for release, demand takeover approval, or infer
+liveness from actor names or timestamps. Dependencies, gates, and real blockers
+still apply; pickup does not guarantee exclusive execution or prevent file conflicts.
 
 ## Keep the record aligned with the work
 
@@ -57,7 +69,8 @@ call or repeated user question is needed. Omit unknown values and never infer
 settings from a harness name, prose, or a parent's overridden configuration.
 These are event provenance, not ownership or a session lease.
 `in_progress` survives an interrupted session;
-read its context and continue without reassignment.
+read its context and record pickup with `start` before continuing. Repeating
+`start` in the same identified session is eventless; no release is required.
 
 ```text
 papertiger add "Outcome" --plan <slug> --start --intent "Standalone purpose" --intent-source user --why "Why this work starts now" --json

@@ -1308,7 +1308,7 @@ impl DogfoodFixture {
             "Authorize the exact parent promotion proof",
         )
         .expect("planner gate");
-        papertiger::start_task(&planner, "independent-operator", task, None)
+        papertiger::start_task(&planner, "independent-operator", task, None, None)
             .expect("start planner task");
         papertiger::close_gate(
             &planner,
