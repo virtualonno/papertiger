@@ -6,15 +6,23 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-16
+
+Planner schema remains v9; upgrading from 0.13.0 needs no database migration. Run `setup-project` from the new release to refresh project binaries and skills. Keep the previous Mise driver for existing campaigns that bind its executable hash.
+
 ### Added
 
-- `list --all-plans --status unfinished --json` inventories open tasks across active, paused and terminal plans, with owning plan state, exact totals and bounded continuation. Continuation refuses changed authority history; restart the inventory to obtain a consistent view.
+- `list --all-plans --status unfinished --json` inventories open tasks across every plan state, including paused plans, with owning plan identity, exact totals and bounded continuation. Reuse the returned snapshot and unchanged filters for subsequent pages; changed authority history refuses continuation and requires restarting the inventory.
 - `plan list --json` exposes structured plan orientation; `--plan SLUG` selects one plan.
-- `search --compact --json` returns ranked identities and excerpts without full task bodies. `show --no-history --json` returns full current context with a command for deliberate history retrieval. Both use distinct versioned projections; existing full JSON contracts remain unchanged.
+- `search --compact --json` returns ranked task summaries and excerpts without full bodies. `show --no-history --json` returns full current context with an explicit history command. These opt-in projections use `papertiger.search_compact.v1` and `papertiger.task_current.v1`; existing full JSON reads retain their schemas.
 
 ### Changed
 
-- Mutation receipt guidance explains optional task summaries and read-only recovery after a postcommit display failure, avoiding accidental mutation replay.
+- The installed skill uses compact discovery and current-state rechecks where appropriate while retaining full context for resumption. Mutation guidance distinguishes optional task summaries from full task records and uses read-only recovery after a postcommit display failure.
+
+### Fixed
+
+- `inspect-project-guidance` recognizes explicit `@AGENTS.md` imports and directed local Markdown links in `CLAUDE.md` as indirection. This observation does not claim that imported instructions were loaded or followed.
 
 ## [0.13.0] - 2026-09-09
 
@@ -398,7 +406,8 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/virtualonno/papertiger/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/virtualonno/papertiger/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/virtualonno/papertiger/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/virtualonno/papertiger/compare/v0.11.0...v0.12.0

@@ -414,6 +414,13 @@ bash scripts/cross_check.sh
 Release archives are built for Windows x64, Linux x64, Intel macOS, and Apple
 Silicon macOS. Each archive has an adjacent `.sha256` file.
 
+The GitHub Release Artifacts workflow defaults to building without publication.
+Set `artifact_version` to the workspace version with a dated changelog section.
+Source, MSRV, and native platform jobs run concurrently; publication requires all
+of them to pass and an explicit `create_release=true` dispatch from `master`.
+Each build retains rendered notes, four native archives, and adjacent SHA-256
+files. The archive manifest identifies the source commit used for verification.
+
 ## Further reading
 
 - [MISE.md](MISE.md) defines campaign admission, evidence, budgets, and the
