@@ -308,7 +308,13 @@ fn inspect_file(
         && (normalized.contains("follow `agents.md`")
             || normalized.contains("read `agents.md`")
             || normalized.contains("follow agents.md")
-            || normalized.contains("read agents.md"));
+            || normalized.contains("read agents.md")
+            || normalized.lines().any(|line| {
+                matches!(line.trim(), "@agents.md" | "@./agents.md")
+                    || (has_trigger_verb(line)
+                        && (line.contains("[agents.md](agents.md)")
+                            || line.contains("[agents.md](./agents.md)")))
+            }));
     let stale_shell_launcher_terms = stale_launcher_terms(&normalized);
     let papertiger_mentioned = normalized.contains("papertiger");
 
@@ -562,6 +568,48 @@ mod tests {
         assert!(result.files[1].agents_guidance_reference_observed);
         assert_eq!(result.pair.byte_identical, Some(false));
         assert!(result.inspection_complete);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn claude_imports_and_directed_links_are_indirection_not_skill_triggers() {
+        let root = fixture("claude-imports");
+        for text in [
+            "@AGENTS.md\n",
+            "  @./AGENTS.md\r\n",
+            "Read and follow [AGENTS.md](AGENTS.md). It owns this project's instructions.\n",
+            "Read [AGENTS.md](./AGENTS.md).\n",
+        ] {
+            fs::write(root.join("CLAUDE.md"), text).unwrap();
+            let result = inspect_project_guidance(&root, &[SkillTarget::Agents]);
+            assert_eq!(
+                result.files[0].classification,
+                GuidanceClassification::Missing
+            );
+            assert_eq!(
+                result.files[1].classification,
+                GuidanceClassification::AgentsGuidanceReference,
+                "{text}"
+            );
+            assert!(result.files[1].agents_guidance_reference_observed);
+            assert!(!result.files[1].papertiger_skill_trigger_observed);
+            assert!(!result.pair.comparable);
+        }
+        for text in [
+            "@other/AGENTS.md\n",
+            "@AGENTS.md.backup\n",
+            "`@AGENTS.md` is an example, not an import.\n",
+            "[AGENTS.md](AGENTS.md)\n",
+            "Read [AGENTS.md](https://example.test/AGENTS.md).\n",
+        ] {
+            fs::write(root.join("CLAUDE.md"), text).unwrap();
+            let result = inspect_project_guidance(&root, &[SkillTarget::Agents]);
+            assert_eq!(
+                result.files[1].classification,
+                GuidanceClassification::NoDiscoverableTrigger,
+                "{text}"
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
