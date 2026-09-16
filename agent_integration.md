@@ -181,6 +181,30 @@ success receipt, and idempotent operations may emit an empty event list with
 `changed=false`. Never recover a task number by parsing human prose. `init`
 retains its separate human-readable migration output.
 
+For a concise acknowledgement, retain the receipt locally and display a projection
+of `changed` and each ordered event's `event_id`, `kind`, `task`, and `plan`.
+The optional `task` is a **summary** (`seq`, `title`, `status`, `kind`, `priority`),
+not a full task: it has no `intent` or `result`. Taskless events are legitimate.
+For example, after capturing successful JSON stdout in `$receipt` in PowerShell:
+
+```powershell
+$receipt | Select-Object schema, changed, @{Name='events'; Expression={
+    @($_.events | ForEach-Object {
+        [pscustomobject]@{
+            event_id = $_.event.event_id
+            kind = $_.event.kind
+            task = $_.task
+            plan = $_.plan
+        }
+    })
+}} | ConvertTo-Json -Depth 8
+```
+
+Check the native command's exit code before parsing. If local parsing or display
+fails after a successful write, inspect the retained receipt and use read-only
+`show`/`log` to verify the outcome; do not replay the mutation. Empty events and
+`changed=false` are distinct from a failed command with no success receipt.
+
 For multi-paragraph durable text, use the same `<field>-file <path|->` pattern:
 `--intent-file`, `--why-file`, `--result-file`, or `note --text-file`. `-` reads
 stdin. One command may consume stdin for only one field; inline and file forms

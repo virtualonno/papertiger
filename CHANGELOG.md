@@ -6,6 +6,10 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Changed
+
+- Mutation receipt guidance explains optional task summaries and read-only recovery after a postcommit display failure, avoiding accidental mutation replay.
+
 ## [0.13.0] - 2026-09-09
 
 Planner schema remains v9; this update needs no database migration. Retain the
