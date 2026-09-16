@@ -1961,25 +1961,7 @@
             "type": "object",
             "properties": {
               "plan": {
-                "type": "object",
-                "properties": {
-                  "slug": {
-                    "type": "string"
-                  },
-                  "status": {
-                    "enum": [
-                      "active",
-                      "paused",
-                      "done",
-                      "retired"
-                    ]
-                  }
-                },
-                "required": [
-                  "slug",
-                  "status"
-                ],
-                "additionalProperties": false
+                "$ref": "#/$defs/plan_identity"
               },
               "task": {
                 "$ref": "#/$defs/task_summary"
@@ -2131,11 +2113,11 @@
       ]
     },
     "focus": {
-      "description": "Session-aware advisory ordering. Pickup elsewhere is never an execution blocker or proof of a live agent.",
+      "description": "Concise selection with task and plan summaries, advisory pickup and independent blockers. Use show for full task context.",
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.focus.v6"
+          "const": "papertiger.focus.v7"
         },
         "selection_state": {
           "enum": [
@@ -2146,7 +2128,7 @@
         "plan": {
           "anyOf": [
             {
-              "$ref": "#/$defs/plan"
+              "$ref": "#/$defs/plan_identity"
             },
             {
               "type": "null"
@@ -2186,7 +2168,7 @@
             "type": "object",
             "properties": {
               "task": {
-                "$ref": "#/$defs/task"
+                "$ref": "#/$defs/task_summary"
               },
               "readiness": {
                 "enum": [
@@ -2214,10 +2196,14 @@
               "unfinished_downstream_count": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "pickup": {
+                "$ref": "#/$defs/pickup"
               }
             },
             "required": [
               "task",
+              "pickup",
               "readiness",
               "blockers",
               "open_gate_count",
@@ -2240,6 +2226,27 @@
         "complete",
         "continuation_command",
         "entries"
+      ],
+      "additionalProperties": false
+    },
+    "plan_identity": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "paused",
+            "done",
+            "retired"
+          ]
+        }
+      },
+      "required": [
+        "slug",
+        "status"
       ],
       "additionalProperties": false
     }

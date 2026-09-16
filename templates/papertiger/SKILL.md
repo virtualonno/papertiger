@@ -41,9 +41,12 @@ unique worker identity or generate one once; never generate one per command.
 If command shells do not retain environment, reuse global `--session <id>`.
 This is advisory pickup context, not a lease or proof that an agent is alive.
 
-Use `status` once to orient, then `focus --plan <slug> --json` to resume or
-`search "<terms>" --plan <slug>` to check for an existing outcome. Use
-`--compact --json` when discovery needs structured identities and excerpts.
+Use `status` once to orient, then `focus --plan <slug> --json` to choose work.
+Check for an existing outcome with
+`search "<terms>" --plan <slug> --compact --json`.
+Read `focus` directly: it already contains compact task summaries with
+`readiness`, `pickup`, and `blockers`. Keep those fields together when selecting
+work; projecting only task titles and status discards coordination context.
 Pass `--plan` when multiple plans are active. Read the chosen task with
 `show <N> --json`; follow bounded results' continuation commands when relevant.
 For a current-state recheck, `show <N> --no-history --json` avoids repeated event
@@ -51,6 +54,8 @@ payloads; follow its history command when prior notes or decisions matter.
 Inspect a rejected task's rationale before reviving its approach. Whole-backlog
 alignment uses `plan list --json` and `list --all-plans --status unfinished --json`,
 including paused plans; status/focus describe active work rather than that inventory.
+Inventory rows are `tasks[].{plan,task}`; task fields are nested under `task`
+(for example `tasks[].task.seq`). Use the relevant plan's `focus` to select work.
 When choosing work freely, prefer your own pickup or available alternatives to
 `picked_up_elsewhere`. The latter is a historical hint, never a blocker. For a
 requested task or when no alternative remains, read its context and resume with

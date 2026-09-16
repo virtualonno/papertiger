@@ -2,6 +2,70 @@ use papertiger as pt;
 use rusqlite::Connection;
 use std::sync::{Arc, Barrier};
 
+#[test]
+fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
+    let conn = Connection::open_in_memory().unwrap();
+    pt::init(&conn).unwrap();
+    let narrative = "long durable context ".repeat(3000);
+    let plan = pt::add_plan(&conn, "test", "work", "Work", &narrative).unwrap();
+    let add = |title| {
+        pt::add_task(
+            &conn,
+            "test",
+            plan,
+            title,
+            &narrative,
+            None,
+            &[],
+            &[],
+            0,
+            None,
+        )
+        .unwrap()
+    };
+    let mine = add("My work");
+    let other = add("Other session's work");
+    let ready = add("Available work");
+    let blocked = add("Waiting work");
+    pt::start_task(&conn, "same-harness", mine, None, Some("me")).unwrap();
+    pt::start_task(&conn, "same-harness", other, None, Some("other")).unwrap();
+    pt::add_task_blocker(&conn, "test", other, "input", "waiting for input").unwrap();
+    pt::add_dep(&conn, "test", blocked, ready, "prerequisite").unwrap();
+    let before = serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap();
+
+    let selection = pt::focus(&conn, plan, 10, true, Some("me")).unwrap();
+    let json = serde_json::to_value(&selection).unwrap();
+    let rows = json["entries"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["task"]["seq"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![mine, ready, other, blocked]
+    );
+    assert_eq!(rows[0]["readiness"], "mine");
+    assert_eq!(rows[0]["pickup"]["session"], "me");
+    assert_eq!(rows[2]["readiness"], "picked_up_elsewhere");
+    assert_eq!(rows[2]["pickup"]["session"], "other");
+    assert_eq!(
+        rows[2]["pickup"]["at"],
+        pt::get_task(&conn, other).unwrap().pickup.unwrap().at
+    );
+    assert!(!rows[2]["blockers"].as_array().unwrap().is_empty());
+    assert_eq!(rows[3]["readiness"], "blocked");
+    assert_eq!(rows[3]["blockers"][0], format!("dep:#{ready}"));
+    assert!(rows[1]["pickup"].is_null());
+    assert!(rows[1]["blockers"].as_array().unwrap().is_empty());
+    // Narrative growth must not turn a selection read into a context dump.
+    assert!(serde_json::to_vec_pretty(&selection).unwrap().len() < 5000);
+    assert!(json["plan"].get("intent").is_none());
+    assert!(rows.iter().all(|r| r["task"].get("intent").is_none()));
+    assert_eq!(pt::get_task(&conn, other).unwrap().intent, narrative);
+    assert_eq!(
+        serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap(),
+        before
+    );
+}
+
 fn seed(conn: &Connection) -> (i64, i64, i64) {
     pt::init(conn).unwrap();
     pt::add_plan(conn, "test", "work", "Work", "").unwrap();

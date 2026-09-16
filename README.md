@@ -23,7 +23,10 @@ CAS evidence or establish that a campaign can still execute.
 
 ## What the planner enforces
 
-- `status --json`, `focus --json`, `list --json`, and `show <N> --json` provide
+- `focus --json` provides concise task summaries with pickup identity, readiness,
+  real blockers, and ranking information. Read it directly to choose work, then
+  use `show <N> --json` for full context.
+- `status --json`, `list --json`, and `show <N> --json` provide
   versioned orientation from the live database without exposing internal row
   identifiers. Status distinguishes in-progress parent and leaf work, and each
   bounded projection reports its scope, ordering, eligible, returned, and

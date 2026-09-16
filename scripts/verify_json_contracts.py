@@ -17,7 +17,7 @@ from jsonschema import Draft202012Validator
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
-    environment = {**os.environ, "PAPERTIGER_ACTOR": "schema-fixture"}
+    environment = {**os.environ, "PAPERTIGER_ACTOR": "schema-fixture", "PAPERTIGER_SESSION": "schema-fixture"}
     environment.pop("PAPERTIGER_MODEL", None)
     environment.pop("PAPERTIGER_REASONING_EFFORT", None)
     schema = json.loads(subprocess.check_output([binary, "schema"], env=environment))
@@ -38,6 +38,7 @@ def main():
             return value
 
         run("init", validate=False)
+        run("focus", "--json")
         run("plan", "add", "source", "Source", "--json")
         run("plan", "add", "destination", "Destination", "--json")
         run("add", "Selected work", "--plan", "source", "--model", "fixture-author", "--reasoning-effort", "high", "--start", "--why", "verify structured entry", "--json")
@@ -46,6 +47,14 @@ def main():
         run("gate", "add", "1", "proof", "--kind", "test", "--requirement", "fixture proof", "--json")
         context = run("show", "1", "--json")
         assert context["activity"]["created_event"]["reasoning_effort"] == "high"
+        selection = run("focus", "--plan", "source", "--all", "--json")
+        assert selection['schema'] == 'papertiger.focus.v7'
+        assert selection['entries'][0]['pickup']['session'] == 'schema-fixture'
+        assert selection['entries'][0]['readiness'] == 'mine'
+        assert selection['entries'][1]['blockers'] == ['dep:#1']
+        inventory = run("list", "--all-plans", "--status", "unfinished", "--json")
+        assert inventory['tasks'][0]['task']['seq'] == 1
+        assert inventory['tasks'][0]['plan']['slug'] == 'source'
         run("status", "--json")
         run("list", "--plan", "source", "--json")
         run("log", "--json")
@@ -67,7 +76,17 @@ def main():
         corrupt = copy.deepcopy(context)
         corrupt['dependents'][0]['intent'] = 'must be a summary'
         assert not validator.is_valid(corrupt)
-    print(json.dumps({"schema": "papertiger.schema-fixture-proof.v1", "validated_outputs": count, "negative_controls": 6}))
+        # Selection context must remain explicit and free of full narratives.
+        missing_pickup = copy.deepcopy(selection)
+        del missing_pickup['entries'][0]['pickup']
+        assert not validator.is_valid(missing_pickup)
+        full_task = copy.deepcopy(selection)
+        full_task['entries'][0]['task']['intent'] = 'belongs in show'
+        assert not validator.is_valid(full_task)
+        full_plan = copy.deepcopy(selection)
+        full_plan['plan']['intent'] = 'belongs in plan context'
+        assert not validator.is_valid(full_plan)
+    print(json.dumps({"schema": "papertiger.schema-fixture-proof.v1", "validated_outputs": count, "negative_controls": 9}))
 
 
 if __name__ == "__main__":

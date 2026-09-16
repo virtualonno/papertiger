@@ -15,6 +15,11 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Changed
 
+- `focus` is concise by default and preserves pickup, readiness, and blockers
+  together. JSON v7 replaces full task records with summaries, moves pickup to
+  `entries[].pickup`, and reduces `plan` to slug and status. Use `show` for intent,
+  results, and history. Database schema v10 and dump v9 are unchanged from the
+  first advisory-pickup development snapshot.
 - `start` can resume in-progress work without a release or takeover command.
   Repeated pickup by the same identified session emits no event. Pickup never
   blocks another session or guarantees exclusive execution; real dependencies,
@@ -22,7 +27,7 @@ All notable user-visible changes are documented here. Papertiger follows
 - Planner schema v10 adds pickup context. Preserve an export and standalone
   backup before explicitly running `init`; migration does not infer sessions
   from historical actors. Recovery dumps use `papertiger.dump.v9`. Changed read
-  contracts are task context v7, current task v2, status v3, focus v6, and search v2.
+  contracts are task context v7, current task v2, status v3, focus v7, and search v2.
   Refresh consuming installations with `setup-project`; keep old Mise drivers
   for campaigns that bind their executable identity.
 - Rust callers pass optional session context to `start_task`, `focus`, and

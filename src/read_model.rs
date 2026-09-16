@@ -81,6 +81,21 @@ pub struct TaskSummary {
     pub priority: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanIdentity {
+    pub slug: String,
+    pub status: String,
+}
+
+impl From<&Plan> for PlanIdentity {
+    fn from(plan: &Plan) -> Self {
+        Self {
+            slug: plan.slug.clone(),
+            status: plan.status.clone(),
+        }
+    }
+}
+
 impl From<&Task> for TaskSummary {
     fn from(task: &Task) -> Self {
         Self {

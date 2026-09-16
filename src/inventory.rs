@@ -4,18 +4,12 @@ use anyhow::{Result, bail};
 use rusqlite::{Connection, params};
 use serde::Serialize;
 
-use crate::{Plan, TASK_STATUSES, TaskSummary, event_head, get_plan, resolve_plan};
+use crate::{Plan, PlanIdentity, TASK_STATUSES, TaskSummary, event_head, get_plan, resolve_plan};
 
 #[derive(Debug, Serialize)]
 pub struct InventoryItem {
     pub plan: PlanIdentity,
     pub task: TaskSummary,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PlanIdentity {
-    pub slug: String,
-    pub status: String,
 }
 
 #[derive(Debug, Serialize)]

@@ -2050,7 +2050,7 @@ fn run(cli: Cli) -> Result<()> {
                         entry.unfinished_downstream_count,
                         entry.open_gate_count,
                         blockers,
-                        pickup_label(entry.task.pickup.as_ref()),
+                        pickup_label(entry.pickup.as_ref()),
                     );
                 }
                 if response.projection.omitted_count > 0

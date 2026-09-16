@@ -38,10 +38,10 @@ pub use pickup::{TaskPickup, validate_session};
 mod plan_move;
 pub use plan_move::move_tasks_to_plan;
 pub use read_model::{
-    ActivityEvent, AuthorityInfo, EventCursor, EventLog, EventRecord, PlanStatus, StatusInProgress,
-    StatusProjection, StatusReadyTask, StatusResponse, StatusTask, TaskActivity, TaskCounts,
-    TaskListItem, TaskListResponse, TaskSummary, authority_info, event_cursor, event_head,
-    event_log, status_response, task_activity, task_list_response,
+    ActivityEvent, AuthorityInfo, EventCursor, EventLog, EventRecord, PlanIdentity, PlanStatus,
+    StatusInProgress, StatusProjection, StatusReadyTask, StatusResponse, StatusTask, TaskActivity,
+    TaskCounts, TaskListItem, TaskListResponse, TaskSummary, authority_info, event_cursor,
+    event_head, event_log, status_response, task_activity, task_list_response,
 };
 mod search;
 pub use search::{SearchExcerpt, SearchHit, SearchResponse, search_tasks};
@@ -3001,7 +3001,8 @@ pub struct ReadyEntry {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FocusEntry {
-    pub task: Task,
+    pub task: TaskSummary,
+    pub pickup: Option<TaskPickup>,
     pub readiness: String,
     pub blockers: Vec<String>,
     pub open_gate_count: usize,
@@ -3013,7 +3014,7 @@ pub struct FocusEntry {
 pub struct FocusResponse {
     pub schema: String,
     pub selection_state: String,
-    pub plan: Option<Plan>,
+    pub plan: Option<PlanIdentity>,
     #[serde(flatten)]
     pub projection: StatusProjection<FocusEntry>,
 }
@@ -3021,7 +3022,7 @@ pub struct FocusResponse {
 impl FocusResponse {
     pub fn no_active_plan() -> Self {
         Self {
-            schema: "papertiger.focus.v6".into(),
+            schema: "papertiger.focus.v7".into(),
             selection_state: "no_active_plan".into(),
             plan: None,
             projection: StatusProjection::new(
@@ -3072,7 +3073,8 @@ pub fn focus(
                 open_gate_count: open_gates(conn, task.task_id)?.len(),
                 immediate_unlock_count: immediate_unlock_count(conn, task.task_id)?,
                 unfinished_downstream_count: unfinished_downstream_count(conn, task.task_id)?,
-                task,
+                task: TaskSummary::from(&task),
+                pickup: task.pickup,
                 readiness: readiness.to_string(),
                 blockers,
             })
@@ -3108,9 +3110,9 @@ pub fn focus(
             .unwrap_or_default()
     );
     Ok(FocusResponse {
-        schema: "papertiger.focus.v6".into(),
+        schema: "papertiger.focus.v7".into(),
         selection_state: "resolved".into(),
-        plan: Some(plan),
+        plan: Some(PlanIdentity::from(&plan)),
         projection: StatusProjection::new(
             if include_blocked {
                 "active and proposed actionable leaf tasks, including blocked proposed work"

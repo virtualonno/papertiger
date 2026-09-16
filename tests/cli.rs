@@ -23,8 +23,20 @@ fn session_pickup_is_visible_advisory_and_requires_no_release() {
     let focus = invoke("b", &["focus", "--limit", "1", "--json"]);
     assert_success(&focus);
     let focus: serde_json::Value = serde_json::from_slice(&focus.stdout).unwrap();
-    assert_eq!(focus["schema"], "papertiger.focus.v6");
+    assert_eq!(focus["schema"], "papertiger.focus.v7");
     assert_eq!(focus["entries"][0]["task"]["seq"], 2);
+    assert!(focus["entries"][0]["task"].get("intent").is_none());
+    let all = invoke("b", &["focus", "--json"]);
+    assert_success(&all);
+    let all: serde_json::Value = serde_json::from_slice(&all.stdout).unwrap();
+    assert_eq!(all["entries"][1]["pickup"]["session"], "a");
+    assert_eq!(all["entries"][1]["readiness"], "picked_up_elsewhere");
+    assert_eq!(all["entries"][1]["blockers"], serde_json::json!([]));
+    let human = invoke("b", &["focus"]);
+    assert_success(&human);
+    let human = String::from_utf8(human.stdout).unwrap();
+    assert!(human.contains("picked_up_elsewhere"));
+    assert!(human.contains("pickup a"));
     assert!(
         focus["continuation_command"]
             .as_str()
@@ -1049,7 +1061,7 @@ fn entry_bounds_tag_identity_and_focus_projection_are_explicit() {
     );
     assert_success(&focus);
     let focus: serde_json::Value = serde_json::from_slice(&focus.stdout).unwrap();
-    assert_eq!(focus["schema"], "papertiger.focus.v6");
+    assert_eq!(focus["schema"], "papertiger.focus.v7");
     assert_eq!(focus["eligible_count"], 3);
     assert_eq!(focus["returned_count"], 1);
     assert_eq!(focus["omitted_count"], 2);
@@ -1930,7 +1942,7 @@ fn focus_json_reports_a_structured_empty_selection_for_a_paused_plan() {
     assert_success(&output);
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("parse focus JSON");
-    assert_eq!(value["schema"], "papertiger.focus.v6");
+    assert_eq!(value["schema"], "papertiger.focus.v7");
     assert_eq!(value["selection_state"], "no_active_plan");
     assert!(value["plan"].is_null());
     assert_eq!(value["entries"].as_array().map(Vec::len), Some(0));
