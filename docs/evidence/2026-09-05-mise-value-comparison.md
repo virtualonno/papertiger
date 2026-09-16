@@ -11,8 +11,8 @@ and retaining trustworthy experiment history. They need separate value evidence.
 
 ## Direct comparison with ordinary regression work
 
-`replay_native_value.py` uses the same retained, hash-checked native binaries,
-profiles, source bindings and fixtures as two historical Mise campaigns. It calls
+The historical comparison runner used the same retained, hash-checked native binaries,
+profiles, source bindings and fixtures as two historical Mise campaigns. It called
 the executables directly, outside Mise, twice per variant. Contextmink command
 strings are parser input through stdin; they are never executed as shell commands.
 Ghidramink's native environment probe receives its fixture through stdin.
@@ -40,16 +40,12 @@ SHA-256 values and wall times at
 rerun also verifies the profile against the frozen manifest and each variant's
 fixture bytes and Git tree against its bound commit. A compact copy of the
 identities and measurements is committed in
-[the comparison summary](2026-09-05-mise-value-comparison.json). Reproduce with:
-
-```powershell
-python -X utf8 docs/evidence/replay_native_value.py --output <new-report.json>
-```
-
-The script expects this machine's retained consumer evidence trees. It is a small
-comparison artifact, not a replacement experiment platform or a portable release
-test. Source identities and hashes remain in the report even if those local trees
-later become unavailable.
+[the comparison summary](2026-09-05-mise-value-comparison.json). The machine-specific
+runner was retired from the current codebase in 0.15.0. Its exact historical source
+is [retained in Git](https://github.com/virtualonno/papertiger/blob/c5666b20be8029678fb063c8300ee8e07857cb8f/docs/evidence/replay_native_value.py).
+Reproduction requires that revision and the original retained consumer evidence
+trees; this was never a portable release test. Source identities and hashes remain
+in the report even if those local trees later become unavailable.
 
 ## What survives the comparison
 

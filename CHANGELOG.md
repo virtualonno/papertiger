@@ -6,6 +6,8 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-17
+
 ### Added
 
 - `--session <id>` and `PAPERTIGER_SESSION` record advisory pickup when starting
@@ -18,13 +20,13 @@ All notable user-visible changes are documented here. Papertiger follows
 - `focus` is concise by default and preserves pickup, readiness, and blockers
   together. JSON v7 replaces full task records with summaries, moves pickup to
   `entries[].pickup`, and reduces `plan` to slug and status. Use `show` for intent,
-  results, and history. Database schema v10 and dump v9 are unchanged from the
-  first advisory-pickup development snapshot.
+  results, and history.
 - `start` can resume in-progress work without a release or takeover command.
   Repeated pickup by the same identified session emits no event. Pickup never
   blocks another session or guarantees exclusive execution; real dependencies,
   blockers, gates, and completion checks remain enforced.
-- Planner schema v10 adds pickup context. Preserve an export and standalone
+- Upgrading from 0.14.0 migrates planner schema v9 to v10 for pickup context.
+  Preserve an export and standalone
   backup before explicitly running `init`; migration does not infer sessions
   from historical actors. Recovery dumps use `papertiger.dump.v9`. Changed read
   contracts are task context v7, current task v2, status v3, focus v7, and search v2.
@@ -32,6 +34,12 @@ All notable user-visible changes are documented here. Papertiger follows
   for campaigns that bind their executable identity.
 - Rust callers pass optional session context to `start_task`, `focus`, and
   `TaskCreation`; pass `None` when no session identity is available.
+- JSON-schema verification runs in the Rust workspace tests without Python.
+
+### Removed
+
+- Auxiliary Python scripts. The historical native-value comparison document
+  points to its archived runner and retains the original evidence and limitations.
 
 ## [0.14.0] - 2026-09-16
 
@@ -433,7 +441,8 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/virtualonno/papertiger/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/virtualonno/papertiger/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/virtualonno/papertiger/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/virtualonno/papertiger/compare/v0.12.0...v0.12.1

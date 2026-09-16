@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "cli/schema_contracts.rs"]
+mod schema_contracts;
+
 #[test]
 fn session_pickup_is_visible_advisory_and_requires_no_release() {
     let db = TestDatabase::new("session-pickup");

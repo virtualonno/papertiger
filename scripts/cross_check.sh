@@ -162,7 +162,7 @@ test "$(cd "$project" && "$installed_planner" --version)" = "$planner_version"
 authority_fingerprint="$(cksum "$project/state/papertiger.sqlite")"
 (cd "$project/nested/work" && "$installed_planner" status --json) \
   > "$fixture/status.json"
-grep -q '"schema": "papertiger.status.v2"' "$fixture/status.json"
+grep -q '"schema": "papertiger.status.v3"' "$fixture/status.json"
 (cd "$project/nested/work" && "$installed_planner" \
   focus --plan orientation --json) > "$fixture/focus.json"
 (cd "$project/nested/work" && "$installed_planner" show 1 --json) \
@@ -177,7 +177,7 @@ if [[ "$exe" = ".exe" ]]; then
   powershell.exe -NoProfile -Command \
     "Set-Location -LiteralPath '$nested_windows'; & '$planner_windows' status --json" \
       > "$fixture/windows-status.json"
-  grep -q '"schema": "papertiger.status.v2"' "$fixture/windows-status.json"
+  grep -q '"schema": "papertiger.status.v3"' "$fixture/windows-status.json"
   test "$(cksum "$project/state/papertiger.sqlite")" = "$authority_fingerprint"
 fi
 test -f "$project/state/papertiger.sqlite"
