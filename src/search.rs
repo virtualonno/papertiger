@@ -42,6 +42,52 @@ pub struct SearchResponse {
     pub results: Vec<SearchHit>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CompactSearchHit<'a> {
+    pub plan: &'a str,
+    pub task: crate::TaskSummary,
+    pub score: i64,
+    pub matched_fields: &'a [String],
+    pub excerpt: &'a SearchExcerpt,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompactSearchResponse<'a> {
+    pub schema: &'static str,
+    pub query: &'a str,
+    pub terms: &'a [String],
+    pub plan: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub total_matches: usize,
+    pub truncated: bool,
+    pub results: Vec<CompactSearchHit<'a>>,
+}
+
+impl SearchResponse {
+    pub fn compact(&self) -> CompactSearchResponse<'_> {
+        CompactSearchResponse {
+            schema: "papertiger.search_compact.v1",
+            query: &self.query,
+            terms: &self.terms,
+            plan: self.plan.as_ref().map(|plan| plan.slug.as_str()),
+            status: self.status.as_deref(),
+            total_matches: self.total_matches,
+            truncated: self.truncated,
+            results: self
+                .results
+                .iter()
+                .map(|hit| CompactSearchHit {
+                    plan: &hit.plan,
+                    task: crate::TaskSummary::from(&hit.task),
+                    score: hit.score,
+                    matched_fields: &hit.matched_fields,
+                    excerpt: &hit.excerpt,
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct SearchField {
     name: &'static str,

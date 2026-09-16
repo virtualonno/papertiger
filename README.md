@@ -420,6 +420,27 @@ Silicon macOS. Each archive has an adjacent `.sha256` file.
   promotion boundary.
 - [CHANGELOG.md](CHANGELOG.md) records user-visible changes.
 
+### Progressive structured reads
+
+Use `search "terms" --compact --json` for ranked task identities and bounded
+matched excerpts. Its `papertiger.search_compact.v1` projection preserves totals,
+truncation, ranking and match provenance. Follow with `show N --no-history --json`
+for the full current task, relationships and obligations without historical
+payloads (`papertiger.task_current.v1`). The returned `history_command` retrieves
+the event history; read it before interpreting a rejected proposal or a prior
+decision. Ordinary `search --json` and `show --json` retain their full contracts.
+
+`plan list --json` returns every plan, including paused and terminal plans, with
+full orientation; `plan list --plan SLUG --json` retrieves one known plan.
+`list --all-plans --status unfinished --json` inventories proposed and in-progress
+tasks across **every** plan state, independently of readiness. Each row identifies
+its plan and plan state. The default page is 100 rows (`--limit 1..500`). Continue
+with the same filters, returned `next_after_seq` as `--after-seq`, and `--snapshot`.
+`total` counts all matching tasks; `remaining` counts matching tasks after this
+page. A changed event history refuses continuation: restart the inventory rather
+than combining different snapshots. These reads neither resume plans nor change
+mutation authority. Ordinary plan-selected `list` is unchanged.
+
 ## License
 
 Distributions include [LICENSE](LICENSE), [LICENSE-SSL](LICENSE-SSL), and

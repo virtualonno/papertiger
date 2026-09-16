@@ -6,6 +6,12 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Added
+
+- `list --all-plans --status unfinished --json` inventories open tasks across active, paused and terminal plans, with owning plan state, exact totals and bounded continuation. Continuation refuses changed authority history; restart the inventory to obtain a consistent view.
+- `plan list --json` exposes structured plan orientation; `--plan SLUG` selects one plan.
+- `search --compact --json` returns ranked identities and excerpts without full task bodies. `show --no-history --json` returns full current context with a command for deliberate history retrieval. Both use distinct versioned projections; existing full JSON contracts remain unchanged.
+
 ### Changed
 
 - Mutation receipt guidance explains optional task summaries and read-only recovery after a postcommit display failure, avoiding accidental mutation replay.

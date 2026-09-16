@@ -36,10 +36,15 @@ its skill does not create another task. From elsewhere, pass global
 is an exceptional operator override, not ordinary project selection.
 
 Use `status` once to orient, then `focus --plan <slug> --json` to resume or
-`search "<terms>" --plan <slug> --json` to check for an existing outcome. Pass
-`--plan` when multiple plans are active. Read the chosen task with
+`search "<terms>" --plan <slug>` to check for an existing outcome. Use
+`--compact --json` when discovery needs structured identities and excerpts.
+Pass `--plan` when multiple plans are active. Read the chosen task with
 `show <N> --json`; follow bounded results' continuation commands when relevant.
-Inspect a rejected task's rationale before reviving its approach.
+For a current-state recheck, `show <N> --no-history --json` avoids repeated event
+payloads; follow its history command when prior notes or decisions matter.
+Inspect a rejected task's rationale before reviving its approach. Whole-backlog
+alignment uses `plan list --json` and `list --all-plans --status unfinished --json`,
+including paused plans; status/focus describe active work rather than that inventory.
 
 ## Keep the record aligned with the work
 

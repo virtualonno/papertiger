@@ -4,6 +4,200 @@ use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
+    let project = TestDirectory::new("progressive-reads");
+    let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .arg("setup-project")
+        .arg(&project.0)
+        .args(["--skill-target", "none"])
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .unwrap();
+    assert_success(&setup);
+    let invoke = |args: &[&str]| {
+        Command::new(installed_papertiger(&project.0))
+            .args(args)
+            .current_dir(&project.0)
+            .env_remove("PAPERTIGER_DB")
+            .env("PAPERTIGER_ACTOR", "inventory-test")
+            .output()
+            .unwrap()
+    };
+    assert_success(&invoke(&["init"]));
+    for plan in ["active", "paused", "closed", "empty", "retired"] {
+        assert_success(&invoke(&[
+            "plan",
+            "add",
+            plan,
+            plan,
+            "--intent",
+            "Full orientation",
+        ]));
+    }
+    for i in 0..68 {
+        let plan = if i < 65 {
+            "active"
+        } else if i < 67 {
+            "paused"
+        } else {
+            "closed"
+        };
+        assert_success(&invoke(&[
+            "add",
+            &format!("discovery {i}"),
+            "--plan",
+            plan,
+            "--intent",
+            &"lengthy context ".repeat(100),
+            "--tag",
+            "cohort",
+        ]));
+    }
+    assert_success(&invoke(&["start", "1", "--why", "work begins"]));
+    assert_success(&invoke(&["done", "68"]));
+    assert_success(&invoke(&[
+        "plan", "set", "closed", "done", "--why", "complete",
+    ]));
+    assert_success(&invoke(&[
+        "plan", "set", "paused", "paused", "--why", "deferred",
+    ]));
+    assert_success(&invoke(&[
+        "plan",
+        "set",
+        "retired",
+        "retired",
+        "--why",
+        "unused plan",
+    ]));
+    let read = |args: &[&str]| {
+        let output = invoke(args);
+        assert_success(&output);
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let plans = read(&["plan", "list", "--json"]);
+    assert_eq!(plans["total"], 5);
+    let plan = read(&["plan", "list", "--plan", "paused", "--json"]);
+    assert_eq!(plan["plans"][0]["intent"], "Full orientation");
+    assert_eq!(plan["plans"][0]["status"], "paused");
+    let first = read(&[
+        "list",
+        "--all-plans",
+        "--status",
+        "unfinished",
+        "--limit",
+        "65",
+        "--json",
+    ]);
+    assert_eq!(first["total"], 67);
+    assert_eq!(first["remaining"], 2);
+    assert_eq!(first["next_after_seq"], 65);
+    let snapshot = first["snapshot"].as_str().unwrap();
+    let next_args = [
+        "list",
+        "--all-plans",
+        "--status",
+        "unfinished",
+        "--after-seq",
+        "65",
+        "--snapshot",
+        snapshot,
+        "--json",
+    ];
+    let next = read(&next_args);
+    assert_eq!(next["remaining"], 0);
+    assert!(next["next_after_seq"].is_null());
+    assert_eq!(next["tasks"].as_array().unwrap().len(), 2);
+    assert!(
+        next["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["plan"]["status"] == "paused")
+    );
+    assert_eq!(
+        read(&["list", "--all-plans", "--tag", "missing", "--json"])["total"],
+        0
+    );
+    assert_eq!(
+        read(&["list", "--all-plans", "--status", "done", "--json"])["total"],
+        1
+    );
+    let full = read(&["search", "discovery", "--limit", "2", "--json"]);
+    let compact = read(&["search", "discovery", "--limit", "2", "--compact", "--json"]);
+    assert_eq!(full["schema"], "papertiger.search.v1");
+    assert_eq!(compact["schema"], "papertiger.search_compact.v1");
+    assert_eq!(compact["total_matches"], full["total_matches"]);
+    assert_eq!(compact["truncated"], true);
+    for (a, b) in full["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(compact["results"].as_array().unwrap())
+    {
+        for key in ["plan", "score", "matched_fields", "excerpt"] {
+            assert_eq!(a[key], b[key]);
+        }
+        assert_eq!(a["task"]["seq"], b["task"]["seq"]);
+        assert!(b["task"].get("intent").is_none());
+    }
+    let full = read(&["show", "1", "--json"]);
+    let current = read(&["show", "1", "--no-history", "--json"]);
+    assert_eq!(current["task"], full["task"]);
+    assert_eq!(current["schema"], "papertiger.task_current.v1");
+    assert!(current.get("recent_events").is_none());
+    assert_eq!(current["history_command"], "papertiger log --task 1 --json");
+    assert_eq!(
+        read(&["list", "--all-plans", "--status", "unfinished", "--json"])["snapshot"],
+        snapshot
+    );
+    assert_success(&invoke(&["note", "authority changed", "--task", "1"]));
+    let stale = invoke(&next_args);
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("restart list --all-plans"));
+    assert_success(&invoke(&["add", "discarded design", "--plan", "active"]));
+    assert_success(&invoke(&[
+        "reject",
+        "69",
+        "--why",
+        "Rejected because zephyr duplicates the authority",
+    ]));
+    let rejected = read(&[
+        "search",
+        "zephyr",
+        "--status",
+        "rejected",
+        "--compact",
+        "--json",
+    ]);
+    assert_eq!(rejected["results"][0]["task"]["seq"], 69);
+    assert_eq!(rejected["results"][0]["task"]["status"], "rejected");
+    assert!(
+        rejected["results"][0]["matched_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "rationale")
+    );
+    let history = read(&["log", "--task", "69", "--json"]);
+    assert!(history["events"].as_array().unwrap().iter().any(|event| {
+        event["why"]
+            .as_str()
+            .is_some_and(|why| why.contains("zephyr"))
+    }));
+    for args in [
+        vec!["list", "--all-plans", "--limit", "0"],
+        vec!["list", "--all-plans", "--after-seq", "1"],
+        vec!["list", "--all-plans", "--plan", "active"],
+        vec!["list", "--all-plans", "--sort", "activity"],
+        vec!["search", "discovery", "--compact"],
+        vec!["show", "1", "--no-history"],
+    ] {
+        assert!(!invoke(&args).status.success(), "{args:?}");
+    }
+}
+
+#[test]
 fn mutation_receipts_model_attribution_and_task_moves_are_cli_usable() {
     let db = TestDatabase::new("mutation-receipts");
     assert_success(&papertiger(&db.0, &["init"]));

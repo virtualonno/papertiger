@@ -26,8 +26,10 @@ pub use evidence_projection::{
 };
 mod path_identity;
 pub use path_identity::portable_absolute;
+mod inventory;
 mod mutation;
 mod read_model;
+pub use inventory::{plan_inventory, task_inventory};
 pub use mutation::{
     MutationEvent, MutationReceipt, MutationRecorder, validate_model, validate_reasoning_effort,
 };
@@ -2798,6 +2800,29 @@ pub struct TaskContext {
 }
 
 pub fn task_context(conn: &Connection, seq: i64) -> Result<TaskContext> {
+    task_context_with_history(conn, seq, true)
+}
+
+/// Full current context with explicitly omitted history, on its own schema.
+pub fn task_current(conn: &Connection, seq: i64) -> Result<serde_json::Value> {
+    let mut value = serde_json::to_value(task_context_with_history(conn, seq, false)?)?;
+    let object = value.as_object_mut().expect("task context object");
+    object.remove("recent_events");
+    object.remove("recent_events_truncated");
+    object.remove("older_events_cursor");
+    object.insert("schema".into(), "papertiger.task_current.v1".into());
+    object.insert(
+        "history_command".into(),
+        format!("papertiger log --task {seq} --json").into(),
+    );
+    Ok(value)
+}
+
+fn task_context_with_history(
+    conn: &Connection,
+    seq: i64,
+    include_history: bool,
+) -> Result<TaskContext> {
     let task = get_task(conn, seq)?;
     let plan = get_plan(conn, task.plan_id)?;
     let parent = task
@@ -2876,10 +2901,12 @@ pub fn task_context(conn: &Connection, seq: i64) -> Result<TaskContext> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     const RECENT_EVENT_LIMIT: usize = 12;
-    let recent_event_log = event_log(conn, Some(task.seq), RECENT_EVENT_LIMIT, None, None)?;
-    let recent_events_truncated = recent_event_log.truncated;
-    let older_events_cursor = recent_event_log.continuation;
-    let recent_events = recent_event_log.events;
+    let (recent_events, recent_events_truncated, older_events_cursor) = if include_history {
+        let log = event_log(conn, Some(task.seq), RECENT_EVENT_LIMIT, None, None)?;
+        (log.events, log.truncated, log.continuation)
+    } else {
+        (Vec::new(), false, None)
+    };
 
     Ok(TaskContext {
         schema: "papertiger.task_context.v6".into(),

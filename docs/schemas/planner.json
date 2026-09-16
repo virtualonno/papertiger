@@ -26,6 +26,18 @@
     },
     {
       "$ref": "#/$defs/backup"
+    },
+    {
+      "$ref": "#/$defs/task_current"
+    },
+    {
+      "$ref": "#/$defs/plan_list"
+    },
+    {
+      "$ref": "#/$defs/task_inventory"
+    },
+    {
+      "$ref": "#/$defs/search_compact"
     }
   ],
   "$defs": {
@@ -1744,6 +1756,330 @@
           "const": "not_performed"
         }
       }
+    },
+    "task_current": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.task_current.v1"
+        },
+        "plan": {
+          "$ref": "#/$defs/plan"
+        },
+        "task": {
+          "$ref": "#/$defs/task"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/task_summary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "replacement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/task_summary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task_summary"
+          }
+        },
+        "dependents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task_summary"
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task_summary"
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/blocker"
+          }
+        },
+        "gates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gate"
+          }
+        },
+        "commit_associations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/commit"
+          }
+        },
+        "external_references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "activity": {
+          "$ref": "#/$defs/activity"
+        },
+        "mise_projections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mise_projection"
+          }
+        },
+        "immediate_unlock_count": {
+          "type": "integer"
+        },
+        "unfinished_downstream_count": {
+          "type": "integer"
+        },
+        "history_command": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "plan",
+        "task",
+        "tags",
+        "parent",
+        "replacement",
+        "dependencies",
+        "dependents",
+        "children",
+        "blockers",
+        "gates",
+        "commit_associations",
+        "external_references",
+        "activity",
+        "mise_projections",
+        "immediate_unlock_count",
+        "unfinished_downstream_count",
+        "history_command"
+      ],
+      "additionalProperties": false
+    },
+    "plan_list": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.plan_list.v1"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "plans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/plan"
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "total",
+        "plans"
+      ],
+      "additionalProperties": false
+    },
+    "task_inventory": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.task_inventory.v1"
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "snapshot": {
+          "type": "string"
+        },
+        "next_after_seq": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "plan": {
+                "type": "object",
+                "properties": {
+                  "slug": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "active",
+                      "paused",
+                      "done",
+                      "retired"
+                    ]
+                  }
+                },
+                "required": [
+                  "slug",
+                  "status"
+                ],
+                "additionalProperties": false
+              },
+              "task": {
+                "$ref": "#/$defs/task_summary"
+              }
+            },
+            "required": [
+              "plan",
+              "task"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "status",
+        "tag",
+        "total",
+        "remaining",
+        "snapshot",
+        "next_after_seq",
+        "tasks"
+      ],
+      "additionalProperties": false
+    },
+    "search_compact": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.search_compact.v1"
+        },
+        "query": {
+          "type": "string"
+        },
+        "terms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "plan": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total_matches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "plan": {
+                "type": "string"
+              },
+              "task": {
+                "$ref": "#/$defs/task_summary"
+              },
+              "score": {
+                "type": "integer"
+              },
+              "matched_fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "excerpt": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "field",
+                  "text"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "plan",
+              "task",
+              "score",
+              "matched_fields",
+              "excerpt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "query",
+        "terms",
+        "plan",
+        "status",
+        "total_matches",
+        "truncated",
+        "results"
+      ],
+      "additionalProperties": false
     }
   }
 }

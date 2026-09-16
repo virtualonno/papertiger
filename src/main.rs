@@ -117,9 +117,24 @@ enum Cmd {
     Show {
         /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
+        /// Omit historical payloads; use log --task N --json for rationale/history
+        #[arg(long, requires = "json")]
+        no_history: bool,
     },
     /// List tasks (compact)
     List {
+        /// Explicit inventory across every plan state, ordered by sequence
+        #[arg(long, conflicts_with_all = ["plan", "sort"])]
+        all_plans: bool,
+        /// Maximum inventory rows (1..500); requires --all-plans
+        #[arg(long, requires = "all_plans")]
+        limit: Option<usize>,
+        /// Continue after the previous next_after_seq
+        #[arg(long, requires_all = ["all_plans", "snapshot"])]
+        after_seq: Option<i64>,
+        /// Authority snapshot returned by the preceding page; changes require restart
+        #[arg(long, requires = "all_plans")]
+        snapshot: Option<String>,
         /// Plan slug; optional when exactly one plan is active
         #[arg(long)]
         plan: Option<String>,
@@ -146,6 +161,9 @@ enum Cmd {
         /// Maximum ranked results to return
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Structured identity, ranking and excerpt without full task bodies
+        #[arg(long, requires = "json")]
+        compact: bool,
     },
     /// Edit a task
     Edit {
@@ -465,7 +483,11 @@ enum PlanCmd {
         intent: IntentArgs,
     },
     /// List every plan with its current status
-    List,
+    List {
+        /// Retrieve one known plan's orientation
+        #[arg(long)]
+        plan: Option<String>,
+    },
     /// Edit plan orientation without replacing its task/event history
     Edit {
         /// Plan slug to edit
@@ -676,7 +698,9 @@ impl Cmd {
                 | Self::Evidence { .. }
                 | Self::Export { .. }
                 | Self::Backup { .. }
-                | Self::Plan { cmd: PlanCmd::List }
+                | Self::Plan {
+                    cmd: PlanCmd::List { .. }
+                }
                 | Self::Gate {
                     cmd: GateCmd::List { .. }
                 }
@@ -981,11 +1005,11 @@ fn print_task_context(context: &pt::TaskContext) {
 }
 
 fn main() -> Result<()> {
-    run().map_err(pt::normalize_sqlite_lock_error)
+    let cli = Cli::parse();
+    run(cli).map_err(pt::normalize_sqlite_lock_error)
 }
 
-fn run() -> Result<()> {
-    let cli = Cli::parse();
+fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
     if matches!(cli.cmd, Cmd::Schema) {
         println!(
@@ -1036,7 +1060,6 @@ fn run() -> Result<()> {
             cli.cmd,
             Cmd::Init
                 | Cmd::Tree { .. }
-                | Cmd::Plan { cmd: PlanCmd::List }
                 | Cmd::Gate {
                     cmd: GateCmd::List { .. }
                 }
@@ -1378,14 +1401,19 @@ fn run() -> Result<()> {
                 pt::add_plan(&conn, &actor, &slug, &title, &intent)?;
                 mutation_output!("plan {slug} created");
             }
-            PlanCmd::List => {
-                let mut st =
-                    conn.prepare("SELECT slug, title, status FROM plans ORDER BY plan_id")?;
-                let rows: Vec<(String, String, String)> = st
-                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                    .collect::<rusqlite::Result<_>>()?;
-                for (slug, title, status) in rows {
-                    println!("{status:8} {slug}: {title}");
+            PlanCmd::List { plan } => {
+                let plans = pt::plan_inventory(&conn, plan.as_deref())?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "schema": "papertiger.plan_list.v1", "total": plans.len(), "plans": plans
+                        }))?
+                    );
+                } else {
+                    for plan in plans {
+                        println!("{:8} {}: {}", plan.status, plan.slug, plan.title);
+                    }
                 }
             }
             PlanCmd::Edit {
@@ -1460,20 +1488,64 @@ fn run() -> Result<()> {
                 mutation_output!("#{seq} added to {slug}");
             }
         }
-        Cmd::Show { task } => {
-            let context = pt::task_context(&conn, pt::parse_task_ref(&task)?)?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&context)?);
-                return Ok(());
+        Cmd::Show { task, no_history } => {
+            let seq = pt::parse_task_ref(&task)?;
+            if no_history {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&pt::task_current(&conn, seq)?)?
+                );
+            } else {
+                let context = pt::task_context(&conn, seq)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&context)?);
+                } else {
+                    print_task_context(&context);
+                }
             }
-            print_task_context(&context);
         }
         Cmd::List {
+            all_plans,
+            limit,
+            after_seq,
+            snapshot,
             plan,
             status,
             tag,
             sort,
         } => {
+            if all_plans {
+                let response = pt::task_inventory(
+                    &conn,
+                    status.as_deref(),
+                    tag.as_deref(),
+                    limit.unwrap_or(100),
+                    after_seq,
+                    snapshot.as_deref(),
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&response)?);
+                } else {
+                    for item in &response.tasks {
+                        println!(
+                            "{} #{} [{}; {}] {}",
+                            status_glyph(&item.task.status),
+                            item.task.seq,
+                            item.plan.slug,
+                            item.plan.status,
+                            item.task.title
+                        );
+                    }
+                    println!("{} total; {} remaining", response.total, response.remaining);
+                    if let Some(seq) = response.next_after_seq {
+                        println!(
+                            "continue with the same filters: list --all-plans --after-seq {seq} --snapshot {}",
+                            response.snapshot
+                        );
+                    }
+                }
+                return Ok(());
+            }
             if json {
                 let response = pt::task_list_response(
                     &conn,
@@ -1502,10 +1574,15 @@ fn run() -> Result<()> {
             plan,
             status,
             limit,
+            compact,
         } => {
             let response =
                 pt::search_tasks(&conn, &query, plan.as_deref(), status.as_deref(), limit)?;
             if json {
+                if compact {
+                    println!("{}", serde_json::to_string_pretty(&response.compact())?);
+                    return Ok(());
+                }
                 println!("{}", serde_json::to_string_pretty(&response)?);
                 return Ok(());
             }
@@ -2343,7 +2420,9 @@ mod command_access_tests {
                 output: None,
                 replace: false,
             },
-            Cmd::Plan { cmd: PlanCmd::List },
+            Cmd::Plan {
+                cmd: PlanCmd::List { plan: None },
+            },
             Cmd::Gate {
                 cmd: GateCmd::List { task: "1".into() },
             },
