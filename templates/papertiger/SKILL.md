@@ -70,6 +70,10 @@ and `external` for externally supplied meaning. Use `--why` for decisions a
 future reader could question. In scripts, obtain new selectors from the exact
 mutation receipt's `events[].task.seq`; do not parse human output. Command help
 documents UTF-8 `--intent-file`, `--why-file`, and `--result-file` inputs.
+Retain mutation receipts and display only the acknowledgement needed: `changed`,
+ordered event IDs, and optional task/plan identities. A receipt's task is a summary,
+not full context. After a successful write, a local parsing/display failure calls
+for read-only verification, never automatic replay of the mutation.
 
 Record any representing commit's full object ID before task completion with
 `commit add <N> <full-oid> --repo <stable-label>` (`.` for this project's root).

@@ -100,7 +100,11 @@ papertiger status
 papertiger --project-root <canonical-project-root> status
 papertiger focus --json
 papertiger search "<terms>" --json
+papertiger search "<terms>" --compact --json
 papertiger show <task.seq> --json
+papertiger show <task.seq> --no-history --json
+papertiger plan list --json
+papertiger list --all-plans --status unfinished --json
 papertiger audit
 papertiger evidence verify --project-root <project-root> --json
 papertiger evidence verify --outcome failed --task-state open --limit 50 --json
@@ -111,6 +115,15 @@ If more than one plan is active, pass `--plan <slug>` to plan-scoped reads.
 and leaf projections. Every bounded projection reports its scope, ordering,
 eligible, returned, and omitted counts; when it is incomplete, follow its
 `continuation_command` rather than treating the visible entries as exhaustive.
+Use compact search for discovery and full `show` when resuming selected work.
+`show --no-history --json` is a current-state recheck; follow its `history_command`
+when earlier notes or decisions matter. `plan list --json` includes every plan
+state and accepts `--plan <slug>` for one plan's orientation. For complete task
+inventory across active and paused plans, use `list --all-plans --status unfinished
+--json`. Follow `next_after_seq` with `--after-seq` and the returned `--snapshot`,
+keeping filters unchanged. A history change invalidates the snapshot; restart the
+read instead of combining pages from different states.
+
 Planner read commands open the SQLite authority read-only by construction;
 they never initialize, migrate, or repair it.
 `evidence verify` is also read-only. Its summary always counts the complete
