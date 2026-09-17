@@ -37,7 +37,7 @@ From a verified extracted release, run:
 .\papertiger.exe setup-user
 ```
 
-This installs one canonical skill in `~/.agents/skills/papertiger`, a Claude router
+This installs one canonical skill in `~/.agents/skills/papertiger`, an identical generated skill
 in `~/.claude/skills/papertiger`, and a native runtime plus detailed reference under
 `~/.local/share/papertiger` (the same home-relative layout on Windows). The skill
 binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
@@ -45,9 +45,11 @@ or consuming-project files are changed. `--home <existing-directory>` selects
 an explicit user home, including disposable test homes. Start a fresh agent
 session and verify the skill appears. Skill descriptions support automatic
 selection; they do not guarantee a model will choose the tool on every request.
+The installer writes both complete skill files itself and executes the copied
+runtime before reporting success. No agent-side copying or routing setup remains.
 
 Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
-shared Agent Skills location; Claude uses its router. Other harnesses may need
+shared Agent Skills location; Claude reads its generated copy. Other harnesses may need
 an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
@@ -235,7 +237,7 @@ papertiger setup-project /path/to/project \
 ```
 
 Setup installs the native planner binary, the harness-neutral agent contract,
-and only the selected thin skill envelope: `.agents/skills` for the open Agent
+and only the selected short skill envelope: `.agents/skills` for the open Agent
 Skills convention, `.claude/skills` for Claude, both, or neither. The tracked
 receipt binds the release, authority path, resolved skill targets, and hashes
 the managed text: the canonical contract and selected skill envelopes. It
@@ -281,9 +283,9 @@ Setup never invokes Git, and ignore rules do not untrack an existing path. If
 the host binary or selected authority is already tracked, review it and remove
 only its index entry with `git rm --cached -- <path>`, preserving the local
 file.
-This source repository retains one skill template, installed canonically under
-`.agents/skills`. Claude gets a thin router with inherited discovery metadata
-and a link to that file; Claude selection also installs its canonical dependency.
+This source repository retains one skill template. Setup generates the same
+complete short body under `.agents/skills` and, when selected, `.claude/skills`.
+Either discovered path is usable immediately; no second skill read is required.
 Harnesses that do not load either skill location can use the canonical contract through concise
 repository-owned guidance without installing a generic resident skill.
 

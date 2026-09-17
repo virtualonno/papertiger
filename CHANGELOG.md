@@ -13,6 +13,8 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Changed
 
+- Every installed skill location contains the complete short workflow generated from one template. Existing owned Claude routers upgrade in place, removing the extra read needed to reach executable bindings and operational guidance.
+
 - Personal installation is the default documented adoption path. `setup-project` remains available for shared repository adoption and pinned runtimes; project guidance triggers are optional with skill-capable harnesses. Cursor project markers select the shared skill in automatic setup.
 - The planning skill carries the ordinary workflow and loads installation, migration and less common operations from its reference only when needed.
 

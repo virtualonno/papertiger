@@ -249,11 +249,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     for target in &skill_targets {
         managed.push(ManagedFile {
             relative_path: PathBuf::from(target.managed_path()),
-            content: if *target == SkillTarget::Claude {
-                claude_skill_router()
-            } else {
-                canonical_managed_text(AGENT_SKILL).into_owned()
-            },
+            content: canonical_managed_text(AGENT_SKILL).into_owned(),
             executable: false,
             content_kind: ManagedContentKind::ReceiptText,
         });
@@ -658,17 +654,6 @@ fn select_skill_targets(
         targets.insert(0, SkillTarget::Agents);
     }
     targets
-}
-
-fn claude_skill_router() -> Vec<u8> {
-    let canonical = std::str::from_utf8(AGENT_SKILL)
-        .expect("bundled skill is UTF-8")
-        .replace("\r\n", "\n");
-    let (frontmatter, _) = canonical
-        .split_once("\n---\n")
-        .expect("bundled skill has complete frontmatter");
-    format!("{frontmatter}\n---\n\nRead and follow [the canonical skill](../../../.agents/skills/papertiger/SKILL.md).\n")
-        .into_bytes()
 }
 
 fn detect_skill_targets(root: &Path) -> Vec<SkillTarget> {
@@ -1568,7 +1553,7 @@ mod tests {
         );
         assert_eq!(
             fs::read(project.join(".claude/skills/papertiger/SKILL.md")).unwrap(),
-            claude_skill_router()
+            canonical_managed_text(AGENT_SKILL).into_owned()
         );
         let receipt = load_install_receipt(&project.join(INSTALL_RECEIPT_PATH))
             .unwrap()
@@ -1650,7 +1635,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_router_upgrades_an_owned_claude_only_install() {
+    fn complete_claude_skill_upgrades_an_owned_router() {
         let (project, binary) = fixture("canonical-claude-router");
         let mut selected = request(&project, &binary);
         selected.skill_target = Some(SkillTargetRequest::Claude);
@@ -1662,28 +1647,9 @@ mod tests {
         let canonical = project.join(".agents/skills/papertiger/SKILL.md");
         let router = project.join(".claude/skills/papertiger/SKILL.md");
         let expected = fs::read(&router).unwrap();
-        let router_text = String::from_utf8(expected.clone()).unwrap();
-        let canonical_text = fs::read_to_string(&canonical)
-            .unwrap()
-            .replace("\r\n", "\n");
-        assert_eq!(
-            router_text.split_once("\n---\n").unwrap().0,
-            canonical_text.split_once("\n---\n").unwrap().0
-        );
-        let target = router_text
-            .split_once("](")
-            .unwrap()
-            .1
-            .split_once(')')
-            .unwrap()
-            .0;
-        assert_eq!(
-            fs::canonicalize(router.parent().unwrap().join(target)).unwrap(),
-            fs::canonicalize(&canonical).unwrap()
-        );
-        assert!(expected.len() < canonical_text.len());
-
-        fs::write(&router, AGENT_SKILL).unwrap();
+        assert_eq!(expected, fs::read(&canonical).unwrap());
+        let old_skill: &[u8] = b"---\nname: papertiger\ndescription: Legacy router\n---\nRead ../../../.agents/skills/papertiger/SKILL.md\n";
+        fs::write(&router, old_skill).unwrap();
         fs::remove_file(&canonical).unwrap();
         let receipt_path = project.join(INSTALL_RECEIPT_PATH);
         let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
@@ -1696,7 +1662,7 @@ mod tests {
             .iter_mut()
             .find(|file| file.path == SkillTarget::Claude.managed_path())
             .unwrap()
-            .sha256 = receipt::managed_text_sha256(AGENT_SKILL);
+            .sha256 = receipt::managed_text_sha256(old_skill);
         let old_receipt = receipt_bytes(&receipt).unwrap();
         fs::write(&receipt_path, &old_receipt).unwrap();
         let mut upgrade = request(&project, &binary);
@@ -1704,7 +1670,7 @@ mod tests {
         upgrade.dry_run = true;
         let preview = setup_project(upgrade).unwrap();
         assert_eq!(preview.operation, SetupOperation::Upgrade);
-        assert_eq!(fs::read(&router).unwrap(), AGENT_SKILL);
+        assert_eq!(fs::read(&router).unwrap(), old_skill);
         assert!(!canonical.exists());
         assert_eq!(fs::read(&receipt_path).unwrap(), old_receipt);
         let mut upgrade = request(&project, &binary);

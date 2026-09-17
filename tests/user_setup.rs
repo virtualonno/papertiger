@@ -80,6 +80,10 @@ fn personal_install_is_guidance_free_idempotent_and_reversible() {
     assert!(!skill.contains("<!-- installed-command -->"));
     assert!(skill.contains(".local/share/"));
     assert!(!skill.contains("//?/"));
+    assert_eq!(
+        fs::read(f.skill()).unwrap(),
+        fs::read(f.0.join(format!(".claude/skills/{TOOL}/SKILL.md"))).unwrap()
+    );
     let installed = snapshot(&f.0);
     f.install();
     assert_eq!(snapshot(&f.0), installed);
@@ -280,4 +284,27 @@ fn personal_default_uses_project_receipts_before_private_store_from_nested_cwd()
     }
     assert_eq!(status()["active_plans"][0]["plan"]["slug"], "project");
     assert!(!nested.join("state").exists());
+}
+
+#[test]
+fn owned_personal_router_upgrades_to_complete_skill_without_replacement_flag() {
+    use sha2::Digest;
+    let f = Fixture::new();
+    f.install();
+    let relative = format!(".claude/skills/{TOOL}/SKILL.md");
+    let legacy =
+        b"---\nname: legacy-router\ndescription: Former router\n---\nRead the canonical skill.\n";
+    fs::write(f.0.join(&relative), legacy).unwrap();
+    let path = f.0.join(format!(".local/share/{TOOL}/user-install.json"));
+    let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    receipt["files"][&relative] = Value::String(format!("{:x}", sha2::Sha256::digest(legacy)));
+    fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    let before = snapshot(&f.0);
+    assert!(f.run(&["setup-user", "--dry-run"]).status.success());
+    assert_eq!(snapshot(&f.0), before);
+    f.install();
+    assert_eq!(
+        fs::read(f.skill()).unwrap(),
+        fs::read(f.0.join(relative)).unwrap()
+    );
 }
