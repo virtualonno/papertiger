@@ -120,6 +120,6 @@ fi
 printf '%s\n\n' "$body"
 cat <<'EOF'
 Prebuilt archives are attached for Windows x64, Linux x64, Intel macOS, and Apple Silicon macOS.
-Each contains the version-aligned `papertiger` and `papertiger-mise` binaries, setup and operating documentation, licenses, and a release manifest.
+Merge `.agents`, `.claude`, and `tools` into the project root. Skills are ready to discover; executables, documentation, licenses and the source manifest live under `tools/papertiger`.
 Verify the adjacent SHA-256 asset before extraction.
 EOF

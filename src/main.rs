@@ -4,6 +4,7 @@ use papertiger as pt;
 use rusqlite::{Connection, params};
 use std::io::Read;
 
+mod project_bundle;
 mod project_setup;
 mod text_input;
 mod user_setup;

@@ -778,6 +778,10 @@ pub(crate) fn discover_project_authority(start: &Path) -> Result<Option<PathBuf>
         .with_context(|| format!("resolve current directory {}", start.display()))?;
     for root in start.ancestors() {
         let Some(receipt) = load_running_project_receipt(root)? else {
+            if crate::project_bundle::verify(root)? {
+                validate_destination(root, Path::new("state/papertiger.sqlite"))?;
+                return Ok(Some(root.join("state/papertiger.sqlite")));
+            }
             continue;
         };
         return receipt_authority(root, &receipt).map(Some);
@@ -800,6 +804,10 @@ pub(crate) fn project_authority(project_root: &Path) -> Result<PathBuf> {
     }
 
     let receipt_path = root.join(INSTALL_RECEIPT_PATH);
+    if !receipt_path.exists() && crate::project_bundle::verify(&root)? {
+        validate_destination(&root, Path::new("state/papertiger.sqlite"))?;
+        return Ok(root.join("state/papertiger.sqlite"));
+    }
     let receipt = load_running_project_receipt(&root)?.ok_or_else(|| {
         anyhow!(
             "no project-install receipt was found at {}; pass the exact installed project root, restore its receipt if prior planning existed, or inspect a first installation with: papertiger setup-project \"{}\" --dry-run --json",
@@ -814,7 +822,7 @@ pub(crate) fn discover_project_root(start: &Path) -> Result<Option<PathBuf>> {
     let start = fs::canonicalize(start)
         .with_context(|| format!("resolve current directory {}", start.display()))?;
     for root in start.ancestors() {
-        if load_running_project_receipt(root)?.is_some() {
+        if load_running_project_receipt(root)?.is_some() || crate::project_bundle::verify(root)? {
             return Ok(Some(root.to_path_buf()));
         }
     }
@@ -826,6 +834,10 @@ fn load_running_project_receipt(root: &Path) -> Result<Option<InstallReceipt>> {
     let Some(receipt) = load_install_receipt(&receipt_path)? else {
         return Ok(None);
     };
+    // A complete overlay replaces release files, not the project's authority selection.
+    if crate::project_bundle::verify(root)? {
+        return Ok(Some(receipt));
+    }
     let running = env!("CARGO_PKG_VERSION");
     if receipt.papertiger_version != running {
         return Err(anyhow!(

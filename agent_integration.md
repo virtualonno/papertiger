@@ -1,9 +1,32 @@
 # Papertiger project reference
 
-The default personal installation is `papertiger setup-user`; it places the native
+## First use
+
+Release archives already contain `.agents/skills/papertiger`, the complete
+Claude discovery copy, and `tools/papertiger/bin`. Copy these directories into
+the project root; no setup command or AGENTS.md edit is required. Existing
+projects continue with their selected authority and never repeat this section.
+
+For a genuinely new project with no existing planning history, invoke the
+bundled executable from that project, set `PAPERTIGER_ACTOR` and a stable
+`PAPERTIGER_SESSION`, then run `init` without `--json` (initialization reports
+plain text). Create a plan with
+`plan add <slug> "Title" --intent "Purpose"` only if no suitable plan exists.
+The default authority is `state/papertiger.sqlite`; an existing project receipt
+retains its configured authority. `init` creates or migrates through the public
+API. Never initialize a replacement when history is unexpectedly missing.
+Keep the database and its sidecars out of Git using the project's ignore policy.
+
+Archives contain no database, project receipt, root guidance, root README or
+project configuration. Merging their contents preserves those files. Release
+files under the two namespaced skill directories and `tools/papertiger` are
+replaced; preserve deliberate customizations there before replacing them.
+`setup-project` and `setup-user` remain optional managed installation paths.
+
+Optional personal installation with `papertiger setup-user` places the native
 runtime and skills under the user home and initializes a private fallback store.
-It never rewrites consuming projects. Use `setup-project` for explicit shared
-project adoption. Both modes expose the same ordinary workflow through skills.
+It never rewrites consuming projects. Use `setup-project` when a managed
+installation receipt is desired. All paths expose the same workflow through skills.
 
 Papertiger is optional. Use it when work has independently reviewable outcomes,
 separate commits, dependencies, external blockers, decisions, probes, or proof

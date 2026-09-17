@@ -15,16 +15,15 @@ existing team or domain lifecycle.
 
 <!-- installed-command -->
 
-An established project's canonical authority wins, including when working from
-another checkout. Use its native `tools/papertiger/bin/papertiger[.exe]` and, when
-outside that project, `--project-root <canonical-root>`. Resolve the executable
-from the selected root, not a nested cwd. Do not guess from `target/` or create a
-second database in a worktree. Otherwise use the personal executable and store
-specified above. If neither installation exists, report the missing setup-user
-installation; do not rewrite project guidance or initialize replacement history.
-In the personal store, select only records belonging to the consuming project
-or cross-project outcome; a global focus list does not change ownership.
-Below, `papertiger` means this selected executable plus its authority arguments.
+Use `<project-root>/tools/papertiger/bin/papertiger[.exe]` in the native
+shell. Keep work in the canonical project that owns the outcome, including
+cross-repository work; from elsewhere pass `--project-root <canonical-root>`.
+The runtime selects the existing authority; do not guess `--db`, use PATH, or
+create a second store in a worktree. If no project runtime exists, use the
+personal binding above. Personal task intent identifies its consuming project.
+Below, `papertiger` means this selected executable and authority.
+For existing history, skip setup and the reference. Only for a genuinely new
+authority, read [first use](../../../tools/papertiger/agent_integration.md#first-use).
 
 Set `PAPERTIGER_ACTOR` to a concise author label and `PAPERTIGER_SESSION` to one
 unique session ID before mutations; reuse them. Global `--actor` and `--session`
@@ -33,12 +32,13 @@ work when shells do not retain environment. Set `PAPERTIGER_MODEL` and
 
 ## Enter, work, finish
 
-Start with `status`, then `focus --plan <slug> --json` and
-`search "<outcome terms>" --plan <slug> --compact --json`. Read the selected
-`show <N> --json`; use `--no-history` for a current-state recheck. Follow reported
-continuations when evidence is bounded. Keep focus's readiness, pickup and real
-blockers together: another session's pickup is advisory, not a lock or a reason
-to wait for permission to do requested work.
+Use `status` once to orient to an unfamiliar authority. For a known task,
+read `show <N> --json` and resume it directly; use `--no-history` for a current-state
+recheck. Otherwise select work with `focus --plan <slug> --json` and search for
+an existing outcome with `search "<terms>" --plan <slug> --compact --json` before
+adding. Follow bounded results' continuations when relevant. Keep focus's
+readiness, pickup and real blockers together: another session's pickup is
+advisory, not a lock or a reason to seek permission for requested work.
 
 ```text
 papertiger start <N> --why "Why this work resumes" --json

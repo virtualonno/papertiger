@@ -172,7 +172,7 @@ jobs:
           }
           EOF
           chmod +x "${bundle}/papertiger" "${bundle}/papertiger-mise"
-          tar -czf "${archive}" -C dist "${{ steps.names.outputs.bundle }}"
+          python scripts/package_project.py "$bundle" "$archive"
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum "${{ steps.names.outputs.archive }}" > "${{ steps.names.outputs.archive }}.sha256")
           else
@@ -204,7 +204,7 @@ jobs:
             "planner_setup_installs_mise": false
           }
           EOF
-          (cd dist && 7z a -tzip "${{ steps.names.outputs.archive }}" "${{ steps.names.outputs.bundle }}" >/dev/null)
+          python scripts/package_project.py "$bundle" "$archive"
           (cd dist && sha256sum "${{ steps.names.outputs.archive }}" > "${{ steps.names.outputs.archive }}.sha256")
 
       - name: Verify packaged release (Unix)
@@ -218,21 +218,21 @@ jobs:
           verify="dist/verify-${{ matrix.platform }}"
           mkdir -p "$verify"
           tar -xzf "$archive" -C "$verify"
-          bundle="$verify/${{ steps.names.outputs.bundle }}"
-          python scripts/verify_user_install.py "$bundle/papertiger${{ matrix.executable_suffix }}"
-          test "$("$bundle/papertiger" --version)" = "papertiger ${VERSION}"
-          test "$("$bundle/papertiger-mise" --version)" = "papertiger-mise ${VERSION}"
-          grep -q 'setup-project' < <("$bundle/papertiger" --help)
-          grep -q 'uninstall-project' < <("$bundle/papertiger" --help)
-          grep -q -- '--project-root' < <("$bundle/papertiger-mise" --help)
-          grep -Fq '"schema": "papertiger.release-manifest.v1"' "$bundle/manifest.json"
+          bundle="$verify/tools/papertiger"
+          python scripts/verify_project_bundle.py "$verify"
+          python scripts/verify_user_install.py "$bundle/bin/papertiger${{ matrix.executable_suffix }}"
+          test "$("$bundle/bin/papertiger" --version)" = "papertiger ${VERSION}"
+          test "$("$bundle/bin/papertiger-mise" --version)" = "papertiger-mise ${VERSION}"
+          grep -q 'setup-project' < <("$bundle/bin/papertiger" --help)
+          grep -q 'uninstall-project' < <("$bundle/bin/papertiger" --help)
+          grep -q -- '--project-root' < <("$bundle/bin/papertiger-mise" --help)
+          grep -Fq '"schema": "papertiger.release-manifest.v2"' "$bundle/manifest.json"
           grep -Fq '"name": "papertiger"' "$bundle/manifest.json"
           grep -Fq "\"version\": \"${VERSION}\"" "$bundle/manifest.json"
           grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "$bundle/manifest.json"
           grep -Fq '"target": "${{ matrix.target }}"' "$bundle/manifest.json"
           grep -Fq '"platform": "${{ matrix.platform }}"' "$bundle/manifest.json"
           grep -Fq '"archive": "${{ steps.names.outputs.archive }}"' "$bundle/manifest.json"
-          grep -Fq '"binaries": ["papertiger", "papertiger-mise"]' "$bundle/manifest.json"
           grep -Fq '"planner_setup_installs_mise": false' "$bundle/manifest.json"
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum -c "${{ steps.names.outputs.archive }}.sha256")
@@ -244,7 +244,7 @@ jobs:
           mkdir -p "$project/nested/work"
           printf 'repository contract\n' > "$project/AGENTS.md"
           printf 'target/\n' > "$project/.gitignore"
-          "$bundle/papertiger" setup-project "$project" --json > "$verify/setup.json"
+          "$bundle/bin/papertiger" setup-project "$project" --json > "$verify/setup.json"
           grep -Fq '"schema": "papertiger.project_setup.v5"' "$verify/setup.json"
           test -f "$project/tools/papertiger/bin/papertiger"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise"
@@ -272,19 +272,19 @@ jobs:
           (cd "$project/nested/work" && "$installed_planner" audit)
           test -f "$project/state/papertiger.sqlite"
           test ! -e "$project/nested/work/state"
-          "$bundle/papertiger-mise" --project-root "$project" status --json > "$verify/mise-before.json"
+          "$bundle/bin/papertiger-mise" --project-root "$project" status --json > "$verify/mise-before.json"
           grep -q '"initialized": false' "$verify/mise-before.json"
-          "$bundle/papertiger-mise" --project-root "$project" init
-          "$bundle/papertiger-mise" --project-root "$project" status --json > "$verify/mise-after.json"
+          "$bundle/bin/papertiger-mise" --project-root "$project" init
+          "$bundle/bin/papertiger-mise" --project-root "$project" status --json > "$verify/mise-after.json"
           grep -q '"initialized": true' "$verify/mise-after.json"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise"
           ignore_fingerprint="$(cksum "$project/.gitignore")"
           planner_db_fingerprint="$(cksum "$project/state/papertiger.sqlite")"
           mise_db_fingerprint="$(cksum "$project/state/papertiger-mise.sqlite")"
-          "$bundle/papertiger" uninstall-project "$project" --dry-run --json > "$verify/uninstall-dry-run.json"
+          "$bundle/bin/papertiger" uninstall-project "$project" --dry-run --json > "$verify/uninstall-dry-run.json"
           grep -Fq '"schema": "papertiger.project_uninstall.v2"' "$verify/uninstall-dry-run.json"
           test -f "$project/tools/papertiger/project-install.json"
-          "$bundle/papertiger" uninstall-project "$project" --json > "$verify/uninstall.json"
+          "$bundle/bin/papertiger" uninstall-project "$project" --json > "$verify/uninstall.json"
           test ! -e "$project/tools/papertiger/project-install.json"
           test ! -e "$installed_planner"
           test ! -e "$project/tools/papertiger/agent_integration.md"
@@ -305,23 +305,23 @@ jobs:
           verify="dist/verify-${{ matrix.platform }}"
           mkdir -p "$verify"
           7z x -y "${archive}" "-o${verify}" >/dev/null
-          bundle="$verify/${{ steps.names.outputs.bundle }}"
-          python scripts/verify_user_install.py "$bundle/papertiger${{ matrix.executable_suffix }}"
-          planner="$bundle/papertiger.exe"
-          mise="$bundle/papertiger-mise.exe"
+          bundle="$verify/tools/papertiger"
+          python scripts/verify_project_bundle.py "$verify"
+          python scripts/verify_user_install.py "$bundle/bin/papertiger${{ matrix.executable_suffix }}"
+          planner="$bundle/bin/papertiger.exe"
+          mise="$bundle/bin/papertiger-mise.exe"
           test "$("$planner" --version)" = "papertiger ${VERSION}"
           test "$("$mise" --version)" = "papertiger-mise ${VERSION}"
           grep -q 'setup-project' < <("$planner" --help)
           grep -q 'uninstall-project' < <("$planner" --help)
           grep -q -- '--project-root' < <("$mise" --help)
-          grep -Fq '"schema": "papertiger.release-manifest.v1"' "$bundle/manifest.json"
+          grep -Fq '"schema": "papertiger.release-manifest.v2"' "$bundle/manifest.json"
           grep -Fq '"name": "papertiger"' "$bundle/manifest.json"
           grep -Fq "\"version\": \"${VERSION}\"" "$bundle/manifest.json"
           grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "$bundle/manifest.json"
           grep -Fq '"target": "${{ matrix.target }}"' "$bundle/manifest.json"
           grep -Fq '"platform": "${{ matrix.platform }}"' "$bundle/manifest.json"
           grep -Fq '"archive": "${{ steps.names.outputs.archive }}"' "$bundle/manifest.json"
-          grep -Fq '"binaries": ["papertiger.exe", "papertiger-mise.exe"]' "$bundle/manifest.json"
           grep -Fq '"planner_setup_installs_mise": false' "$bundle/manifest.json"
           (cd dist && sha256sum -c "${{ steps.names.outputs.archive }}.sha256")
 
@@ -425,7 +425,7 @@ jobs:
         run: |
           set -euo pipefail
           verify="dist/verify-${{ matrix.platform }}"
-          planner="$verify/${{ steps.names.outputs.bundle }}/papertiger${{ matrix.executable_suffix }}"
+          planner="$verify/tools/papertiger/bin/papertiger${{ matrix.executable_suffix }}"
           authority="$verify/consumer/state/papertiger.sqlite"
           recovery="$verify/planner-recovery.sqlite"
           authority_before="$(cksum "$authority")"

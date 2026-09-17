@@ -8,6 +8,8 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [0.16.0] - 2026-09-17
 
+The release archives were replaced with ready-to-use project overlays. Download them again and verify the new checksums. Merge `.agents`, `.claude`, and `tools` into the project root; executables and documentation have moved under `tools/papertiger`. No setup command or project guidance rewrite is needed. Existing configuration and planning data are not shipped or overwritten.
+
 ### Added
 
 - `setup-user` installs a personal skill, native runtime and private fallback planner without changing consuming projects, `AGENTS.md`, shell profiles or harness settings. The installed runtime discovers existing project authorities before using its private fallback, without a `--db` argument. Start a fresh agent session after installation; skill discovery does not guarantee model selection.
@@ -16,7 +18,7 @@ All notable user-visible changes are documented here. Papertiger follows
 ### Changed
 
 - Every installed skill location contains the complete short workflow generated from one template. Existing owned Claude routers upgrade in place, removing the extra read needed to reach executable bindings and operational guidance.
-- Personal installation is the default documented adoption path. `setup-project` remains available for shared repository adoption and pinned runtimes; project guidance triggers are optional with skill-capable harnesses. Cursor project markers select the shared skill in automatic setup.
+- Direct project overlays are the default adoption path; personal installation remains optional. `setup-project` remains available for shared repository adoption and pinned runtimes; project guidance triggers are optional with skill-capable harnesses. Cursor project markers select the shared skill in automatic setup.
 - The planning skill carries the ordinary workflow and loads installation, migration and less common operations from its reference only when needed.
 
 ## [0.15.0] - 2026-09-17

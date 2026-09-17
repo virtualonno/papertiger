@@ -7,10 +7,9 @@ state instead of reconstructing it from handoff notes.
 
 Papertiger has no server or account. It ships as two Rust binaries:
 
-- `papertiger` is the planning tool. It is the only binary installed into a
-  consuming project.
+- `papertiger` is the planning tool. It is the ordinary planning entrypoint.
 - `papertiger-mise` runs optional, experimental candidate-evaluation
-  campaigns. It stays outside the consuming project and has no authority to
+  campaigns. It is bundled alongside the planner but has no authority to
   close planning tasks, integrate changes, or deploy software.
 
 The vendored planning skill supplies the ordinary task workflow without
@@ -21,20 +20,45 @@ guide`; `campaign inspect <id>` discovers retained work in bounded pages.
 The guide is not a ready-made domain evaluator, and inspection does not reverify
 CAS evidence or establish that a campaign can still execute.
 
-## Personal installation (default)
+## Add to a project (default)
+
+Download the archive for the machine where the agent runs, verify its checksum,
+and merge its contents into the project root, including the dot-directories:
+
+```text
+.agents/skills/papertiger/SKILL.md
+.claude/skills/papertiger/SKILL.md
+tools/papertiger/bin/papertiger[.exe]
+tools/papertiger/README.md
+```
+
+The skills and native executable are already in place. Start a fresh agent
+session; no install command, PATH change, AGENTS.md edit, or integration-guide
+reading is needed for ordinary work. Claude receives the same complete short
+skill body generated from the canonical template. Codex, Pi, Cursor, OMP and
+OpenCode can use the shared Agent Skills directory; model selection still
+remains discretionary.
+
+Only namespaced skills and `tools/papertiger` are shipped. Existing project guidance,
+configuration, receipts and databases are not included or overwritten. Preserve
+any customizations inside those tool-owned directories before replacing them.
+README, licenses, optional operating references and the source manifest live
+under `tools/papertiger`. Papertiger initializes a new database only on first use through its native init command; established projects reuse existing history.
+
+## Optional personal installation
 
 From a verified extracted release, run:
 
 ```sh
 # macOS/Linux, inside the extracted release
-./papertiger setup-user --dry-run
-./papertiger setup-user
+./tools/papertiger/bin/papertiger setup-user --dry-run
+./tools/papertiger/bin/papertiger setup-user
 ```
 
 ```powershell
 # Windows PowerShell, inside the extracted release
-.\papertiger.exe setup-user --dry-run
-.\papertiger.exe setup-user
+.\tools\papertiger\bin\papertiger.exe setup-user --dry-run
+.\tools\papertiger\bin\papertiger.exe setup-user
 ```
 
 This installs one canonical skill in `~/.agents/skills/papertiger`, an identical generated skill
