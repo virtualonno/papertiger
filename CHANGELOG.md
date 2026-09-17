@@ -6,6 +6,16 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Added
+
+- `setup-user` installs a personal skill, native runtime and private fallback planner without changing consuming projects, `AGENTS.md`, shell profiles or harness settings. Existing project authorities take precedence. Start a fresh agent session after installation; skill discovery does not guarantee model selection.
+- `uninstall-user` removes matching receipt-owned runtime and skills while retaining planner history. Setup and removal support `--dry-run`; unowned or modified files require review and explicit replacement. Missing expected history refuses setup. Upgrade or repair from an external release binary.
+
+### Changed
+
+- Personal installation is the default documented adoption path. `setup-project` remains available for shared repository adoption and pinned runtimes; project guidance triggers are optional with skill-capable harnesses. Cursor project markers select the shared skill in automatic setup.
+- The planning skill carries the ordinary workflow and loads installation, migration and less common operations from its reference only when needed.
+
 ## [0.15.0] - 2026-09-17
 
 ### Added

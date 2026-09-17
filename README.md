@@ -21,6 +21,55 @@ guide`; `campaign inspect <id>` discovers retained work in bounded pages.
 The guide is not a ready-made domain evaluator, and inspection does not reverify
 CAS evidence or establish that a campaign can still execute.
 
+## Personal installation (default)
+
+From a verified extracted release, run:
+
+```text
+papertiger setup-user --dry-run
+papertiger setup-user
+```
+
+This installs one canonical skill in `~/.agents/skills/papertiger`, a Claude router
+in `~/.claude/skills/papertiger`, and a native runtime plus detailed reference under
+`~/.local/share/papertiger` (the same home-relative layout on Windows). The skill
+binds the exact executable; no PATH, shell profile, AGENTS.md, CLAUDE.md, hooks,
+or consuming-project files are changed. `--home <existing-directory>` selects
+an explicit user home, including disposable test homes. Start a fresh agent
+session and verify the skill appears. Skill descriptions support automatic
+selection; they do not guarantee a model will choose the tool on every request.
+
+Both skill paths share one semantic body. Codex, Pi and Cursor can discover the
+shared Agent Skills location; Claude uses its router. Other harnesses may need
+an explicit skill-directory setting. A synced skill does not install a native
+runtime in a remote/cloud environment: install there separately.
+
+A host-local `user-install.json` binds installed files to raw byte hashes and
+the tool version. Owned upgrades need no replacement flag. Conflicting unowned or modified
+files refuse; review them before using `--replace-managed`. The installed
+runtime refuses a missing or divergent receipt/file set. Run repair or upgrade
+from an external release, not the installed executable. Installation preflights
+all managed paths, but does not promise a crash-atomic multi-file transaction;
+an interrupted install must be repaired before the runtime can run.
+
+`uninstall-user --dry-run` previews removal. `uninstall-user` removes only
+receipt-owned matching runtime/skill files and retains the lifecycle receipt;
+it never removes project installations or unrelated skills. Do not copy personal
+receipts between machines or move their home: install for the new home instead.
+
+Personal setup initializes a private fallback database and `personal` plan
+through the planner commands. Existing stores are checked, never silently
+migrated or replaced. Uninstall preserves that database and its sidecars. Missing
+expected history refuses setup until restored. Ordinary work selects an existing
+project/domain authority first; otherwise the installed skill binds the private
+store explicitly and records the consuming-project root in each task intent.
+No database or planning configuration is created in consuming projects.
+
+Use `setup-project` below only for explicit shared repository adoption, pinned
+project runtimes, or repository-owned policy. Existing project receipt choices
+remain intact. Project guidance triggers are optional for skills-capable agents.
+
+
 ## What the planner enforces
 
 - `focus --json` provides concise task summaries with pickup identity, readiness,
@@ -137,7 +186,7 @@ papertiger setup-project /path/to/project --dry-run --json
 ```
 
 On a first install, the default `auto` selection follows existing harness
-markers. `.agents`, `.codex`, `.pi`, `.omp`, `.opencode`, `AGENTS.md`, or an
+markers. `.agents`, `.codex`, `.cursor`, `.pi`, `.omp`, `.opencode`, `AGENTS.md`, or an
 OpenCode `opencode.json` / `opencode.jsonc` file selects the shared `agents`
 residence; `.claude` or `CLAUDE.md` selects `claude`; both marker families
 select `both`; and an unmarked repository selects `none`. These are bootstrap

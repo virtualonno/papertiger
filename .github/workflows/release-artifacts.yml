@@ -219,6 +219,7 @@ jobs:
           mkdir -p "$verify"
           tar -xzf "$archive" -C "$verify"
           bundle="$verify/${{ steps.names.outputs.bundle }}"
+          python scripts/verify_user_install.py "$bundle/papertiger${{ matrix.executable_suffix }}"
           test "$("$bundle/papertiger" --version)" = "papertiger ${VERSION}"
           test "$("$bundle/papertiger-mise" --version)" = "papertiger-mise ${VERSION}"
           grep -q 'setup-project' < <("$bundle/papertiger" --help)
@@ -305,6 +306,7 @@ jobs:
           mkdir -p "$verify"
           7z x -y "${archive}" "-o${verify}" >/dev/null
           bundle="$verify/${{ steps.names.outputs.bundle }}"
+          python scripts/verify_user_install.py "$bundle/papertiger${{ matrix.executable_suffix }}"
           planner="$bundle/papertiger.exe"
           mise="$bundle/papertiger-mise.exe"
           test "$("$planner" --version)" = "papertiger ${VERSION}"

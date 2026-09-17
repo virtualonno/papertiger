@@ -1,5 +1,10 @@
 # Papertiger project reference
 
+The default personal installation is `papertiger setup-user`; it places the native
+runtime and skills under the user home and initializes a private fallback store.
+It never rewrites consuming projects. Use `setup-project` for explicit shared
+project adoption. Both modes expose the same ordinary workflow through skills.
+
 Papertiger is optional. Use it when work has independently reviewable outcomes,
 separate commits, dependencies, external blockers, decisions, probes, or proof
 obligations that merit durable identity and cold-resume context. This can apply
@@ -43,8 +48,10 @@ When an intentional command runs from another repository, pass the global
 `--project-root <canonical-project-root>` option. It requires a receipt at that
 exact root and selects the receipt-bound authority without changing the
 process working directory. `PAPERTIGER_DB` or an explicit global `--db`
-deliberately overrides receipt discovery for operational use; do not use a raw
-database override for ordinary project selection or split ordinary planning
+deliberately overrides receipt discovery. The installed personal skill binds its
+private store with an explicit `--db`; it never relies on cwd to pick that store.
+Outside this personal binding, do not use a raw database override for ordinary
+project selection or split ordinary planning
 across multiple authorities. Ordinary commands refuse combining the receipt
 selector with a database override. `evidence verify` retains that combination
 only so an explicitly selected database can resolve `file:` locators beneath a
@@ -394,11 +401,11 @@ Repository boundaries do not change that rule. Keep those separate outcomes
 in the initiative's canonical authority unless another project truly owns an
 independent lifecycle. Do not mirror one task into every repository it touches.
 
-## Repository guidance discovery trigger
+## Optional repository guidance discovery trigger
 
-After reviewing this contract, keep one concise trigger in the repository-owned
-agent guidance; a bare link or generic "planning" label is too easy for some
-harnesses to ignore. Use this wording or an equivalent with the same boundaries:
+Skills-capable harnesses discover the installed skill without a project guidance
+edit. For a harness without skill discovery, or explicit project policy, an owner
+may add the following optional trigger:
 
 > Before the first edit or commit on multi-outcome or separate-commit work, or
 > work matching an existing durable task, read
@@ -434,8 +441,8 @@ as the local tasklog. Keep `papertiger` in executable corrective commands,
 evidence paths, and authority facts where replacing it would reduce precision.
 
 `setup-project` never edits `AGENTS.md`, `CLAUDE.md`, or another repository-owned
-context file. The project owner must review and place this trigger; the managed
-skill remains the canonical command and authority contract.
+context file. The managed skill supplies the ordinary workflow; owners may opt
+into this additional trigger, but installation and ordinary use do not require it.
 
 ## Project-local installation
 
@@ -479,7 +486,7 @@ newer receipt even with `--replace-managed`; use the recorded release or a
 newer verified binary.
 
 On a first install, the default `auto` selection follows existing harness
-markers. `.agents`, `.codex`, `.pi`, `.omp`, `.opencode`, `AGENTS.md`, or an
+markers. `.agents`, `.codex`, `.cursor`, `.pi`, `.omp`, `.opencode`, `AGENTS.md`, or an
 OpenCode `opencode.json` / `opencode.jsonc` file selects the shared `agents`
 residence; `.claude` or `CLAUDE.md` selects `claude`; both marker families
 select `both`; and an unmarked repository selects `none`. These markers only

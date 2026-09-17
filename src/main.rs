@@ -6,6 +6,7 @@ use std::io::Read;
 
 mod project_setup;
 mod text_input;
+mod user_setup;
 
 use text_input::{IntentArgs, NoteTextArgs, ResultArgs, WhyArgs, reject_multiple_stdin};
 
@@ -43,6 +44,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    #[command(flatten)]
+    Personal(user_setup::Command),
     /// Print the bundled JSON Schema for local planner reads, recovery, and mutation receipts; never opens authority
     Schema,
     /// Install a project-local native binary, receipt, ignore policy, and agent contract; does not accept --db or --actor
@@ -1025,11 +1028,69 @@ fn print_task_context(context: &pt::TaskContext) {
 }
 
 fn main() -> Result<()> {
+    user_setup::verify_runtime()?;
     let cli = Cli::parse();
     run(cli).map_err(pt::normalize_sqlite_lock_error)
 }
 
 fn run(cli: Cli) -> Result<()> {
+    match &cli.cmd {
+        Cmd::Personal(user_setup::Command::Setup {
+            home,
+            dry_run,
+            replace_managed,
+        }) => {
+            if cli.db.is_some()
+                || cli.authority_project_root.is_some()
+                || cli.actor.is_some()
+                || cli.model.is_some()
+                || cli.reasoning_effort.is_some()
+                || cli.session.is_some()
+            {
+                bail!(
+                    "setup-user selects its own installation and personal authority; omit planning selectors and use --home <directory>"
+                );
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&user_setup::run(
+                    home.as_deref(),
+                    *dry_run,
+                    *replace_managed,
+                    false
+                )?)?
+            );
+            return Ok(());
+        }
+        Cmd::Personal(user_setup::Command::Uninstall { home, dry_run }) => {
+            if cli.db.is_some()
+                || cli.authority_project_root.is_some()
+                || cli.actor.is_some()
+                || cli.model.is_some()
+                || cli.reasoning_effort.is_some()
+                || cli.session.is_some()
+            {
+                bail!(
+                    "uninstall-user preserves planning data; omit planning selectors and use --home <directory>"
+                );
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&user_setup::run(
+                    home.as_deref(),
+                    *dry_run,
+                    false,
+                    true
+                )?)?
+            );
+            return Ok(());
+        }
+        _ => {}
+    }
+    run_planner(cli)
+}
+
+fn run_planner(cli: Cli) -> Result<()> {
     let json = cli.json;
     let session = cli
         .session
@@ -1340,7 +1401,9 @@ fn run(cli: Cli) -> Result<()> {
         None
     };
     match cli.cmd {
-        Cmd::SetupProject { .. } => unreachable!(),
+        Cmd::SetupProject { .. } | Cmd::Personal(_) => {
+            unreachable!()
+        }
         Cmd::InspectProjectGuidance { .. } => unreachable!(),
         Cmd::UninstallProject { .. } => unreachable!(),
         Cmd::Init => unreachable!(),

@@ -41,7 +41,8 @@ const DEFAULT_AUTHORITY_PATH: &str = "state/papertiger.sqlite";
 // bootstrap catalog only selects that shared residence for common compatible
 // harnesses before `.agents` exists; it never creates harness-native copies.
 const SHARED_AGENT_SKILLS_DIRECTORIES: &[&str] = &[".agents"];
-const COMMON_AGENT_SKILLS_BOOTSTRAP_DIRECTORIES: &[&str] = &[".codex", ".pi", ".omp", ".opencode"];
+const COMMON_AGENT_SKILLS_BOOTSTRAP_DIRECTORIES: &[&str] =
+    &[".codex", ".cursor", ".pi", ".omp", ".opencode"];
 const COMMON_AGENT_SKILLS_BOOTSTRAP_FILES: &[&str] =
     &["AGENTS.md", "opencode.json", "opencode.jsonc"];
 const CLAUDE_HARNESS_DIRECTORIES: &[&str] = &[".claude"];
@@ -571,12 +572,12 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         )];
         if skill_targets.is_empty() {
             applied.push(
-                "No skill envelope was selected. If an agent should discover Papertiger, add a concise repository-owned trigger that points to tools/papertiger/agent_integration.md; setup-project never edits AGENTS.md or CLAUDE.md."
+                "No skill envelope was selected. Use setup-user for personal discovery or rerun setup-project with --skill-target agents for a project skill. Neither requires edits to AGENTS.md or CLAUDE.md."
                     .to_owned(),
             );
         } else {
             applied.push(format!(
-                "Review the installed Papertiger skill envelope for {} and add the concise repository guidance discovery trigger from tools/papertiger/agent_integration.md; a bare planning link is not equivalent, and setup-project never edits AGENTS.md or CLAUDE.md.",
+                "Start a fresh agent session and verify the installed Papertiger skill for {} is listed. No project guidance trigger is required for skills-capable harnesses; setup-project never edits AGENTS.md or CLAUDE.md.",
                 skill_target_label(&skill_targets)
             ));
         }
@@ -1280,6 +1281,7 @@ mod tests {
             ("agents-guidance", &["AGENTS.md"], vec![SkillTarget::Agents]),
             ("agent-skills", &[".agents/"], vec![SkillTarget::Agents]),
             ("codex", &[".codex/"], vec![SkillTarget::Agents]),
+            ("cursor", &[".cursor/"], vec![SkillTarget::Agents]),
             ("pi", &[".pi/"], vec![SkillTarget::Agents]),
             ("omp", &[".omp/"], vec![SkillTarget::Agents]),
             (
@@ -1562,7 +1564,7 @@ mod tests {
         );
         assert_eq!(
             fs::read(project.join(".agents/skills/papertiger/SKILL.md")).unwrap(),
-            AGENT_SKILL
+            canonical_managed_text(AGENT_SKILL).as_ref()
         );
         assert_eq!(
             fs::read(project.join(".claude/skills/papertiger/SKILL.md")).unwrap(),
@@ -1642,7 +1644,7 @@ mod tests {
         setup_project(replace).unwrap();
         assert_eq!(
             fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap(),
-            AGENT_INTEGRATION
+            canonical_managed_text(AGENT_INTEGRATION).as_ref()
         );
         cleanup(&project);
     }
@@ -1709,7 +1711,10 @@ mod tests {
         upgrade.skill_target = None;
         setup_project(upgrade).unwrap();
         assert_eq!(fs::read(router).unwrap(), expected);
-        assert_eq!(fs::read(canonical).unwrap(), AGENT_SKILL);
+        assert_eq!(
+            fs::read(canonical).unwrap(),
+            canonical_managed_text(AGENT_SKILL).as_ref()
+        );
         cleanup(&project);
     }
 
@@ -1759,7 +1764,7 @@ mod tests {
         }));
         assert_eq!(
             fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap(),
-            AGENT_INTEGRATION
+            canonical_managed_text(AGENT_INTEGRATION).as_ref()
         );
         assert_eq!(
             load_install_receipt(&receipt_path)
@@ -1929,7 +1934,7 @@ mod tests {
         assert!(!project.join(PRE_RECEIPT_MISE_PATH).exists());
         assert_eq!(
             fs::read(project.join("tools/papertiger/agent_integration.md")).unwrap(),
-            AGENT_INTEGRATION
+            canonical_managed_text(AGENT_INTEGRATION).as_ref()
         );
         assert!(project.join(INSTALL_RECEIPT_PATH).is_file());
         cleanup(&project);
@@ -2504,7 +2509,8 @@ mod tests {
             );
             assert!(
                 text.contains("intermediate steps inside one independently")
-                    || text.contains("intermediate steps within one independently"),
+                    || text.contains("intermediate steps within one independently")
+                    || text.contains("investigation and verification are steps inside"),
                 "{name} must name the skipped unit of work"
             );
         }
@@ -2523,7 +2529,9 @@ mod tests {
         ] {
             let text = std::str::from_utf8(bytes).expect("managed text is UTF-8");
             assert!(
-                text.contains("--intent-source user") && text.contains("before task completion"),
+                text.contains("--intent-source user")
+                    && (text.contains("before task completion")
+                        || text.contains("Before completion, associate")),
                 "{name} must preserve known user provenance and inward commit association ordering"
             );
         }
