@@ -6,6 +6,8 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-17
+
 ### Added
 
 - `setup-user` installs a personal skill, native runtime and private fallback planner without changing consuming projects, `AGENTS.md`, shell profiles or harness settings. The installed runtime discovers existing project authorities before using its private fallback, without a `--db` argument. Start a fresh agent session after installation; skill discovery does not guarantee model selection.
@@ -14,7 +16,6 @@ All notable user-visible changes are documented here. Papertiger follows
 ### Changed
 
 - Every installed skill location contains the complete short workflow generated from one template. Existing owned Claude routers upgrade in place, removing the extra read needed to reach executable bindings and operational guidance.
-
 - Personal installation is the default documented adoption path. `setup-project` remains available for shared repository adoption and pinned runtimes; project guidance triggers are optional with skill-capable harnesses. Cursor project markers select the shared skill in automatic setup.
 - The planning skill carries the ordinary workflow and loads installation, migration and less common operations from its reference only when needed.
 
@@ -453,7 +454,8 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/virtualonno/papertiger/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/virtualonno/papertiger/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/virtualonno/papertiger/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/virtualonno/papertiger/compare/v0.12.1...v0.13.0
