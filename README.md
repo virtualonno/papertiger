@@ -25,9 +25,16 @@ CAS evidence or establish that a campaign can still execute.
 
 From a verified extracted release, run:
 
-```text
-papertiger setup-user --dry-run
-papertiger setup-user
+```sh
+# macOS/Linux, inside the extracted release
+./papertiger setup-user --dry-run
+./papertiger setup-user
+```
+
+```powershell
+# Windows PowerShell, inside the extracted release
+.\papertiger.exe setup-user --dry-run
+.\papertiger.exe setup-user
 ```
 
 This installs one canonical skill in `~/.agents/skills/papertiger`, a Claude router
