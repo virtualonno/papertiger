@@ -309,7 +309,7 @@ pub(crate) fn run(
 
 fn installed_binding(home: &Path) -> String {
     format!(
-        "Personal executable: `{}`. Its default authority is the consuming project's receipt-bound store when present, otherwise its installed private store with plan `personal`; no --db argument is needed. Include the absolute consuming-project root in personal task intent and search that root before creating work. This store was initialized by setup-user; never initialize it to replace missing history. An explicitly selected canonical project authority or shared tracker still takes precedence.\n",
+        "Personal executable: `{}`. Its default authority is the consuming project's receipt-bound store when present, otherwise its installed private store with plan `personal`; no --db argument is needed. Use --project-root only to select an existing project installation, not to label a personal task. Include the absolute consuming-project root in personal task intent and search that root before creating work. This store was initialized by setup-user; never initialize it to replace missing history. An explicitly selected canonical project authority or shared tracker still takes precedence.\n",
         home.join(binary_path())
             .to_string_lossy()
             .replace('\\', "/")
