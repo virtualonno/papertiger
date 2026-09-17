@@ -371,8 +371,8 @@ jobs:
           VERSION: ${{ inputs.artifact_version }}
         run: |
           $project = (Resolve-Path (Join-Path "dist/verify-${{ matrix.platform }}" "consumer")).Path
-          $bundle = (Resolve-Path (Join-Path "dist/verify-${{ matrix.platform }}" "${{ steps.names.outputs.bundle }}")).Path
-          $planner = Join-Path $bundle "papertiger.exe"
+          $bundle = (Resolve-Path (Join-Path "dist/verify-${{ matrix.platform }}" "tools/papertiger")).Path
+          $planner = Join-Path $bundle "bin/papertiger.exe"
           $installedPlanner = Join-Path $project "tools/papertiger/bin/papertiger.exe"
           Push-Location (Join-Path $project "nested/work")
           try {
