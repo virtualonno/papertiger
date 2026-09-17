@@ -308,11 +308,8 @@ pub(crate) fn run(
 
 fn installed_binding(home: &Path) -> String {
     format!(
-        "Personal executable: `{}`. When no established project authority or shared tracker owns the work, use this executable with `--db \"{}\"` and plan `personal`. Include the absolute consuming-project root in task intent and search that root before creating work. This store was initialized by setup-user; never initialize it to replace missing history. Existing project authority takes precedence.\n",
+        "Personal executable: `{}`. Its default authority is the consuming project's receipt-bound store when present, otherwise its installed private store with plan `personal`; no --db argument is needed. Include the absolute consuming-project root in personal task intent and search that root before creating work. This store was initialized by setup-user; never initialize it to replace missing history. An explicitly selected canonical project authority or shared tracker still takes precedence.\n",
         home.join(binary_path())
-            .to_string_lossy()
-            .replace('\\', "/"),
-        home.join(format!("{}/state/papertiger.sqlite", personal_root()))
             .to_string_lossy()
             .replace('\\', "/")
     )
@@ -406,11 +403,11 @@ fn provision_authority(home: &Path) -> Result<()> {
     Ok(())
 }
 
-/// A personal runtime refuses a torn or divergent installation before doing work.
-pub(crate) fn verify_runtime() -> Result<()> {
+/// Resolve the location that distinguishes a managed personal executable.
+fn personal_home() -> Result<Option<PathBuf>> {
     let exe = std::env::current_exe()?;
     let Some(root) = exe.parent().and_then(Path::parent) else {
-        return Ok(());
+        return Ok(None);
     };
     if root.file_name().and_then(|s| s.to_str()) != Some(TOOL)
         || root
@@ -425,14 +422,28 @@ pub(crate) fn verify_runtime() -> Result<()> {
             .and_then(|s| s.to_str())
             != Some(".local")
     {
-        return Ok(());
+        return Ok(None);
     }
     let home = root
         .parent()
         .and_then(Path::parent)
         .and_then(Path::parent)
         .context("personal runtime has no home; run setup-user from an external release")?;
-    let path = validate_path(home, &format!("{}/user-install.json", personal_root()))?;
+    Ok(Some(home.to_path_buf()))
+}
+
+/// Only the installed personal executable has a private fallback.
+pub(crate) fn fallback_authority() -> Result<Option<PathBuf>> {
+    personal_home()?.map(|home| authority(&home)).transpose()
+}
+
+/// Refuse a torn or divergent installation before doing work.
+pub(crate) fn verify_runtime() -> Result<()> {
+    let Some(home) = personal_home()? else {
+        return Ok(());
+    };
+    let root = home.join(personal_root());
+    let path = validate_path(&home, &format!("{}/user-install.json", personal_root()))?;
     let bytes = fs::read(&path).with_context(|| {
         format!(
             "personal receipt is missing; run {TOOL} setup-user from a verified external release"
@@ -445,7 +456,7 @@ pub(crate) fn verify_runtime() -> Result<()> {
     if !receipt.installed
         || receipt.schema != format!("{TOOL}.user_install.v1")
         || receipt.version != env!("CARGO_PKG_VERSION")
-        || fs::canonicalize(expected_root)? != fs::canonicalize(root)?
+        || fs::canonicalize(expected_root)? != fs::canonicalize(&root)?
         || receipt.files.len() != paths().len()
         || receipt.files.keys().any(|p| !paths().contains(p))
     {

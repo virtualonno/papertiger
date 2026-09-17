@@ -8,7 +8,7 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Added
 
-- `setup-user` installs a personal skill, native runtime and private fallback planner without changing consuming projects, `AGENTS.md`, shell profiles or harness settings. Existing project authorities take precedence. Start a fresh agent session after installation; skill discovery does not guarantee model selection.
+- `setup-user` installs a personal skill, native runtime and private fallback planner without changing consuming projects, `AGENTS.md`, shell profiles or harness settings. The installed runtime discovers existing project authorities before using its private fallback, without a `--db` argument. Start a fresh agent session after installation; skill discovery does not guarantee model selection.
 - `uninstall-user` removes matching receipt-owned runtime and skills while retaining planner history. Setup and removal support `--dry-run`; unowned or modified files require review and explicit replacement. Missing expected history refuses setup. Upgrade or repair from an external release binary.
 
 ### Changed

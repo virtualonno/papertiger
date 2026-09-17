@@ -17,7 +17,7 @@ use text_input::{IntentArgs, NoteTextArgs, ResultArgs, WhyArgs, reject_multiple_
     about = "Local task planning for cross-session engineering work"
 )]
 struct Cli {
-    /// Planning database path (default: PAPERTIGER_DB or receipt discovery); invalid with project integration commands
+    /// Planning database path (default: PAPERTIGER_DB, project receipt, or installed personal store); invalid with integration commands
     #[arg(long, global = true)]
     db: Option<String>,
     /// Receipt-bound project root used for authority selection or project inspection; evidence verify also uses it for file: locators
@@ -1334,6 +1334,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             .to_string_lossy()
             .into_owned(),
         (None, None) => project_setup::discover_project_authority(&std::env::current_dir()?)?
+            .or(user_setup::fallback_authority()?)
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(|| "state/papertiger.sqlite".into()),
     };

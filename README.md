@@ -68,8 +68,9 @@ Personal setup initializes a private fallback database and `personal` plan
 through the planner commands. Existing stores are checked, never silently
 migrated or replaced. Uninstall preserves that database and its sidecars. Missing
 expected history refuses setup until restored. Ordinary work selects an existing
-project/domain authority first; otherwise the installed skill binds the private
-store explicitly and records the consuming-project root in each task intent.
+project/domain authority first. The personal executable discovers a project
+receipt before falling back to its private store, without a `--db` argument.
+The skill records the consuming-project root in each personal task intent.
 No database or planning configuration is created in consuming projects.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned

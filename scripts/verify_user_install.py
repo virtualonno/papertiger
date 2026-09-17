@@ -50,9 +50,9 @@ with tempfile.TemporaryDirectory(prefix=f"{tool} personal smoke ") as directory:
     assert skill.startswith("---\nname:")
     database = home / ".local/share/papertiger/state/papertiger.sqlite"
     if tool == "papertiger":
-        plans = json.loads(run(runtime, "--db", database, "plan", "list", "--json"))
+        plans = json.loads(run(runtime, "plan", "list", "--json"))
         assert [p["slug"] for p in plans["plans"]] == ["personal"]
-        run(runtime, "--db", database, "audit")
+        run(runtime, "audit")
     else:
         result = json.loads(run(runtime, "--json", "files", ".", "--limit", "10"))
         assert result["scope_complete"]

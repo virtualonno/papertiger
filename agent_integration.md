@@ -48,9 +48,9 @@ When an intentional command runs from another repository, pass the global
 `--project-root <canonical-project-root>` option. It requires a receipt at that
 exact root and selects the receipt-bound authority without changing the
 process working directory. `PAPERTIGER_DB` or an explicit global `--db`
-deliberately overrides receipt discovery. The installed personal skill binds its
-private store with an explicit `--db`; it never relies on cwd to pick that store.
-Outside this personal binding, do not use a raw database override for ordinary
+deliberately overrides receipt discovery. The installed personal executable falls back to its private
+store only when no project receipt is discovered. It needs no `--db` argument.
+Do not use a raw database override for ordinary
 project selection or split ordinary planning
 across multiple authorities. Ordinary commands refuse combining the receipt
 selector with a database override. `evidence verify` retains that combination

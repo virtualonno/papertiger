@@ -223,3 +223,61 @@ fn setup_finishes_interrupted_initialization_without_replacing_authority() {
     assert_eq!(plans["plans"][0]["slug"], "personal");
     assert_eq!(plans["plans"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn personal_default_uses_project_receipts_before_private_store_from_nested_cwd() {
+    let home = Fixture::new();
+    home.install();
+    let project = Fixture::new();
+    let nested = project.0.join("nested/work");
+    fs::create_dir_all(&nested).unwrap();
+    let status = || {
+        let output = Command::new(home.runtime())
+            .args(["status", "--json"])
+            .current_dir(&nested)
+            .env_remove("PAPERTIGER_DB")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    assert_eq!(status()["active_plans"][0]["plan"]["slug"], "personal");
+    let install = Command::new(BINARY)
+        .arg("setup-project")
+        .arg(&project.0)
+        .args(["--skill-target", "none"])
+        .output()
+        .unwrap();
+    assert!(install.status.success());
+    for args in [
+        vec!["init"],
+        vec![
+            "plan",
+            "add",
+            "project",
+            "Project work",
+            "--intent",
+            "Existing project authority",
+        ],
+    ] {
+        let output = Command::new(BINARY)
+            .arg("--project-root")
+            .arg(&project.0)
+            .args(args)
+            .env("PAPERTIGER_ACTOR", "fixture")
+            .env_remove("PAPERTIGER_DB")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(status()["active_plans"][0]["plan"]["slug"], "project");
+    assert!(!nested.join("state").exists());
+}
