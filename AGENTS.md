@@ -52,27 +52,13 @@ each under 32 KiB.
   bounded edit, read-only review, intermediate steps inside one independently
   reviewable outcome, and domain-owned or shared-team lifecycle. Resume an
   existing durable task even when its next step is a bounded edit or read-only.
-- Invoke the receipt-bound binary at
-  `tools/papertiger/bin/papertiger[.exe]`; do not guess from `target/` or rely
-  on an unrelated `papertiger` on `PATH`.
-- Enter from live truth: `status`, `focus`, `show <N> --json`. Roadmap prose,
-  handoff notes, and memories are orientation only — if they disagree with the
-  DB, the DB wins and the prose gets corrected.
-- `--why` on anything a future session might question, written for a reader
-  with zero context. Probe/decision tasks require `--result` before `done`.
-- `done` refuses open deps, blockers, gates, children. Close or waive with
-  reasons; never route around a refusal — the refusal is the product working.
-- Do not duplicate task status into markdown, and do not create tasks for
-  same-session checklist steps. Markdown carries doctrine, zero status.
-- Check `list --status rejected` before proposing a revival; read its `--why`.
-- Treat `task.seq` as authority-local: never put Papertiger task numbers in
-  shared Git/PR/changelog prose. Associate any commit-backed outcome inward by
-  full OID before completion; omit it only when no commit represents the task.
-- When validated deferred work, proof debt, or tooling friction should survive
-  this session, use the Papertiger contract proactively; do not create
-  same-session checklist tasks or interrupt authorized work unnecessarily.
-Resume existing durable work even when its next step is a bounded edit or
-read-only check.
+- Invoke the receipt-bound `tools/papertiger/bin/papertiger[.exe]`; a build in
+  `target/` is a development artifact, never this repository's planner.
+- The skill owns entry, search, `--why`, completion refusals, commit
+  association and task-number hygiene; this file does not restate them.
+  Roadmap prose, handoff notes, and memories are orientation only: when they
+  disagree with the DB, the DB wins and the prose gets corrected. Markdown
+  carries doctrine, never task status.
 
 Before broad or potentially high-output file, text, structured-data, or command-output reads, load `.agents/skills/contextmink/SKILL.md`. Skip known-small direct reads and project-native compact or domain-query commands.
 
