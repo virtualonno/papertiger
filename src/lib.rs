@@ -26,6 +26,7 @@ pub use evidence_projection::{
 };
 mod path_identity;
 pub use path_identity::portable_absolute;
+pub mod history_recovery;
 mod inventory;
 mod mutation;
 mod pickup;
@@ -71,7 +72,7 @@ pub use mise_projection_contract::{
     MiseSourceProjection,
 };
 
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.planner";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
 pub const TASK_DEFINITION_REVISION_SCHEMA: &str = "papertiger.task_definition_revision.v1";
@@ -257,6 +258,8 @@ fn validate_existing(conn: &Connection, path: &str) -> Result<()> {
             "{path} uses papertiger schema v{version}; run `papertiger --db {path} init` explicitly to upgrade to v{SCHEMA_VERSION}"
         );
     }
+    write_guard::verify(conn)?;
+    history_recovery::validate(conn)?;
     Ok(())
 }
 
@@ -290,6 +293,7 @@ pub enum InitOutcome {
 /// command itself is never replayed. Dropping the returned transaction rolls
 /// the logical mutation back and releases the reservation.
 pub fn begin_mutation(conn: &Connection) -> Result<Transaction<'_>> {
+    write_guard::admit(conn)?;
     Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
         .context("begin papertiger mutation")
 }
@@ -321,6 +325,8 @@ pub fn init_at(conn: &Connection, path: &str) -> Result<InitOutcome> {
                     "{path} is schema v{SCHEMA_VERSION} but lacks Papertiger authority identity; restore a verified export instead of repairing identity in place"
                 );
             }
+            write_guard::verify(conn)?;
+            history_recovery::validate(conn)?;
             return Ok(InitOutcome::Current);
         }
         migrate(conn, from)?;
@@ -449,7 +455,8 @@ CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, c
     tx.execute_batch(pickup::SCHEMA)?;
     tx.execute_batch(external_reference::REFERENCE_SCHEMA)?;
     tx.execute_batch(mise_projection::MISE_PROJECTION_SCHEMA_V4)?;
-    tx.execute_batch(write_guard::WRITE_GUARD_SCHEMA_V11)?;
+    history_recovery::install_schema(&tx)?;
+    write_guard::install(&tx)?;
     tx.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
@@ -600,6 +607,11 @@ ALTER TABLE tasks
         // Guards validate new writes only; earlier malformed rows stay audit evidence.
         tx.execute_batch(write_guard::WRITE_GUARD_SCHEMA_V11)?;
         version = 11;
+    }
+    if version == 11 {
+        history_recovery::install_schema(&tx)?;
+        write_guard::install(&tx)?;
+        version = 12;
     }
     if version != SCHEMA_VERSION {
         bail!("no papertiger migration path from schema v{from} to v{SCHEMA_VERSION}");
@@ -913,7 +925,7 @@ fn list_tasks_ordered(
     by_activity: bool,
 ) -> Result<Vec<Task>> {
     let order = if by_activity {
-        "ORDER BY COALESCE((SELECT MAX(event_id) FROM events
+        "ORDER BY COALESCE((SELECT MAX(event_id) FROM canonical_events
                             WHERE entity_seq=tasks.seq
                               AND entity IN ('task','dep','gate')), 0) DESC, seq"
     } else {
@@ -3338,7 +3350,9 @@ fn terminal_replacement_repair_instruction(target: i64) -> String {
 }
 
 pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
+    history_recovery::validate(conn)?;
     let mut findings = priority_recovery::audit_priorities(conn)?;
+    findings.extend(history_recovery::audit_structure(conn)?);
     let mut push = |kind: &str, detail: String| {
         findings.push(AuditFinding {
             kind: kind.into(),
@@ -3416,10 +3430,9 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
 
     let mut live_titles: HashMap<(String, String), Vec<i64>> = HashMap::new();
     let mut statement = conn.prepare(
-        "SELECT plan.slug, task.seq, task.title
+        "SELECT plan.slug, task.seq, task.title, task.status
            FROM tasks task
            JOIN plans plan ON plan.plan_id=task.plan_id
-          WHERE task.status IN ('proposed','in_progress')
           ORDER BY plan.slug, task.seq",
     )?;
     let rows = statement
@@ -3428,10 +3441,11 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    for (plan, seq, title) in rows {
+    for (plan, seq, title, status) in rows {
         let characters = title.chars().count();
         if characters > MAX_TASK_TITLE_CHARS {
             push(
@@ -3441,10 +3455,12 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                 ),
             );
         }
-        live_titles
-            .entry((plan, title.trim().to_lowercase()))
-            .or_default()
-            .push(seq);
+        if matches!(status.as_str(), "proposed" | "in_progress") {
+            live_titles
+                .entry((plan, title.trim().to_lowercase()))
+                .or_default()
+                .push(seq);
+        }
     }
     for ((plan, title), sequences) in live_titles {
         if sequences.len() > 1 {
@@ -3534,7 +3550,7 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     }
 
     let mut statement = conn.prepare(
-        "SELECT event_id, at, entity, entity_seq, kind, payload FROM events ORDER BY event_id",
+        "SELECT event_id, at, entity, entity_seq, kind, payload FROM canonical_events ORDER BY event_id",
     )?;
     let rows = statement
         .query_map([], |row| {
@@ -4172,6 +4188,7 @@ fn default_open() -> String {
 }
 
 pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
+    history_recovery::validate(conn)?;
     let mut plans = Vec::new();
     let mut st =
         conn.prepare("SELECT plan_id, slug, title, intent, status FROM plans ORDER BY plan_id")?;
@@ -4314,7 +4331,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
     let mut events = Vec::new();
     let mut st = conn.prepare(
         "SELECT at, actor, entity, entity_plan, entity_seq, gate_name, kind, why, payload
-         FROM events ORDER BY event_id",
+         FROM canonical_events ORDER BY event_id",
     )?;
     let rows = st.query_map([], |r| {
         Ok((
@@ -4997,6 +5014,9 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
     // Restore the append-only history using stable task sequences, plan slugs,
     // and gate names rather than database-local row ids.
     for event in &dump.events {
+        if event.kind == "quarantine_event" {
+            history_recovery::validate_envelope(event.payload.as_ref())?;
+        }
         mutation::payload_model(event.payload.as_ref())?;
         mutation::payload_reasoning_effort(event.payload.as_ref())?;
         let at = event.at.trim();

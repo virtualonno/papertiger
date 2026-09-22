@@ -398,12 +398,26 @@ recovery file. Current import
 accepts only `papertiger.dump.v9`; restore an older dump with the release that
 produced it, migrate that temporary authority, and re-export it. Migration preserves
 old in-progress tasks without inventing session identities. Exported pickup context
-remains advisory after recovery; it never becomes a lock. Schema v11 refuses
-direct SQLite writes that would corrupt history: stored events are append-only,
-new events must be well-formed, and task priorities must be integers. Earlier
-malformed rows stay untouched and visible to `audit`.
+remains advisory after recovery; it never becomes a lock. Schema v12 requires
+explicit public mutation API entry before a connection can write any planner
+table. Ordinary SQLite writers fail with `papertiger_write_requires_executable`:
+use the project's installed Papertiger executable. Stored events and recovery
+mappings are append-only; normal opens refuse missing or altered guards. API
+callers are trusted after mutation entry. This guards against accidental and
+agent-driven raw SQL, not a filesystem owner deliberately replacing the guards
+or registering its own admission function.
 
-`backup` preserves planner schemas 1–11 and committed WAL data through SQLite's
+Earlier malformed rows remain visible to `audit`. After taking a backup,
+`history inspect <event-id>` reports every original field and its digest.
+`history quarantine <event-id> --expect-sha256 <digest> --why <reason>` explicitly
+quarantines a structurally invalid record. It retains the original row unchanged
+and appends a recovery event with its verbatim fields, raw payload, and defects.
+Ordinary history and export use that envelope instead of the invalid row; export
+and import preserve the envelope. Missing timezones and associations remain
+unknown, and no task state is inferred. Quarantine never accepts structurally
+valid history as a substitute for recording a disagreement.
+
+`backup` preserves planner schemas 1–12 and committed WAL data through SQLite's
 [online backup API](https://www.sqlite.org/backup.html). It publishes one recovery
 file after SQLite integrity verification and returns its SHA-256, byte count,
 original schema, and task/event counts. It refuses foreign authorities, newer

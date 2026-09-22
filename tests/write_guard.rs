@@ -137,6 +137,8 @@ fn migration_guards_new_writes_and_preserves_earlier_malformed_rows() {
         conn.execute_batch(&format!("DROP TRIGGER {guard};"))
             .unwrap();
     }
+    conn.execute_batch("DROP VIEW canonical_events; DROP TABLE event_quarantines;")
+        .unwrap();
     conn.execute_batch("UPDATE meta SET value='10' WHERE key='schema_version';")
         .unwrap();
     conn.execute_batch(&insert_event(
@@ -150,7 +152,7 @@ fn migration_guards_new_writes_and_preserves_earlier_malformed_rows() {
 
     assert!(matches!(
         pt::init(&conn).unwrap(),
-        pt::InitOutcome::Migrated { from: 10, to: 11 }
+        pt::InitOutcome::Migrated { from: 10, to: 12 }
     ));
     let installed: i64 = conn
         .query_row(
@@ -214,4 +216,103 @@ fn import_accepts_rfc3339_offsets_under_the_guard() {
         .unwrap();
     assert_eq!(offset_events, dump.events.len() as i64);
     assert!(pt::audit(&restored).unwrap().is_empty());
+}
+
+fn database_path(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "papertiger-admission-{label}-{}-{}.sqlite",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
+}
+
+#[test]
+fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
+    let path = database_path("raw");
+    let conn = Connection::open(&path).unwrap();
+    pt::init(&conn).unwrap();
+    let plan = pt::add_plan(&conn, "test", "work", "Work", "").unwrap();
+    pt::add_task(&conn, "test", plan, "Task", "", None, &[], &[], 0, None).unwrap();
+    drop(conn);
+    let raw = Connection::open(&path).unwrap();
+    for sql in [
+        "UPDATE tasks SET priority=4 WHERE seq=1",
+        "UPDATE tasks SET status='done' WHERE seq=1",
+        "UPDATE meta SET value='10' WHERE key='schema_version'",
+        "INSERT INTO deps (task_id,depends_on) VALUES (1,1)",
+        "DELETE FROM plans",
+        "INSERT INTO events (at,actor,entity,kind,payload) VALUES ('2026-09-22T00:00:00Z','raw','plan','note','{}')",
+    ] {
+        let error = refusal(&raw, sql);
+        assert!(
+            error.contains("papertiger_write_requires_executable"),
+            "{sql}: {error}"
+        );
+    }
+    assert_eq!(pt::get_task(&raw, 1).unwrap().priority, 0);
+    assert_eq!(pt::get_task(&raw, 1).unwrap().status, "proposed");
+    // Opening via the public API is still read-only until mutation entry.
+    let api = pt::open_existing(path.to_str().unwrap()).unwrap();
+    assert!(
+        refusal(&api, "UPDATE tasks SET priority=4")
+            .contains("papertiger_write_requires_executable")
+    );
+    pt::add_note(&api, "agent", Some(1), "use the public API").unwrap();
+    assert!(pt::audit(&api).unwrap().is_empty());
+    drop(api);
+    drop(raw);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn every_persistent_table_has_insert_update_delete_admission() {
+    let conn = authority();
+    let tables: Vec<String> = conn
+        .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    for table in tables {
+        for op in ["insert", "update", "delete"] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_schema WHERE type='trigger' AND name=?1",
+                    [format!("papertiger_admit_{table}_{op}")],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "{table} {op}");
+        }
+    }
+}
+
+#[test]
+fn normal_open_and_init_refuse_missing_or_altered_guards() {
+    for alteration in [
+        "DROP TRIGGER papertiger_admit_tasks_update",
+        "DROP TRIGGER papertiger_admit_tasks_update; CREATE TRIGGER papertiger_admit_tasks_update BEFORE UPDATE ON tasks BEGIN SELECT 1; END",
+        "DROP TRIGGER events_append_only_update",
+        "DROP VIEW canonical_events; CREATE VIEW canonical_events AS SELECT * FROM events",
+    ] {
+        let path = database_path("tamper");
+        let conn = Connection::open(&path).unwrap();
+        pt::init(&conn).unwrap();
+        conn.execute_batch(alteration).unwrap();
+        assert!(
+            pt::open_existing(path.to_str().unwrap()).is_err(),
+            "{alteration}"
+        );
+        assert!(
+            pt::open_existing_read_only(path.to_str().unwrap()).is_err(),
+            "{alteration}"
+        );
+        assert!(pt::init(&conn).is_err(), "{alteration}");
+        drop(conn);
+        std::fs::remove_file(path).unwrap();
+    }
 }

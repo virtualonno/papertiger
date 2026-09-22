@@ -6,21 +6,31 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
-Upgrading migrates planner schema v10 to v11. Read commands refuse the older
+## [0.17.0] - 2026-09-22
+
+Upgrading migrates planner schema v10 or v11 to v12. Read commands refuse the older
 schema and name the `init` command to run; take a `backup` first.
 
 ### Changed
 
-- Planning authorities now refuse direct SQLite writes that bypass the
-  `papertiger` executable. Stored events can no longer be edited or deleted.
-  New events need an RFC3339 timestamp with a zone, a JSON payload, and a known
-  plan or task reference, and task priorities must be integers. Scripts or
-  agents that wrote the database directly now fail with a message naming the
-  executable. Malformed rows written earlier are kept as they are and still
-  reported by `audit`.
+- Every planner table refuses writes from ordinary SQLite connections; use the
+  executable or enter through the public mutation API. Stored events are
+  append-only, and normal opens refuse missing or altered guards. This protects
+  against raw-SQL misuse, not a filesystem owner deliberately defeating the
+  guards. Public API connections are trusted after mutation entry.
+
+### Added
+
+- `history inspect <event-id>` and `history quarantine <event-id>
+  --expect-sha256 <digest> --why <reason>` recover structurally invalid legacy
+  history after explicit review. Original rows remain unchanged; an audited
+  recovery event preserves every raw field through export/import. Unknown
+  timestamps and associations remain unknown, and task state is not inferred.
 
 ### Fixed
 
+- `audit` identifies every malformed stable event reference and reports
+  oversized titles on terminal tasks, which can also block recovery imports.
 - Task reads identify priorities stored as text and name the recovery command.
   After preserving a backup, `edit <task> --priority <integer> --why <reason>`
   can repair that value as an isolated edit, preserving the original text in a
@@ -480,7 +490,8 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/virtualonno/papertiger/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/virtualonno/papertiger/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/virtualonno/papertiger/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/virtualonno/papertiger/compare/v0.13.0...v0.14.0

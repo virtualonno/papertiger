@@ -510,10 +510,15 @@ fn backup_preserves_legacy_schema_and_committed_wal_without_importing_evidence()
         assert_success(&papertiger(&source, &args));
     }
     let writer = rusqlite::Connection::open(&source).unwrap();
+    // Explicit API admission for intentional disposable-fixture construction.
+    papertiger::begin_mutation(&writer)
+        .unwrap()
+        .commit()
+        .unwrap();
     writer
         .execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
-        DROP TABLE external_references;
+        DROP VIEW canonical_events; DROP TABLE event_quarantines; DROP TABLE external_references;
         ALTER TABLE tasks DROP COLUMN pickup_at;
 ALTER TABLE tasks DROP COLUMN pickup_session;
 UPDATE meta SET value='8' WHERE key='schema_version';
@@ -661,6 +666,8 @@ fn backup_refuses_missing_foreign_empty_and_unsupported_authorities() {
             "mise" | "future" => {
                 assert_success(&papertiger(&source, &["init"]));
                 let conn = rusqlite::Connection::open(&source).unwrap();
+                // Explicit API admission for intentional disposable-fixture construction.
+                papertiger::begin_mutation(&conn).unwrap().commit().unwrap();
                 conn.execute_batch(if fixture == "mise" {
                     "UPDATE meta SET value='papertiger.mise' WHERE key='authority'"
                 } else {
@@ -1010,6 +1017,11 @@ fn meaning_provenance_is_correctable_visible_and_transferable() {
     );
 
     let connection = rusqlite::Connection::open(&restored.0).unwrap();
+    // Explicit API admission for intentional disposable-fixture construction.
+    papertiger::begin_mutation(&connection)
+        .unwrap()
+        .commit()
+        .unwrap();
     connection
         .pragma_update(None, "ignore_check_constraints", true)
         .unwrap();
@@ -2000,6 +2012,18 @@ fn status_show_and_log_do_not_panic_on_noncanonical_short_or_multibyte_timestamp
         &["note", "historical timestamp", "--task", "1"],
     ));
     let connection = rusqlite::Connection::open(&db.0).expect("open test authority");
+    // Explicit API admission for intentional disposable-fixture construction.
+    papertiger::begin_mutation(&connection)
+        .unwrap()
+        .commit()
+        .unwrap();
+    let guard: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='events_append_only_update'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     // Model history written before schema v11 refused malformed events.
     connection
         .execute_batch("DROP TRIGGER events_append_only_update;")
@@ -2007,6 +2031,7 @@ fn status_show_and_log_do_not_panic_on_noncanonical_short_or_multibyte_timestamp
     connection
         .execute("UPDATE events SET at='é'", [])
         .expect("simulate a malformed historical import");
+    connection.execute_batch(&guard).unwrap();
     drop(connection);
 
     for args in [
@@ -2941,6 +2966,11 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
 
     {
         let connection = rusqlite::Connection::open(&db.0).unwrap();
+        // Explicit API admission for intentional disposable-fixture construction.
+        papertiger::begin_mutation(&connection)
+            .unwrap()
+            .commit()
+            .unwrap();
         let task_id: i64 = connection
             .query_row("SELECT task_id FROM tasks WHERE seq=2", [], |row| {
                 row.get(0)
@@ -2975,6 +3005,11 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
 
     {
         let connection = rusqlite::Connection::open(&db.0).unwrap();
+        // Explicit API admission for intentional disposable-fixture construction.
+        papertiger::begin_mutation(&connection)
+            .unwrap()
+            .commit()
+            .unwrap();
         let task_id: i64 = connection
             .query_row("SELECT task_id FROM tasks WHERE seq=2", [], |row| {
                 row.get(0)

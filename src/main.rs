@@ -330,6 +330,11 @@ enum Cmd {
     },
     /// Advisory integrity findings
     Audit,
+    /// Inspect or explicitly quarantine structurally invalid legacy history
+    History {
+        #[command(subcommand)]
+        cmd: HistoryCmd,
+    },
     /// Verify stored evidence bindings without changing authority state
     Evidence {
         #[command(subcommand)]
@@ -362,6 +367,22 @@ enum Cmd {
     Mise {
         #[command(subcommand)]
         cmd: MiseCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum HistoryCmd {
+    /// Read every original field and its digest, without inferring missing provenance
+    Inspect { event_id: i64 },
+    /// Preserve an invalid row verbatim in an audited, exportable quarantine event
+    Quarantine {
+        event_id: i64,
+        /// Exact digest returned by history inspect; refuses a changed record
+        #[arg(long)]
+        expect_sha256: String,
+        /// Explain why this original history is untrusted
+        #[arg(long)]
+        why: String,
     },
 }
 
@@ -702,6 +723,9 @@ impl Cmd {
                 | Self::Tree { .. }
                 | Self::Log { .. }
                 | Self::Audit
+                | Self::History {
+                    cmd: HistoryCmd::Inspect { .. }
+                }
                 | Self::Evidence { .. }
                 | Self::Export { .. }
                 | Self::Backup { .. }
@@ -2226,6 +2250,32 @@ fn run_planner(cli: Cli) -> Result<()> {
                 println!("[{}] {}", f.kind, f.detail);
             }
         }
+        Cmd::History { cmd } => match cmd {
+            HistoryCmd::Inspect { event_id } => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&pt::history_recovery::inspect(&conn, event_id)?)?
+                );
+            }
+            HistoryCmd::Quarantine {
+                event_id,
+                expect_sha256,
+                why,
+            } => {
+                let recovery = pt::history_recovery::quarantine(
+                    &conn,
+                    &actor,
+                    event_id,
+                    &expect_sha256,
+                    &why,
+                )?;
+                if !json {
+                    println!(
+                        "quarantined event {event_id}; original retained verbatim in recovery event {recovery}; no historical timestamp, association, or task state was inferred"
+                    );
+                }
+            }
+        },
         Cmd::Evidence {
             cmd:
                 EvidenceCmd::Verify {

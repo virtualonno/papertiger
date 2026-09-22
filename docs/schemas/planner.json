@@ -41,6 +41,9 @@
     },
     {
       "$ref": "#/$defs/focus"
+    },
+    {
+      "$ref": "#/$defs/history_inspection"
     }
   ],
   "$defs": {
@@ -1208,7 +1211,7 @@
               "type": "string"
             },
             "schema_version": {
-              "const": 11
+              "const": 12
             },
             "event_head": {
               "anyOf": [
@@ -2249,6 +2252,108 @@
         "status"
       ],
       "additionalProperties": false
+    },
+    "history_inspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "original",
+        "sha256",
+        "problems",
+        "recovery_event_id"
+      ],
+      "properties": {
+        "schema": {
+          "const": "papertiger.history-inspection.v1"
+        },
+        "original": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "at",
+            "actor",
+            "entity",
+            "kind",
+            "entity_plan",
+            "gate_name",
+            "why",
+            "payload",
+            "entity_id",
+            "entity_seq",
+            "event_id"
+          ],
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "actor": {
+              "type": "string"
+            },
+            "entity": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "entity_plan": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "gate_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "why": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "payload": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "entity_id": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "entity_seq": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "event_id": {
+              "type": "integer"
+            }
+          }
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recovery_event_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
     }
   }
 }

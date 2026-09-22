@@ -224,7 +224,7 @@ pub fn search_tasks(
 fn task_rationale(conn: &Connection, seq: i64) -> Result<Vec<String>> {
     let mut statement = conn.prepare(
         "SELECT why
-           FROM events
+           FROM canonical_events
           WHERE entity_seq=?1
             AND entity IN ('task','dep','gate')
             AND why IS NOT NULL

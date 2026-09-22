@@ -100,18 +100,26 @@ supplied project root.
   re-export before import.
   Current dumps use `papertiger.dump.v9`; schema v10 adds advisory pickup
   context. Existing in-progress tasks retain unknown session identity; migration
-  never guesses ownership from actors. Schema v11 makes the authority refuse
-  direct SQLite writes that bypass the executable: stored events cannot be
-  updated or deleted, new events need a zoned RFC3339 timestamp, a JSON payload
-  and stable plan/task references, and task priorities must be integers.
+  never guesses ownership from actors. Schema v12 requires explicit public
+  mutation API entry for writes to every planner table. A raw SQLite writer
+  fails with `papertiger_write_requires_executable`; use the bound executable,
+  never remove its guards or manufacture the admission function. Normal opens
+  refuse altered guards. This is a misuse boundary, not a sandbox against an
+  unrestricted filesystem owner. API callers are trusted after mutation entry.
   Migration leaves earlier malformed rows untouched for `audit`. Mise's schema
   is independent.
+- Legacy history recovery is explicit: preserve a `backup`, review
+  `history inspect <event-id>`, then use `history quarantine <event-id>
+  --expect-sha256 <digest> --why <reason>` only for its reported structural
+  defects. The immutable original survives, and a recovery event carries every
+  raw field through log/export/import. Unknown timestamps and associations stay
+  unknown; recovery never infers task state. This is not routine task editing.
 - `export` is transfer and recovery, not a second live authority.
   `export --output <path>` writes a canonical UTF-8 recovery file atomically
   and prints a digest/count receipt; replacing an existing file requires
   `--replace`.
 - `backup --output <new-path> --json` creates a consistent standalone SQLite
-  recovery file, including committed WAL data. It supports planner schemas 1–10
+  recovery file, including committed WAL data. It supports planner schemas 1–12
   without migration or new events, refuses foreign authorities and existing
   destinations or sidecars, and reports the output hash and original schema.
   Historical evidence is preserved without semantic validation; this can retain

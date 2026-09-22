@@ -165,4 +165,5 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
     let mut full_plan = selection.clone();
     full_plan["plan"]["intent"] = json!("belongs in plan context");
     assert!(!validator.is_valid(&full_plan));
+    run(&["history", "inspect", "1", "--json"]);
 }

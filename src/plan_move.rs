@@ -198,7 +198,7 @@ pub(crate) fn audit_plan_history(conn: &Connection) -> Result<()> {
         )?);
     }
     let mut events = conn.prepare(
-        "SELECT entity, entity_seq, entity_plan, kind, payload FROM events ORDER BY event_id",
+        "SELECT entity, entity_seq, entity_plan, kind, payload FROM canonical_events ORDER BY event_id",
     )?;
     for row in events.query_map([], |row| {
         Ok((

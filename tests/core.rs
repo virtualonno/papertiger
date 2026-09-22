@@ -19,6 +19,37 @@ fn db() -> rusqlite::Connection {
     conn
 }
 
+#[test]
+fn audit_reports_oversized_terminal_titles_that_would_block_recovery_import() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "fixture", "work", "Work", "").unwrap();
+    pt::add_task(
+        &conn,
+        "fixture",
+        plan,
+        "Original",
+        "",
+        None,
+        &[],
+        &[],
+        0,
+        None,
+    )
+    .unwrap();
+    // Explicitly admitted disposable fixture represents a legacy terminal task.
+    conn.execute(
+        "UPDATE tasks SET title=?1,status='retired'",
+        ["x".repeat(pt::MAX_TASK_TITLE_CHARS + 1)],
+    )
+    .unwrap();
+    assert!(
+        pt::audit(&conn)
+            .unwrap()
+            .iter()
+            .any(|f| f.kind == "oversized_task_title")
+    );
+}
+
 fn assert_exact_error<T>(result: anyhow::Result<T>, expected: &str) {
     match result {
         Ok(_) => panic!("expected refusal: {expected}"),
@@ -424,7 +455,7 @@ fn typed_authority_identity_is_migrated_and_refuses_mise_databases() {
     let legacy = pt::open_for_init(legacy_path.to_str().unwrap()).unwrap();
     assert_eq!(pt::init(&legacy).unwrap(), pt::InitOutcome::Created);
     legacy
-        .execute_batch("DROP TABLE external_references;")
+        .execute_batch("DROP VIEW canonical_events; DROP TABLE event_quarantines; DROP TABLE external_references;")
         .unwrap();
     legacy
         .execute("DELETE FROM meta WHERE key='authority'", [])
@@ -445,7 +476,7 @@ fn typed_authority_identity_is_migrated_and_refuses_mise_databases() {
     let legacy = pt::open_for_init(legacy_path.to_str().unwrap()).unwrap();
     assert_eq!(
         pt::init(&legacy).unwrap(),
-        pt::InitOutcome::Migrated { from: 7, to: 11 }
+        pt::InitOutcome::Migrated { from: 7, to: 12 }
     );
     assert_eq!(
         legacy
@@ -3723,6 +3754,8 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
          ALTER TABLE tasks DROP COLUMN intent_source;
          ALTER TABLE tasks DROP COLUMN result_source;
          ALTER TABLE tasks DROP COLUMN replacement_task_id;
+         DROP VIEW canonical_events;
+         DROP TABLE event_quarantines;
          DROP TABLE external_references;
          UPDATE meta SET value='5' WHERE key='schema_version';",
     )

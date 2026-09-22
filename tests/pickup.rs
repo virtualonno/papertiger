@@ -224,14 +224,14 @@ fn migration_preserves_history_without_inventing_session_identity() {
     let before = pt::export(&conn, None).unwrap().events.len();
     // Exact v9 task shape, built only inside this disposable test authority.
     conn.execute_batch(
-        "ALTER TABLE tasks DROP COLUMN pickup_at;
+        "DROP VIEW canonical_events; DROP TABLE event_quarantines; ALTER TABLE tasks DROP COLUMN pickup_at;
         ALTER TABLE tasks DROP COLUMN pickup_session;
         UPDATE meta SET value='9' WHERE key='schema_version';",
     )
     .unwrap();
     assert!(matches!(
         pt::init(&conn).unwrap(),
-        pt::InitOutcome::Migrated { from: 9, to: 11 }
+        pt::InitOutcome::Migrated { from: 9, to: 12 }
     ));
     assert!(matches!(pt::init(&conn).unwrap(), pt::InitOutcome::Current));
     let task = pt::get_task(&conn, first).unwrap();

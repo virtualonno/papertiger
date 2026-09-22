@@ -320,7 +320,7 @@ fn event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
 
 pub(crate) fn event_by_id(conn: &Connection, event_id: i64) -> Result<EventRecord> {
     conn.query_row(
-        "SELECT event_id, at, actor, entity, entity_id, entity_plan, entity_seq, gate_name, kind, why, payload FROM events WHERE event_id=?1",
+        "SELECT event_id, at, actor, entity, entity_id, entity_plan, entity_seq, gate_name, kind, why, payload FROM canonical_events WHERE event_id=?1",
         params![event_id], event_from_row,
     )?.public()
 }
@@ -351,7 +351,7 @@ pub fn event_cursor(conn: &Connection, event_id: i64) -> Result<EventCursor> {
     let mut statement = conn.prepare(
         "SELECT event_id, at, actor, entity, entity_id, entity_plan, entity_seq,
                 gate_name, kind, why, payload
-           FROM events
+           FROM canonical_events
           WHERE event_id<=?1
           ORDER BY event_id",
     )?;
@@ -376,7 +376,7 @@ pub fn event_cursor(conn: &Connection, event_id: i64) -> Result<EventCursor> {
 }
 
 pub fn event_head(conn: &Connection) -> Result<Option<EventCursor>> {
-    let event_id = conn.query_row("SELECT MAX(event_id) FROM events", [], |row| {
+    let event_id = conn.query_row("SELECT MAX(event_id) FROM canonical_events", [], |row| {
         row.get::<_, Option<i64>>(0)
     })?;
     event_id
@@ -457,7 +457,7 @@ pub fn event_log(
     let sql = format!(
         "SELECT event_id, at, actor, entity, entity_id, entity_plan, entity_seq,
                 gate_name, kind, why, payload
-           FROM events
+           FROM canonical_events
           WHERE (?1 IS NULL OR (entity_seq=?1 AND entity IN ('task','dep','gate')))
             AND (?2 IS NULL OR event_id<?2)
             AND (?3 IS NULL OR event_id>?3)
@@ -496,9 +496,10 @@ pub fn event_log(
     } else {
         None
     };
-    let floor_event_id = conn.query_row("SELECT MIN(event_id) FROM events", [], |row| {
-        row.get::<_, Option<i64>>(0)
-    })?;
+    let floor_event_id =
+        conn.query_row("SELECT MIN(event_id) FROM canonical_events", [], |row| {
+            row.get::<_, Option<i64>>(0)
+        })?;
     Ok(EventLog {
         schema: "papertiger.event_log.v1".into(),
         task_seq,
@@ -516,7 +517,7 @@ pub fn task_activity(conn: &Connection, seq: i64) -> Result<TaskActivity> {
     let mut statement = conn.prepare(
         "SELECT event_id, at, actor, entity, entity_id, entity_plan, entity_seq,
                 gate_name, kind, why, payload
-           FROM events
+           FROM canonical_events
           WHERE entity_seq=?1 AND entity IN ('task','dep','gate')
           ORDER BY event_id",
     )?;
@@ -681,15 +682,16 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
             ready,
         });
     }
-    let recent_note_count =
-        conn.query_row("SELECT COUNT(*) FROM events WHERE kind='note'", [], |row| {
-            row.get::<_, i64>(0)
-        })?;
+    let recent_note_count = conn.query_row(
+        "SELECT COUNT(*) FROM canonical_events WHERE kind='note'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
     let recent_note_count = usize::try_from(recent_note_count)?;
     let mut note_statement = conn.prepare(
         "SELECT event_id, at, actor, entity, entity_id, entity_plan, entity_seq,
                 gate_name, kind, why, payload
-           FROM events
+           FROM canonical_events
           WHERE kind='note'
           ORDER BY event_id DESC
           LIMIT 3",

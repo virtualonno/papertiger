@@ -23,6 +23,8 @@ create a second store in a worktree. If no project runtime exists, use the expli
 executable binding in an installed personal Papertiger skill, when available.
 Personal task intent identifies its consuming project.
 Below, `papertiger` means this selected executable and authority.
+Write through it, never raw SQLite. A refusal does not authorize removing guards
+or manufacturing admission; use the corrective command or preserve the blocker.
 For existing history, skip setup and the reference. Only for a genuinely new
 authority, read [first use](../../../tools/papertiger/agent_integration.md#first-use).
 
