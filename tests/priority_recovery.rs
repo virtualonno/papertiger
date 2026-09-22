@@ -86,6 +86,8 @@ fn text_priority_refuses_reads_and_explicit_edit_preserves_original_evidence() {
     assert_eq!(receipt.events[0].event.kind, "repair_priority");
     assert_eq!(receipt.events[0].task.as_ref().unwrap().priority, 0);
     drop(recorder);
+    // The fixture dropped a guard to plant the legacy value; reinstate it.
+    pt::repair_write_guards(&conn, "operator", "restore fixture guard").unwrap();
     assert!(pt::audit(&conn).unwrap().is_empty());
     let dump = pt::export(&conn, None).unwrap();
     let restored = Connection::open_in_memory().unwrap();

@@ -38,6 +38,7 @@ pub use mutation::{
     MutationEvent, MutationReceipt, MutationRecorder, validate_model, validate_reasoning_effort,
 };
 pub use pickup::{TaskPickup, validate_session};
+pub use write_guard::GuardDrift;
 mod plan_move;
 pub use plan_move::move_tasks_to_plan;
 pub use read_model::{
@@ -136,7 +137,18 @@ pub fn open_existing(path: &str) -> Result<Connection> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
         .with_context(|| format!("open existing papertiger database {path}"))?;
     let conn = configure_connection(conn)?;
-    validate_existing(&conn, path)?;
+    validate_existing(&conn, path, GuardPolicy::Enforce)?;
+    Ok(conn)
+}
+
+/// Open a writable authority whose only defect may be write-guard drift, so
+/// `repair-guards` can reinstall the guards. Every other check still applies.
+pub fn open_existing_for_guard_repair(path: &str) -> Result<Connection> {
+    require_existing_authority_path(path)?;
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
+        .with_context(|| format!("open existing papertiger database {path}"))?;
+    let conn = configure_connection(conn)?;
+    validate_existing(&conn, path, GuardPolicy::Repair)?;
     Ok(conn)
 }
 
@@ -148,8 +160,26 @@ pub fn open_existing_read_only(path: &str) -> Result<Connection> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("open existing papertiger database read-only {path}"))?;
     let conn = configure_connection(conn)?;
-    validate_existing(&conn, path)?;
+    // Guard drift blocks writes, never reads: audit and the CLI report it.
+    validate_existing(&conn, path, GuardPolicy::Report)?;
     Ok(conn)
+}
+
+/// Guards that are missing or altered; empty for an intact authority.
+pub fn write_guard_drift(conn: &Connection) -> Result<Vec<GuardDrift>> {
+    write_guard::drift(conn)
+}
+
+/// Refuse an authority whose write guards drifted, for callers such as
+/// promotion checks that must not rely on a read-only open alone.
+pub fn verify_write_guards(conn: &Connection) -> Result<()> {
+    write_guard::verify(conn)
+}
+
+/// Reinstall canonical write guards with an audited `repair_write_guards` event.
+/// Returns the repaired drift; an intact authority records nothing.
+pub fn repair_write_guards(conn: &Connection, actor: &str, why: &str) -> Result<Vec<GuardDrift>> {
+    write_guard::repair(conn, actor, why)
 }
 
 fn require_existing_authority_path(path: &str) -> Result<()> {
@@ -216,7 +246,18 @@ fn require_planner_identity(conn: &Connection, path: &str, allow_legacy: bool) -
     )
 }
 
-fn validate_existing(conn: &Connection, path: &str) -> Result<()> {
+/// How an open treats drift in the tool's own schema boundary.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuardPolicy {
+    /// Writable use: every guard and the canonical history view must be intact.
+    Enforce,
+    /// Reads: trigger drift is reported, but an altered history view refuses.
+    Report,
+    /// `repair-guards`: skip both so the boundary itself can be reinstalled.
+    Repair,
+}
+
+fn validate_existing(conn: &Connection, path: &str, guards: GuardPolicy) -> Result<()> {
     let has_meta: bool = conn
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'",
@@ -258,8 +299,12 @@ fn validate_existing(conn: &Connection, path: &str) -> Result<()> {
             "{path} uses papertiger schema v{version}; run `papertiger --db {path} init` explicitly to upgrade to v{SCHEMA_VERSION}"
         );
     }
-    write_guard::verify(conn)?;
-    history_recovery::validate(conn)?;
+    if guards == GuardPolicy::Enforce {
+        write_guard::verify(conn)?;
+    }
+    if guards != GuardPolicy::Repair {
+        history_recovery::validate(conn)?;
+    }
     Ok(())
 }
 
@@ -3353,6 +3398,13 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     history_recovery::validate(conn)?;
     let mut findings = priority_recovery::audit_priorities(conn)?;
     findings.extend(history_recovery::audit_structure(conn)?);
+    let drifted = write_guard::drift(conn)?;
+    if !drifted.is_empty() {
+        findings.push(AuditFinding {
+            kind: "write_guard_drift".into(),
+            detail: write_guard::drift_correction(&drifted),
+        });
+    }
     let mut push = |kind: &str, detail: String| {
         findings.push(AuditFinding {
             kind: kind.into(),

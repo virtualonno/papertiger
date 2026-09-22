@@ -212,6 +212,8 @@ pub(crate) fn verify_papertiger_gate(
         .to_str()
         .context("Papertiger database path is not valid UTF-8")?;
     let conn = papertiger::open_existing_read_only(database)?;
+    // Promotion evidence must not rest on an authority whose write guards drifted.
+    papertiger::verify_write_guards(&conn)?;
     let context = papertiger::task_context(&conn, binding.task_seq)?;
     if context.plan.status != "active" {
         bail!("Papertiger plan '{}' is not active", context.plan.slug);

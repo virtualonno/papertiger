@@ -352,6 +352,15 @@ enum Cmd {
         #[arg(long, requires = "output")]
         replace: bool,
     },
+    /// Reinstall missing or altered write guards with an audited record of the drift
+    RepairGuards {
+        /// Explain what altered the guards and why reinstalling them is safe
+        #[arg(long)]
+        why: Option<String>,
+        /// Report drift without changing the authority
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Write a consistent standalone SQLite recovery copy without migrating
     Backup {
         /// New destination; existing files and SQLite sidecars always refuse
@@ -1052,7 +1061,21 @@ fn print_task_context(context: &pt::TaskContext) {
     }
 }
 
+/// Windows gives the main thread 1 MiB, which clap's derived command tree for
+/// this CLI exceeds in unoptimized builds. Run on an explicitly sized stack.
+const CLI_STACK_BYTES: usize = 16 * 1024 * 1024;
+
 fn main() -> Result<()> {
+    std::thread::Builder::new()
+        .name("papertiger".into())
+        .stack_size(CLI_STACK_BYTES)
+        .spawn(cli_main)
+        .context("start papertiger command thread")?
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn cli_main() -> Result<()> {
     user_setup::verify_runtime()?;
     let cli = Cli::parse();
     run(cli).map_err(pt::normalize_sqlite_lock_error)
@@ -1407,8 +1430,58 @@ fn run_planner(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
+    if let Cmd::RepairGuards { why, dry_run } = &cli.cmd {
+        let conn = pt::open_existing_for_guard_repair(&db_path)?;
+        let drifted = if *dry_run {
+            pt::write_guard_drift(&conn)?
+        } else {
+            let why = why.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "repair-guards requires --why <reason>; preview first with --dry-run"
+                )
+            })?;
+            pt::repair_write_guards(&conn, &actor, why)?
+        };
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "schema": "papertiger.guard_repair.v1",
+                    "dry_run": dry_run,
+                    "changed": !dry_run && !drifted.is_empty(),
+                    "guards": drifted,
+                }))?
+            );
+        } else if drifted.is_empty() {
+            println!("write guards are intact; nothing changed");
+        } else {
+            let verb = if *dry_run {
+                "would reinstall"
+            } else {
+                "reinstalled"
+            };
+            for guard in &drifted {
+                let state = if guard.observed_sql.is_some() {
+                    "altered"
+                } else {
+                    "missing"
+                };
+                println!("{verb} {state} guard {}", guard.name);
+            }
+        }
+        return Ok(());
+    }
+
     let conn = if cli.cmd.opens_authority_read_only() {
-        pt::open_existing_read_only(&db_path)?
+        let conn = pt::open_existing_read_only(&db_path)?;
+        let drifted = pt::write_guard_drift(&conn)?;
+        if !drifted.is_empty() {
+            eprintln!(
+                "warning: {} write guard(s) are missing or altered; mutations refuse until `papertiger repair-guards --why <reason>` reinstalls them",
+                drifted.len()
+            );
+        }
+        conn
     } else {
         pt::open_existing(&db_path)?
     };
@@ -1435,6 +1508,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Init => unreachable!(),
         Cmd::Schema => unreachable!(),
         Cmd::Backup { .. } => unreachable!(),
+        Cmd::RepairGuards { .. } => unreachable!(),
         Cmd::Status {} => {
             let status = pt::status_response(&conn, &db_path)?;
             if json {

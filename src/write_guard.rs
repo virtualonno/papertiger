@@ -57,6 +57,10 @@ fn canonical_guards(conn: &Connection) -> Result<Vec<(String, String)>> {
 }
 
 pub(crate) fn install(conn: &Connection) -> Result<()> {
+    conn.execute_batch(&format!(
+        "DROP VIEW IF EXISTS canonical_events; {};",
+        crate::history_recovery::VIEW
+    ))?;
     for (name, sql) in canonical_guards(conn)? {
         conn.execute_batch(&format!(
             "DROP TRIGGER IF EXISTS \"{}\"; {sql};",
@@ -66,22 +70,87 @@ pub(crate) fn install(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn verify(conn: &Connection) -> Result<()> {
+/// A canonical guard that is absent or whose stored SQL differs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct GuardDrift {
+    pub name: String,
+    /// Stored trigger SQL, or `None` when the guard is missing.
+    pub observed_sql: Option<String>,
+}
+
+pub(crate) fn drift(conn: &Connection) -> Result<Vec<GuardDrift>> {
+    let mut drifted = Vec::new();
     for (name, expected) in canonical_guards(conn)? {
-        let actual: Option<String> = conn
+        let observed_sql: Option<String> = conn
             .query_row(
                 "SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?1",
                 [&name],
                 |row| row.get(0),
             )
             .optional()?;
-        if actual.as_deref() != Some(expected.as_str()) {
-            bail!(
-                "Papertiger write guard {name:?} is missing or altered; stop direct SQLite access, preserve the database with `papertiger backup --output <new-path>`, and restore a verified authority; `init` does not silently bless altered guards"
-            );
+        if observed_sql.as_deref() != Some(expected.as_str()) {
+            drifted.push(GuardDrift { name, observed_sql });
         }
     }
+    let view: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE type='view' AND name='canonical_events'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if view.as_deref() != Some(crate::history_recovery::VIEW) {
+        drifted.push(GuardDrift {
+            name: "canonical_events".into(),
+            observed_sql: view,
+        });
+    }
+    Ok(drifted)
+}
+
+pub(crate) fn drift_correction(drifted: &[GuardDrift]) -> String {
+    let names = drifted
+        .iter()
+        .map(|guard| guard.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Papertiger write guards are missing or altered ({names}); stop direct SQLite access, then run `papertiger repair-guards --why <reason>` to reinstall them with an audited record of what changed. Reads, export and backup remain available"
+    )
+}
+
+/// Refuses writable use while guards drift; reads report drift instead.
+pub(crate) fn verify(conn: &Connection) -> Result<()> {
+    let drifted = drift(conn)?;
+    if !drifted.is_empty() {
+        bail!("{}", drift_correction(&drifted));
+    }
     Ok(())
+}
+
+/// Reinstall canonical guards and record every observed deviation. This
+/// restores the tool's own boundary; it never writes planning data.
+pub(crate) fn repair(conn: &Connection, actor: &str, why: &str) -> Result<Vec<GuardDrift>> {
+    if why.trim().is_empty() || actor.trim().is_empty() {
+        bail!("repair-guards requires a nonblank actor and --why <reason>");
+    }
+    let tx = crate::begin_mutation(conn)?;
+    let drifted = drift(&tx)?;
+    if drifted.is_empty() {
+        return Ok(drifted);
+    }
+    install(&tx)?;
+    crate::record_event_in_mutation(
+        &tx,
+        actor,
+        "plan",
+        None,
+        "repair_write_guards",
+        Some(why),
+        Some(&serde_json::json!({ "guards": drifted })),
+    )?;
+    tx.commit()?;
+    Ok(drifted)
 }
 
 pub(crate) const WRITE_GUARD_SCHEMA_V11: &str = r#"

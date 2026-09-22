@@ -402,7 +402,11 @@ remains advisory after recovery; it never becomes a lock. Schema v12 requires
 explicit public mutation API entry before a connection can write any planner
 table. Ordinary SQLite writers fail with `papertiger_write_requires_executable`:
 use the project's installed Papertiger executable. Stored events and recovery
-mappings are append-only; normal opens refuse missing or altered guards. API
+mappings are append-only. Missing or altered guards block writes but never reads,
+export or backup: `audit` reports them and `repair-guards --why <reason>`,
+after a `--dry-run` preview, reinstalls them with an audited record of the
+observed drift. An altered history view also blocks reads until repaired. It
+restores only the tool's own schema boundary and cannot write planning data. API
 callers are trusted after mutation entry. This guards against accidental and
 agent-driven raw SQL, not a filesystem owner deliberately replacing the guards
 or registering its own admission function.

@@ -9,6 +9,8 @@ fn damaged() -> (Connection, i64) {
     conn.execute_batch("DROP TRIGGER events_require_zoned_timestamp; DROP TRIGGER events_require_json_payload; DROP TRIGGER events_require_stable_reference;").unwrap();
     conn.execute("INSERT INTO events (at,actor,entity,entity_id,kind,why,payload) VALUES ('2026-09-19 02:41:00','devin','task',99,'note','old reason',?1)", ["raw\nprose with café and 'quotes'"]).unwrap();
     let id = conn.last_insert_rowid();
+    // A migrated authority keeps legacy rows while its guards are intact again.
+    pt::repair_write_guards(&conn, "operator", "restore fixture guards").unwrap();
     (conn, id)
 }
 
@@ -143,6 +145,8 @@ fn forged_quarantine_mapping_never_hides_damaged_evidence() {
 #[test]
 fn audit_names_each_missing_reference_even_when_timestamps_and_json_are_valid() {
     let (conn, first) = damaged();
+    conn.execute_batch("DROP TRIGGER events_require_stable_reference; DROP TRIGGER papertiger_admit_events_insert;")
+        .unwrap();
     conn.execute("INSERT INTO events (at,actor,entity,entity_id,kind,payload) VALUES ('2026-09-19T05:40:00Z','legacy','task',99,'note','{}')", []).unwrap();
     let second = conn.last_insert_rowid();
     let findings = pt::audit(&conn).unwrap();
@@ -161,6 +165,7 @@ fn audit_names_each_missing_reference_even_when_timestamps_and_json_are_valid() 
         )
         .unwrap();
     }
+    pt::repair_write_guards(&conn, "operator", "restore fixture guards").unwrap();
     assert!(pt::audit(&conn).unwrap().is_empty());
 }
 

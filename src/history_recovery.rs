@@ -220,7 +220,7 @@ pub(crate) fn validate(conn: &Connection) -> Result<()> {
         .optional()?;
     if view.as_deref() != Some(VIEW) {
         bail!(
-            "Papertiger canonical history view is missing or altered; preserve with `papertiger backup --output <new-path>` and restore a verified authority"
+            "Papertiger canonical history view is missing or altered, so history reads cannot be trusted; stop direct SQLite access, then run `papertiger repair-guards --why <reason>` to reinstall it with an audited record of what changed"
         );
     }
     let mut envelopes =

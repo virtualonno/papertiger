@@ -292,27 +292,109 @@ fn every_persistent_table_has_insert_update_delete_admission() {
 }
 
 #[test]
-fn normal_open_and_init_refuse_missing_or_altered_guards() {
+fn guard_drift_blocks_writes_but_never_reads_and_repair_restores_it() {
     for alteration in [
         "DROP TRIGGER papertiger_admit_tasks_update",
         "DROP TRIGGER papertiger_admit_tasks_update; CREATE TRIGGER papertiger_admit_tasks_update BEFORE UPDATE ON tasks BEGIN SELECT 1; END",
         "DROP TRIGGER events_append_only_update",
-        "DROP VIEW canonical_events; CREATE VIEW canonical_events AS SELECT * FROM events",
     ] {
         let path = database_path("tamper");
+        let db = path.to_str().unwrap();
         let conn = Connection::open(&path).unwrap();
         pt::init(&conn).unwrap();
-        conn.execute_batch(alteration).unwrap();
+        let plan = pt::add_plan(&conn, "test", "work", "Work", "Keep").unwrap();
+        pt::add_task(&conn, "test", plan, "Task", "", None, &[], &[], 0, None).unwrap();
+        drop(conn);
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(alteration)
+            .unwrap();
+
+        let writable = pt::open_existing(db).unwrap_err().to_string();
         assert!(
-            pt::open_existing(path.to_str().unwrap()).is_err(),
+            writable.contains("papertiger repair-guards --why"),
+            "{writable}"
+        );
+        let reader = pt::open_existing_read_only(db).expect(alteration);
+        assert_eq!(pt::export(&reader, None).unwrap().tasks.len(), 1);
+        let findings = pt::audit(&reader).unwrap();
+        assert!(
+            findings.iter().any(|f| f.kind == "write_guard_drift"),
             "{alteration}"
         );
+        assert!(pt::verify_write_guards(&reader).is_err());
+        drop(reader);
+
+        let repair = pt::open_existing_for_guard_repair(db).unwrap();
+        let repaired =
+            pt::repair_write_guards(&repair, "operator", "agent dropped a guard").unwrap();
+        assert_eq!(repaired.len(), 1, "{alteration}");
         assert!(
-            pt::open_existing_read_only(path.to_str().unwrap()).is_err(),
-            "{alteration}"
+            pt::repair_write_guards(&repair, "operator", "again")
+                .unwrap()
+                .is_empty()
         );
-        assert!(pt::init(&conn).is_err(), "{alteration}");
+        drop(repair);
+
+        let conn = pt::open_existing(db).unwrap();
+        assert!(pt::audit(&conn).unwrap().is_empty());
+        let payload: String = conn
+            .query_row(
+                "SELECT payload FROM events WHERE kind='repair_write_guards'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(payload.contains(&repaired[0].name), "{payload}");
+        assert_eq!(pt::init(&conn).unwrap(), pt::InitOutcome::Current);
         drop(conn);
         std::fs::remove_file(path).unwrap();
     }
+}
+
+#[test]
+fn altered_history_view_refuses_reads_until_repaired() {
+    let path = database_path("view");
+    let db = path.to_str().unwrap();
+    let conn = Connection::open(&path).unwrap();
+    pt::init(&conn).unwrap();
+    conn.execute_batch(
+        "DROP VIEW canonical_events; CREATE VIEW canonical_events AS SELECT * FROM events WHERE 0",
+    )
+    .unwrap();
+    drop(conn);
+    for error in [
+        pt::open_existing(db).unwrap_err().to_string(),
+        pt::open_existing_read_only(db).unwrap_err().to_string(),
+    ] {
+        assert!(error.contains("papertiger repair-guards --why"), "{error}");
+    }
+    let repair = pt::open_existing_for_guard_repair(db).unwrap();
+    let repaired = pt::repair_write_guards(&repair, "operator", "view replaced").unwrap();
+    assert_eq!(repaired.len(), 1);
+    assert_eq!(repaired[0].name, "canonical_events");
+    assert!(
+        repaired[0]
+            .observed_sql
+            .as_deref()
+            .unwrap()
+            .contains("WHERE 0")
+    );
+    drop(repair);
+    assert!(
+        pt::audit(&pt::open_existing(db).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn repair_requires_a_reason() {
+    let path = database_path("reason");
+    let conn = Connection::open(&path).unwrap();
+    pt::init(&conn).unwrap();
+    assert!(pt::repair_write_guards(&conn, "operator", " ").is_err());
+    drop(conn);
+    std::fs::remove_file(path).unwrap();
 }

@@ -6,6 +6,21 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-22
+
+No schema change; 0.17.0 authorities need no migration.
+
+### Fixed
+
+- Missing or altered write guards no longer lock an authority. Reads, export
+  and backup continue, `audit` reports the drift, and writes refuse with the
+  repair command. `repair-guards --dry-run` previews the drift and
+  `repair-guards --why <reason>` reinstalls the guards and the canonical history
+  view, recording what it found in an audited event. It cannot write planning
+  data. Previously a single dropped trigger blocked status, export and `init`
+  with no supported recovery.
+- The README and operating reference state the current schema as v12.
+
 ## [0.17.0] - 2026-09-22
 
 Upgrading migrates planner schema v10 or v11 to v12. Read commands refuse the older
