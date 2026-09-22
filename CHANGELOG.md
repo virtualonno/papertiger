@@ -8,6 +8,11 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Fixed
 
+- Task reads identify priorities stored as text and name the recovery command.
+  After preserving a backup, `edit <task> --priority <integer> --why <reason>`
+  can repair that value as an isolated edit, preserving the original text in a
+  `repair_priority` event. Reads never infer a numeric default, and other
+  unreadable task fields roll back the repair.
 - Project skill guidance no longer points to an absent personal command binding.
   First-use diagnostics preserve the selected authority instead of instructing
   project users to guess a database path.

@@ -96,7 +96,7 @@ pub fn task_inventory(
                         title: row.get(3)?,
                         status: row.get(4)?,
                         kind: row.get(5)?,
-                        priority: row.get(6)?,
+                        priority: crate::priority_recovery::read_priority(row, 2, 6)?,
                     },
                 })
             },

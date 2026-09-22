@@ -29,6 +29,7 @@ pub use path_identity::portable_absolute;
 mod inventory;
 mod mutation;
 mod pickup;
+mod priority_recovery;
 mod read_model;
 pub use inventory::{plan_inventory, task_inventory};
 pub use mutation::{
@@ -790,7 +791,7 @@ pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         result: r.get(9)?,
         result_source: r.get(10)?,
         status: r.get(11)?,
-        priority: r.get(12)?,
+        priority: priority_recovery::read_priority(r, 1, 12)?,
         pickup: match (
             r.get::<_, Option<String>>(13)?,
             r.get::<_, Option<String>>(14)?,
@@ -1437,6 +1438,10 @@ pub fn edit_task(
         validate_task_kind(kind)?;
     }
     let tx = begin_mutation(conn)?;
+    if priority_recovery::repair_text_priority(&tx, actor, seq, &edit, why)? {
+        tx.commit()?;
+        return Ok(vec!["priority"]);
+    }
     let task = get_task(&tx, seq)?;
     let intent_source = edit
         .intent_source
@@ -3326,7 +3331,7 @@ fn terminal_replacement_repair_instruction(target: i64) -> String {
 }
 
 pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
-    let mut findings = Vec::new();
+    let mut findings = priority_recovery::audit_priorities(conn)?;
     let mut push = |kind: &str, detail: String| {
         findings.push(AuditFinding {
             kind: kind.into(),
