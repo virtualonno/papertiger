@@ -31,6 +31,7 @@ mod mutation;
 mod pickup;
 mod priority_recovery;
 mod read_model;
+mod write_guard;
 pub use inventory::{plan_inventory, task_inventory};
 pub use mutation::{
     MutationEvent, MutationReceipt, MutationRecorder, validate_model, validate_reasoning_effort,
@@ -70,7 +71,7 @@ pub use mise_projection_contract::{
     MiseSourceProjection,
 };
 
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.planner";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
 pub const TASK_DEFINITION_REVISION_SCHEMA: &str = "papertiger.task_definition_revision.v1";
@@ -448,6 +449,7 @@ CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, c
     tx.execute_batch(pickup::SCHEMA)?;
     tx.execute_batch(external_reference::REFERENCE_SCHEMA)?;
     tx.execute_batch(mise_projection::MISE_PROJECTION_SCHEMA_V4)?;
+    tx.execute_batch(write_guard::WRITE_GUARD_SCHEMA_V11)?;
     tx.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
@@ -593,6 +595,11 @@ ALTER TABLE tasks
     if version == 9 {
         tx.execute_batch(pickup::SCHEMA)?;
         version = 10;
+    }
+    if version == 10 {
+        // Guards validate new writes only; earlier malformed rows stay audit evidence.
+        tx.execute_batch(write_guard::WRITE_GUARD_SCHEMA_V11)?;
+        version = 11;
     }
     if version != SCHEMA_VERSION {
         bail!("no papertiger migration path from schema v{from} to v{SCHEMA_VERSION}");

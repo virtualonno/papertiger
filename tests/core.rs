@@ -445,7 +445,7 @@ fn typed_authority_identity_is_migrated_and_refuses_mise_databases() {
     let legacy = pt::open_for_init(legacy_path.to_str().unwrap()).unwrap();
     assert_eq!(
         pt::init(&legacy).unwrap(),
-        pt::InitOutcome::Migrated { from: 7, to: 10 }
+        pt::InitOutcome::Migrated { from: 7, to: 11 }
     );
     assert_eq!(
         legacy
@@ -2499,7 +2499,7 @@ fn import_refuses_non_rfc3339_event_timestamps() {
     let conn = db();
     pt::add_plan(&conn, "test", "timestamps", "Timestamps", "").unwrap();
     let mut dump = pt::export(&conn, None).unwrap();
-    dump.events[0].at = "é".into();
+    dump.events[0].at = "Ã©".into();
 
     let restored = db();
     let error = pt::import(&restored, "restore", &dump).unwrap_err();
@@ -2897,6 +2897,11 @@ fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
     assert_eq!(ordered[0].seq, first);
     assert_eq!(ordered[1].seq, second);
 
+    // Fix event times and later lose history, as only a pre-v11 authority could.
+    conn.execute_batch(
+        "DROP TRIGGER events_append_only_update; DROP TRIGGER events_append_only_delete;",
+    )
+    .unwrap();
     conn.execute(
         "UPDATE events SET at=CASE event_id
            WHEN 2 THEN '2026-08-11T10:00:00Z'
@@ -3011,6 +3016,9 @@ fn audit_reports_invalid_event_time_status_target_and_payload_corruption() {
     let plan = pt::add_plan(&conn, "test", "history", "History", "").unwrap();
     let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
     pt::start_task(&conn, "agent", task, Some("begin"), None).unwrap();
+    // Model history corrupted before schema v11 refused malformed events.
+    conn.execute_batch("DROP TRIGGER events_append_only_update;")
+        .unwrap();
     conn.execute(
         "UPDATE events SET at='not-a-time' WHERE entity_seq=?1 AND kind='create'",
         [task],

@@ -2000,6 +2000,10 @@ fn status_show_and_log_do_not_panic_on_noncanonical_short_or_multibyte_timestamp
         &["note", "historical timestamp", "--task", "1"],
     ));
     let connection = rusqlite::Connection::open(&db.0).expect("open test authority");
+    // Model history written before schema v11 refused malformed events.
+    connection
+        .execute_batch("DROP TRIGGER events_append_only_update;")
+        .expect("model a pre-v11 authority");
     connection
         .execute("UPDATE events SET at='é'", [])
         .expect("simulate a malformed historical import");

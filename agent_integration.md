@@ -92,7 +92,7 @@ supplied project root.
   work clearly existed.
 - `init` is the only command that initializes or migrates the selected live authority. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current planner authority schema is v10. Before migrating an older authority,
+- The current planner authority schema is v11. Before migrating an older authority,
   archive its export with the matching release and create a standalone SQLite
   recovery file with the new release's `--db <source> backup --output <new-path>`.
   Older dump files require
@@ -100,7 +100,12 @@ supplied project root.
   re-export before import.
   Current dumps use `papertiger.dump.v9`; schema v10 adds advisory pickup
   context. Existing in-progress tasks retain unknown session identity; migration
-  never guesses ownership from actors. Mise's schema is independent.
+  never guesses ownership from actors. Schema v11 makes the authority refuse
+  direct SQLite writes that bypass the executable: stored events cannot be
+  updated or deleted, new events need a zoned RFC3339 timestamp, a JSON payload
+  and stable plan/task references, and task priorities must be integers.
+  Migration leaves earlier malformed rows untouched for `audit`. Mise's schema
+  is independent.
 - `export` is transfer and recovery, not a second live authority.
   `export --output <path>` writes a canonical UTF-8 recovery file atomically
   and prints a digest/count receipt; replacing an existing file requires

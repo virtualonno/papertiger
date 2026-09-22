@@ -29,7 +29,10 @@ fn fixture() -> Connection {
         None,
     )
     .unwrap();
-    // Deliberately corrupt only a disposable test fixture, never an authority.
+    // Deliberately corrupt only a disposable test fixture, never an authority,
+    // modeling a text priority written before schema v11 refused it.
+    conn.execute_batch("DROP TRIGGER tasks_require_integer_priority_update;")
+        .unwrap();
     conn.execute("UPDATE tasks SET priority='normal' WHERE seq=1", [])
         .unwrap();
     conn

@@ -1208,7 +1208,7 @@
               "type": "string"
             },
             "schema_version": {
-              "const": 10
+              "const": 11
             },
             "event_head": {
               "anyOf": [

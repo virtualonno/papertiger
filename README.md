@@ -391,16 +391,19 @@ so an explicitly selected database can resolve `file:` locators beneath the
 supplied root. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 
-The current planner authority schema is v10. Before migrating an older authority,
+The current planner authority schema is v11. Before migrating an older authority,
 archive its export with the matching Papertiger release and use the new release's
 `--db <source> backup --output <new-path> --json` to create a standalone SQLite
 recovery file. Current import
 accepts only `papertiger.dump.v9`; restore an older dump with the release that
 produced it, migrate that temporary authority, and re-export it. Migration preserves
 old in-progress tasks without inventing session identities. Exported pickup context
-remains advisory after recovery; it never becomes a lock.
+remains advisory after recovery; it never becomes a lock. Schema v11 refuses
+direct SQLite writes that would corrupt history: stored events are append-only,
+new events must be well-formed, and task priorities must be integers. Earlier
+malformed rows stay untouched and visible to `audit`.
 
-`backup` preserves planner schemas 1–10 and committed WAL data through SQLite's
+`backup` preserves planner schemas 1–11 and committed WAL data through SQLite's
 [online backup API](https://www.sqlite.org/backup.html). It publishes one recovery
 file after SQLite integrity verification and returns its SHA-256, byte count,
 original schema, and task/event counts. It refuses foreign authorities, newer

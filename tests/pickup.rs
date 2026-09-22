@@ -231,7 +231,7 @@ fn migration_preserves_history_without_inventing_session_identity() {
     .unwrap();
     assert!(matches!(
         pt::init(&conn).unwrap(),
-        pt::InitOutcome::Migrated { from: 9, to: 10 }
+        pt::InitOutcome::Migrated { from: 9, to: 11 }
     ));
     assert!(matches!(pt::init(&conn).unwrap(), pt::InitOutcome::Current));
     let task = pt::get_task(&conn, first).unwrap();

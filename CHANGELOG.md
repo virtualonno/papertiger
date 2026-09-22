@@ -6,6 +6,19 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+Upgrading migrates planner schema v10 to v11. Read commands refuse the older
+schema and name the `init` command to run; take a `backup` first.
+
+### Changed
+
+- Planning authorities now refuse direct SQLite writes that bypass the
+  `papertiger` executable. Stored events can no longer be edited or deleted.
+  New events need an RFC3339 timestamp with a zone, a JSON payload, and a known
+  plan or task reference, and task priorities must be integers. Scripts or
+  agents that wrote the database directly now fail with a message naming the
+  executable. Malformed rows written earlier are kept as they are and still
+  reported by `audit`.
+
 ### Fixed
 
 - Task reads identify priorities stored as text and name the recovery command.
