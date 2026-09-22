@@ -391,7 +391,7 @@ so an explicitly selected database can resolve `file:` locators beneath the
 supplied root. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 
-The current planner authority schema is v11. Before migrating an older authority,
+The current planner authority schema is v12. Before migrating an older authority,
 archive its export with the matching Papertiger release and use the new release's
 `--db <source> backup --output <new-path> --json` to create a standalone SQLite
 recovery file. Current import

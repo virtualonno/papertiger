@@ -92,7 +92,7 @@ supplied project root.
   work clearly existed.
 - `init` is the only command that initializes or migrates the selected live authority. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current planner authority schema is v11. Before migrating an older authority,
+- The current planner authority schema is v12. Before migrating an older authority,
   archive its export with the matching release and create a standalone SQLite
   recovery file with the new release's `--db <source> backup --output <new-path>`.
   Older dump files require
