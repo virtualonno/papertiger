@@ -152,7 +152,7 @@ pub fn open_existing_read_only(path: &str) -> Result<Connection> {
 fn require_existing_authority_path(path: &str) -> Result<()> {
     if !Path::new(path).exists() {
         bail!(
-            "no Papertiger authority exists at {path}; run `papertiger --db {path} init` to create one, but if prior work existed, locate the original authority or restore an export instead of initializing"
+            "no Papertiger authority exists at {path}; for a genuinely new authority, rerun the same executable with `init` and the same authority selectors; if prior work existed, locate the original authority or restore an export instead of initializing"
         );
     }
     Ok(())

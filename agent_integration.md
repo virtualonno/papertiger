@@ -10,7 +10,8 @@ projects continue with their selected authority and never repeat this section.
 For a genuinely new project with no existing planning history, invoke the
 bundled executable from that project, set `PAPERTIGER_ACTOR` and a stable
 `PAPERTIGER_SESSION`, then run `init` without `--json` (initialization reports
-plain text). Create a plan with
+plain text). Keep the same executable and authority selectors used for `status`;
+an ordinary project overlay needs no `--db` override. Create a plan with
 `plan add <slug> "Title" --intent "Purpose"` only if no suitable plan exists.
 The default authority is `state/papertiger.sqlite`; an existing project receipt
 retains its configured authority. `init` creates or migrates through the public
@@ -256,6 +257,8 @@ When exact settings are unavailable, record only what is known and omit effort.
 Papertiger does not inspect private harness logs or contact a model provider.
 Existing history remains unchanged; absent effort reads as null, and no database
 migration is required.
+
+### Mutation receipts
 
 For scripted mutation chains, pass `--json`. `papertiger.mutation.v1` contains
 `changed` and the exact emitted `events`; each entry includes the event and

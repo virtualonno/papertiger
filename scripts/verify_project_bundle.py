@@ -27,6 +27,10 @@ for path in bundle.rglob('*'):
 skill = bundle / '.agents/skills' / tool / 'SKILL.md'
 assert skill.read_bytes() == (bundle / '.claude/skills' / tool / 'SKILL.md').read_bytes()
 assert '<!-- installed-command -->' not in skill.read_text()
+if tool == 'papertiger':
+    assert 'personal binding above' not in skill.read_text()
+    reference = (owned / 'agent_integration.md').read_text()
+    assert '### Mutation receipts' in reference
 env = {k: v for k, v in os.environ.items() if not k.startswith('PAPERTIGER_')}
 env['PAPERTIGER_ACTOR'] = 'bundle-smoke'
 env['PAPERTIGER_SESSION'] = 'bundle-smoke'
@@ -47,11 +51,13 @@ with tempfile.TemporaryDirectory(prefix=tool + ' project overlay ') as directory
         result = subprocess.run([str(binary), *map(str, args)], cwd=cwd, env=env,
                                 capture_output=True, text=True)
         assert (result.returncode == 0) == success, (args, result.stdout, result.stderr)
-        return result.stdout
+        return result.stdout if success else result.stderr
 
     assert run('--version').strip() == tool + ' ' + manifest['version']
     if tool == 'papertiger':
-        run('status', success=False)
+        first_use = run('status', success=False)
+        assert 'with `init`' in first_use and 'same authority selectors' in first_use
+        assert '--db' not in first_use
         assert not (project / 'state/papertiger.sqlite').exists()
         run('init')
         run('plan', 'add', 'work', 'Project work', '--intent', 'Preserve outcomes')

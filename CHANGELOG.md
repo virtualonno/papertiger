@@ -6,6 +6,12 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Project skill guidance no longer points to an absent personal command binding.
+  First-use diagnostics preserve the selected authority instead of instructing
+  project users to guess a database path.
+
 ## [0.16.0] - 2026-09-17
 
 The release archives were replaced with ready-to-use project overlays. Download them again and verify the new checksums. Merge `.agents`, `.claude`, and `tools` into the project root; executables and documentation have moved under `tools/papertiger`. No setup command or project guidance rewrite is needed. Existing configuration and planning data are not shipped or overwritten.

@@ -69,14 +69,25 @@ impl Drop for Fixture {
 fn overlay_discovers_root_without_setup_and_never_recreates_missing_history() {
     let f = Fixture::new();
     f.overlay();
-    assert!(!f.run(&["status"]).status.success());
+    let first_use = f.run(&["status"]);
+    assert!(!first_use.status.success());
+    let hint = String::from_utf8(first_use.stderr).unwrap();
+    assert!(hint.contains("with `init`"), "{hint}");
+    assert!(hint.contains("same authority selectors"), "{hint}");
+    assert!(!hint.contains("--db"), "{hint}");
     assert!(!f.0.join("state").exists());
     f.ok(&["init"]);
     f.ok(&["--project-root", f.0.to_str().unwrap(), "audit"]);
     assert!(!f.0.join("nested/work/state").exists());
     let database = f.0.join("state/papertiger.sqlite");
     fs::remove_file(&database).unwrap();
-    assert!(!f.run(&["status"]).status.success());
+    let missing_history = f.run(&["status"]);
+    assert!(!missing_history.status.success());
+    assert!(
+        String::from_utf8(missing_history.stderr)
+            .unwrap()
+            .contains("restore an export instead of initializing")
+    );
     assert!(!database.exists());
 }
 

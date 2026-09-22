@@ -209,7 +209,8 @@ fn open_existing_refuses_missing_database_without_creating_it() {
         message.contains("no Papertiger authority exists"),
         "{message}"
     );
-    assert!(message.contains("papertiger --db"), "{message}");
+    assert!(message.contains("with `init`"), "{message}");
+    assert!(message.contains("same authority selectors"), "{message}");
     assert!(message.contains("restore an export"), "{message}");
     assert!(!path.exists(), "failed open must not create the database");
 }
@@ -231,10 +232,22 @@ fn cli_status_refuses_missing_database_without_creating_it() {
         "{stderr}"
     );
     assert!(stderr.contains("restore an export"), "{stderr}");
+    assert!(stderr.contains("same authority selectors"), "{stderr}");
     assert!(
         !path.exists(),
         "failed command must not create the database"
     );
+    let initialized = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .args(["--db", path.to_str().unwrap(), "init"])
+        .output()
+        .unwrap();
+    assert!(initialized.status.success());
+    let status = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .args(["--db", path.to_str().unwrap(), "status"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
