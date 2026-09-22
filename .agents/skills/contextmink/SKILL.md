@@ -13,11 +13,10 @@ user to name it. Return to direct tools when the exact result is known to be sma
 
 <!-- installed-command -->
 
-Use the installed command above when present. For a project installation, resolve
+For a project installation, resolve
 `tools/contextmink/bin/contextmink[.exe]` from the project root; a source-vendored
 Bash project may use `scripts/contextmink`. Keep cwd in the consuming project so
-its configuration applies. Native built-in commands need no Bash bridge, project
-guidance edits, or new configuration. If the runtime is missing, report the
+its configuration applies. Native built-in commands need no project guidance edits or new configuration. If the runtime is missing, report the
 incomplete project bundle rather than inventing an executable path.
 Below, `contextmink` means the resolved native executable (quoted with `&` in
 PowerShell when its path contains spaces).
@@ -50,6 +49,11 @@ values with `--at`; summaries are not their contents. For objects keyed by IDs,
 use `--entries --fields FIELD` to project children while preserving their keys.
 Missing fields differ from nulls. Prefer domain tools' own compact queries.
 
+In Windows Git Bash, scope `MSYS_NO_PATHCONV=1` to a native command carrying a
+JSON Pointer: `MSYS_NO_PATHCONV=1 contextmink json-select report.json --at /report/plan_id`.
+Otherwise MSYS may rewrite the pointer as a filesystem path. PowerShell and
+native process calls do not need this setting.
+
 ## Preserve evidence limits
 
 Do not pipe bounded output through `head` or `tail`: that can remove the receipt.
@@ -67,4 +71,4 @@ matter: capture is not an archive. Never repeat a mutation or costly command jus
 to recover clipped output. Inspect retained artifacts or establish safe replay.
 
 Read [the integration reference](../../../tools/contextmink/agent_integration.md)
-only for setup, configuration, hooks, shell bridges or unfamiliar receipt fields.
+only for setup, configuration, hooks or unfamiliar receipt fields.
