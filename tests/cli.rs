@@ -214,7 +214,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     let full = read(&["show", "1", "--json"]);
     let current = read(&["show", "1", "--no-history", "--json"]);
     assert_eq!(current["task"], full["task"]);
-    assert_eq!(current["schema"], "papertiger.task_current.v2");
+    assert_eq!(current["schema"], "papertiger.task_current.v3");
     assert!(current.get("recent_events").is_none());
     assert_eq!(current["history_command"], "papertiger log --task 1 --json");
     assert_eq!(
@@ -271,7 +271,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
         ),
         (
             vec!["show", "1", "--no-history"],
-            "papertiger.task_current.v2",
+            "papertiger.task_current.v3",
         ),
     ] {
         let output = invoke(&args);
@@ -535,8 +535,9 @@ fn backup_preserves_legacy_schema_and_committed_wal_without_importing_evidence()
         DROP VIEW canonical_events; DROP TABLE event_quarantines; DROP TABLE external_references;
         ALTER TABLE tasks DROP COLUMN pickup_at;
 ALTER TABLE tasks DROP COLUMN pickup_session;
+ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
 UPDATE meta SET value='8' WHERE key='schema_version';
-        UPDATE gates SET status='closed', evidence_locator='commit:ca9ff90';
+        UPDATE gates SET status='resolved', evidence_locator='commit:ca9ff90';
         BEGIN IMMEDIATE;
         UPDATE tasks SET title='uncommitted change';",
         )
@@ -1145,7 +1146,7 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
         &db.0,
         &[
             "gate",
-            "close",
+            "resolve",
             "1",
             "proof",
             "--evidence",
@@ -1206,15 +1207,15 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
             "replace invalid evidence binding after papertiger evidence verify"
         ])
     );
-    let close_arguments =
+    let resolve_arguments =
         drifted_json["projection"]["bindings"][0]["corrective_commands"][1]["arguments"]
             .as_array()
             .unwrap();
     assert_eq!(
-        &close_arguments[..7],
+        &resolve_arguments[..7],
         serde_json::json!([
             "gate",
-            "close",
+            "resolve",
             "1",
             "proof",
             "--evidence",
@@ -1263,7 +1264,7 @@ fn evidence_verification_json_is_summary_first_filtered_and_pageable() {
         ));
         assert_success(&papertiger(
             &db.0,
-            &["gate", "close", "1", name, "--evidence", locator],
+            &["gate", "resolve", "1", name, "--evidence", locator],
         ));
     }
 
@@ -1871,9 +1872,9 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     let gate = command_help(&["gate"]);
     for description in [
         "Add a named proof obligation",
-        "Close an open gate with an evidence locator",
+        "Resolve an open gate with an evidence locator",
         "Waive an open gate with durable rationale",
-        "Reopen a closed or waived gate",
+        "Reopen a resolved or waived gate",
         "Remove an open gate",
         "List every gate on one task",
     ] {
@@ -1930,7 +1931,7 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     let gate_add = command_help(&["gate", "add"]);
     assert!(
         gate_add.contains("Task sequence that owns the gate")
-            && gate_add.contains("Exact condition required to close the gate"),
+            && gate_add.contains("Proof required to resolve the gate"),
         "{gate_add}"
     );
     let commit_add = command_help(&["commit", "add"]);
@@ -2082,7 +2083,7 @@ fn commit_lookup_lifecycle_json_and_activity_sort_are_agent_usable() {
     let show = papertiger(&db.0, &["show", "1", "--json"]);
     assert_success(&show);
     let value: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
-    assert_eq!(value["schema"], "papertiger.task_context.v7");
+    assert_eq!(value["schema"], "papertiger.task_context.v8");
     assert!(value["activity"]["created_event"]["at"].is_string());
     assert!(value["activity"]["last_event"]["at"].is_string());
     assert_eq!(value["commit_associations"][0]["commit_oid"], oid);
@@ -2371,7 +2372,7 @@ fn retire_into_is_visible_without_redirecting_show() {
     let json = papertiger(&db.0, &["show", "1", "--json"]);
     assert_success(&json);
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(value["schema"], "papertiger.task_context.v7");
+    assert_eq!(value["schema"], "papertiger.task_context.v8");
     assert_eq!(value["task"]["seq"], 1);
     assert_eq!(value["replacement"]["seq"], 2);
     assert_eq!(value["recent_events"][0]["payload"]["replacement_seq"], 2);
@@ -2599,10 +2600,10 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     assert_success(&export);
     let receipt: serde_json::Value = serde_json::from_slice(&export.stdout).unwrap();
     assert_eq!(receipt["schema"], "papertiger.export_file.v1");
-    assert_eq!(receipt["dump_schema"], "papertiger.dump.v9");
+    assert_eq!(receipt["dump_schema"], "papertiger.dump.v10");
     let dump: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&export_path).unwrap()).unwrap();
-    assert_eq!(dump["schema"], "papertiger.dump.v9");
+    assert_eq!(dump["schema"], "papertiger.dump.v10");
     let same_authority = papertiger(
         &db.0,
         &["export", "--output", db.0.to_str().unwrap(), "--replace"],

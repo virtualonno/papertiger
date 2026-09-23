@@ -228,6 +228,189 @@ fn schema_migration_is_explicit_and_preserves_v1_plan_state() {
     std::fs::remove_file(path).unwrap();
 }
 
+const V12_GATES: &str = r#"
+CREATE TABLE gates_v12 (
+  gate_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL
+    CHECK (kind IN ('test','benchmark','review','capture','fixture','build','doc','other')),
+  requirement TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','waived')),
+  evidence_locator TEXT,
+  evidence_sha256 TEXT,
+  note TEXT,
+  closed_at TEXT,
+  UNIQUE (task_id, name)
+);
+INSERT INTO gates_v12
+SELECT gate_id, task_id, name, kind, requirement,
+       CASE status WHEN 'resolved' THEN 'closed' ELSE status END,
+       evidence_locator, evidence_sha256, note, resolved_at
+  FROM gates;
+DROP TABLE gates;
+ALTER TABLE gates_v12 RENAME TO gates;
+ALTER TABLE task_blockers RENAME COLUMN condition TO reason;
+UPDATE meta SET value='12' WHERE key='schema_version';
+"#;
+
+/// Rewrite a current authority into the exact v12 storage shape: legacy gate
+/// vocabulary, blocker `reason`, and admission triggers calling the retired
+/// function name.
+fn downgrade_to_v12(path: &std::path::Path) {
+    let raw = rusqlite::Connection::open(path).unwrap();
+    for name in [
+        "papertiger_write_requires_public_api",
+        "papertiger_write_requires_executable",
+    ] {
+        raw.create_scalar_function(
+            name,
+            0,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            |_| Ok(1_i64),
+        )
+        .unwrap();
+    }
+    raw.execute_batch(V12_GATES).unwrap();
+    let mut statement = raw
+        .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        .unwrap();
+    let tables = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    drop(statement);
+    for table in tables {
+        for operation in ["INSERT", "UPDATE", "DELETE"] {
+            let name = format!("papertiger_admit_{table}_{}", operation.to_lowercase());
+            raw.execute_batch(&format!(
+                "DROP TRIGGER IF EXISTS \"{name}\"; CREATE TRIGGER \"{name}\" BEFORE {operation} ON \"{table}\" BEGIN SELECT papertiger_write_requires_executable(); END;"
+            ))
+            .unwrap();
+        }
+    }
+}
+
+fn event_rows(conn: &rusqlite::Connection) -> Vec<(i64, String, Option<String>)> {
+    let mut statement = conn
+        .prepare("SELECT event_id, kind, payload FROM events ORDER BY event_id")
+        .unwrap();
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+}
+
+#[test]
+fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() {
+    let path = unique_test_path("v12-migration");
+    let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
+    pt::init(&conn).unwrap();
+    let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
+    let task = pt::add_task(&conn, "test", plan, "gated", "", None, &[], &[], 0, None).unwrap();
+    pt::add_gate(&conn, "test", task, "proof", "test", "tests pass").unwrap();
+    pt::add_gate(&conn, "test", task, "doc", "doc", "docs updated").unwrap();
+    pt::resolve_gate(&conn, "test", task, "proof", "file:proof.json", None, None).unwrap();
+    pt::waive_gate(&conn, "test", task, "doc", "not user-facing").unwrap();
+    pt::add_task_blocker(&conn, "test", task, "vendor", "vendor fix released").unwrap();
+    let resolved_at = pt::task_context(&conn, task).unwrap().gates[0]
+        .resolved_at
+        .clone()
+        .unwrap();
+    let events_before = event_rows(&conn);
+    drop(conn);
+    downgrade_to_v12(&path);
+
+    let refused = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .args(["--db", path.to_str().unwrap(), "status"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("init` explicitly to upgrade to v13")
+    );
+    let init = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .args(["--db", path.to_str().unwrap(), "init"])
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    assert!(String::from_utf8_lossy(&init.stdout).contains("from schema v12 to v13"));
+
+    let migrated = pt::open_existing(path.to_str().unwrap()).unwrap();
+    let context = pt::task_context(&migrated, task).unwrap();
+    assert_eq!(context.gates[0].status, "resolved");
+    assert_eq!(context.gates[0].resolved_at.as_deref(), Some(&*resolved_at));
+    assert_eq!(context.gates[1].status, "waived");
+    assert_eq!(context.blockers[0].condition, "vendor fix released");
+    assert_eq!(
+        event_rows(&migrated),
+        events_before,
+        "stored history must survive the migration verbatim"
+    );
+    let stale: i64 = migrated
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE sql LIKE '%papertiger_write_requires_executable%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stale, 0);
+    assert!(pt::write_guard_drift(&migrated).unwrap().is_empty());
+    pt::add_gate(&migrated, "test", task, "later", "test", "later proof").unwrap();
+    drop(migrated);
+
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let error = raw
+        .execute("UPDATE gates SET note='direct' WHERE name='later'", [])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("papertiger_write_requires_public_api"),
+        "{error}"
+    );
+    drop(raw);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn v9_dump_converts_once_to_v10_vocabulary() {
+    let v9 = r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],
+        "tasks":[{"seq":1,"plan":"p","title":"gated","status":"in_progress",
+          "pickup":{"session":null,"at":"2026-08-01T00:00:00Z"},
+          "gates":[{"name":"proof","kind":"test","requirement":"r","status":"closed",
+            "evidence_locator":"file:proof.json","closed_at":"2026-08-02T00:00:00Z"}],
+          "blockers":[{"name":"vendor","reason":"vendor fix released","status":"open",
+            "evidence_locator":null,"evidence_sha256":null,"note":null,"resolved_at":null}]}]}"#;
+    let dump = pt::parse_dump_json(v9).unwrap();
+    assert_eq!(dump.schema, "papertiger.dump.v10");
+    let conn = db();
+    pt::import(&conn, "test", &dump).unwrap();
+    let context = pt::task_context(&conn, 1).unwrap();
+    assert_eq!(context.gates[0].status, "resolved");
+    assert_eq!(
+        context.gates[0].resolved_at.as_deref(),
+        Some("2026-08-02T00:00:00Z")
+    );
+    assert_eq!(context.blockers[0].condition, "vendor fix released");
+    assert_eq!(
+        pt::export(&conn, None).unwrap().schema,
+        "papertiger.dump.v10"
+    );
+
+    let malformed = v9.replace(r#""reason":"vendor fix released","#, "");
+    let error = pt::parse_dump_json(&malformed).err().unwrap().to_string();
+    assert!(error.contains("papertiger.dump.v9 is malformed"), "{error}");
+    let v10_with_legacy_field = v9
+        .replace("papertiger.dump.v9", "papertiger.dump.v10")
+        .replace(r#""status":"closed""#, r#""status":"resolved""#);
+    assert!(pt::parse_dump_json(&v10_with_legacy_field).is_err());
+}
+
 #[test]
 fn open_existing_refuses_missing_database_without_creating_it() {
     let path = unique_test_path("missing-library-open");
@@ -462,7 +645,10 @@ fn typed_authority_identity_is_migrated_and_refuses_mise_databases() {
         .unwrap();
     legacy.execute_batch("ALTER TABLE tasks DROP COLUMN pickup_at; ALTER TABLE tasks DROP COLUMN pickup_session;").unwrap();
     legacy
-        .execute("UPDATE meta SET value='7' WHERE key='schema_version'", [])
+        .execute_batch(
+            "ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
+             UPDATE meta SET value='7' WHERE key='schema_version';",
+        )
         .unwrap();
     drop(legacy);
 
@@ -476,7 +662,7 @@ fn typed_authority_identity_is_migrated_and_refuses_mise_databases() {
     let legacy = pt::open_for_init(legacy_path.to_str().unwrap()).unwrap();
     assert_eq!(
         pt::init(&legacy).unwrap(),
-        pt::InitOutcome::Migrated { from: 7, to: 12 }
+        pt::InitOutcome::Migrated { from: 7, to: 13 }
     );
     assert_eq!(
         legacy
@@ -692,9 +878,9 @@ fn task_lifecycle_and_gate_honesty_rule() {
     let err = pt::complete_task(&conn, "test", seq, None).unwrap_err();
     assert!(err.to_string().contains("open gate"));
     // bad locator shape refused
-    let err = pt::close_gate(&conn, "test", seq, "smoke", "no-scheme", None, None).unwrap_err();
+    let err = pt::resolve_gate(&conn, "test", seq, "smoke", "no-scheme", None, None).unwrap_err();
     assert!(err.to_string().contains("scheme:value"));
-    pt::close_gate(
+    pt::resolve_gate(
         &conn,
         "test",
         seq,
@@ -938,7 +1124,7 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
         ),
     ] {
         assert_exact_error(
-            pt::close_gate(&conn, "test", task, "proof", locator, None, None),
+            pt::resolve_gate(&conn, "test", task, "proof", locator, None, None),
             expected,
         );
     }
@@ -950,7 +1136,7 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
         pt::remove_open_gate(&conn, "test", task, "proof", ""),
         "removing a gate requires a nonblank reason",
     );
-    pt::close_gate(&conn, "test", task, "proof", "file:proof.json", None, None).unwrap();
+    pt::resolve_gate(&conn, "test", task, "proof", "file:proof.json", None, None).unwrap();
     assert_exact_error(
         pt::remove_open_gate(&conn, "test", task, "proof", "closed"),
         &format!("no open gate 'proof' on #{task}"),
@@ -1000,7 +1186,7 @@ fn evidence_verifier_classifies_unhashed_missing_escaping_and_unsupported_bindin
         ),
     ] {
         pt::add_gate(&conn, "test", task, name, "review", "retained evidence").unwrap();
-        pt::close_gate(&conn, "test", task, name, locator, None, None).unwrap();
+        pt::resolve_gate(&conn, "test", task, name, locator, None, None).unwrap();
     }
 
     let report = pt::verify_evidence(
@@ -1072,7 +1258,7 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
             ),
         };
         pt::add_gate(&conn, "test", seq, name, "review", "retained evidence").unwrap();
-        pt::close_gate(&conn, "test", seq, name, locator, sha256, None).unwrap();
+        pt::resolve_gate(&conn, "test", seq, name, locator, sha256, None).unwrap();
         if index % 2 == 1 {
             pt::complete_task(&conn, "test", seq, None).unwrap();
         }
@@ -1301,7 +1487,7 @@ fn export_import_roundtrip_preserves_graph() {
     .unwrap();
     let b = pt::add_task(&conn, "test", plan, "b", "", None, &[a], &[], 0, None).unwrap();
     pt::add_gate(&conn, "test", a, "smoke", "test", "passes").unwrap();
-    pt::close_gate(&conn, "test", a, "smoke", "file:e.json", None, None).unwrap();
+    pt::resolve_gate(&conn, "test", a, "smoke", "file:e.json", None, None).unwrap();
     pt::complete_task(&conn, "test", a, None).unwrap();
     let dump = pt::export(&conn, None).unwrap();
     let json = serde_json::to_string(&dump).unwrap();
@@ -1329,20 +1515,20 @@ fn export_import_roundtrip_preserves_graph() {
 #[test]
 fn dump_parser_accepts_windows_utf8_bom() {
     let dump = pt::parse_dump_json(
-        "\u{feff}{\"schema\":\"papertiger.dump.v9\",\"plans\":[],\"tasks\":[]}",
+        "\u{feff}{\"schema\":\"papertiger.dump.v10\",\"plans\":[],\"tasks\":[]}",
     )
     .unwrap();
-    assert_eq!(dump.schema, "papertiger.dump.v9");
+    assert_eq!(dump.schema, "papertiger.dump.v10");
 }
 
 #[test]
-fn import_refuses_closed_gate_without_evidence() {
+fn import_refuses_resolved_gate_without_evidence() {
     let conn = db();
     let dump: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v9",
+        r#"{"schema":"papertiger.dump.v10",
             "plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"t","status":"done",
-                      "gates":[{"name":"g","kind":"test","requirement":"r","status":"closed"}]}]}"#,
+                      "gates":[{"name":"g","kind":"test","requirement":"r","status":"resolved"}]}]}"#,
     )
     .unwrap();
     let err = pt::import(&conn, "test", &dump).unwrap_err();
@@ -1354,7 +1540,7 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
     for (fixture, expected) in [
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task",
                     "result":"  ","result_source":"agent"}]
@@ -1363,19 +1549,19 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","gates":[{
                     "name":"proof","kind":"test","requirement":"prove it",
-                    "status":"closed","evidence_locator":"commit:notahash",
-                    "closed_at":"2026-08-23T12:00:00Z"
+                    "status":"resolved","evidence_locator":"commit:notahash",
+                    "resolved_at":"2026-08-23T12:00:00Z"
                 }]}]
             }"#,
             "invalid evidence_locator",
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -1388,7 +1574,7 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -1415,7 +1601,7 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
     let normalized = db();
     let dump: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v9",
+            "schema":"papertiger.dump.v10",
             "plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"task","intent":"asked",
                 "intent_source":" user ","tags":[" alpha "]}]
@@ -1445,7 +1631,7 @@ fn import_plan_events_are_dump_local_and_plan_reuse_requires_identical_definitio
     .unwrap();
     let external_event: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v9",
+            "schema":"papertiger.dump.v10",
             "plans":[{"slug":"incoming","title":"Incoming"}],
             "tasks":[],
             "events":[{
@@ -1464,7 +1650,7 @@ fn import_plan_events_are_dump_local_and_plan_reuse_requires_identical_definitio
 
     let conflicting: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v9",
+            "schema":"papertiger.dump.v10",
             "plans":[{"slug":"existing","title":"Different",
                 "intent":"destination definition"}],
             "tasks":[]
@@ -1487,7 +1673,7 @@ fn import_refuses_superseded_dump_with_a_complete_recovery_path() {
     let error = pt::import(&conn, "test", &dump).unwrap_err().to_string();
     assert!(error.contains("release that produced it"));
     assert!(error.contains("papertiger --db <temporary-authority> init"));
-    assert!(error.contains("re-export `papertiger.dump.v9`"));
+    assert!(error.contains("then re-export papertiger.dump.v10"));
 }
 
 #[test]
@@ -1664,7 +1850,7 @@ fn failed_add_is_atomic() {
 fn import_rejects_cycles_missing_parents_and_done_open_gates() {
     let conn = db();
     let cycle: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"a","deps":[2]},
                      {"seq":2,"plan":"p","title":"b","deps":[1]}]}"#,
     )
@@ -1672,14 +1858,14 @@ fn import_rejects_cycles_missing_parents_and_done_open_gates() {
     assert!(pt::import(&conn, "test", &cycle).is_err());
 
     let missing_parent: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":3,"plan":"p","title":"child","parent_seq":999}]}"#,
     )
     .unwrap();
     assert!(pt::import(&conn, "test", &missing_parent).is_err());
 
     let done_open: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":4,"plan":"p","title":"false done","status":"done",
                       "gates":[{"name":"g","kind":"test","requirement":"r"}]}]}"#,
     )
@@ -1696,7 +1882,7 @@ fn import_rejects_cycles_missing_parents_and_done_open_gates() {
 fn import_allocates_omitted_sequences_before_linking() {
     let conn = db();
     let dump: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":7,"plan":"p","title":"parent"},
                      {"plan":"p","title":"child","parent_seq":7,"deps":[7]}]}"#,
     )
@@ -1713,7 +1899,7 @@ fn evidence_and_waiver_reasons_are_durable() {
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
     let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
     pt::add_gate(&conn, "test", task, "g", "test", "r").unwrap();
-    let bad = pt::close_gate(
+    let bad = pt::resolve_gate(
         &conn,
         "test",
         task,
@@ -2075,7 +2261,7 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
         "the observed result is reproducible",
     )
     .unwrap();
-    pt::close_gate(
+    pt::resolve_gate(
         &conn,
         "test",
         task,
@@ -2104,7 +2290,7 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
     assert_eq!(reopened.status, "proposed");
     assert_eq!(reopened.result, None);
     let context = pt::task_context(&conn, task).unwrap();
-    assert_eq!(context.gates[0].status, "closed");
+    assert_eq!(context.gates[0].status, "resolved");
     assert_eq!(
         context.gates[0].evidence_locator.as_deref(),
         Some("experiment:run/1")
@@ -2264,7 +2450,7 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
     .unwrap();
 
     let dump = pt::export(&conn, Some("roundtrip-v2")).unwrap();
-    assert_eq!(dump.schema, "papertiger.dump.v9");
+    assert_eq!(dump.schema, "papertiger.dump.v10");
     let restored = db();
     pt::import(&restored, "test", &dump).unwrap();
     let restored_task = pt::get_task(&restored, task).unwrap();
@@ -2573,7 +2759,7 @@ fn terminal_gate_and_blocker_timestamps_roundtrip_without_import_fiction() {
     let plan = pt::add_plan(&conn, "test", "receipts", "Receipts", "").unwrap();
     let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
     pt::add_gate(&conn, "agent", task, "proof", "test", "prove it").unwrap();
-    pt::close_gate(
+    pt::resolve_gate(
         &conn,
         "agent",
         task,
@@ -2602,14 +2788,14 @@ fn terminal_gate_and_blocker_timestamps_roundtrip_without_import_fiction() {
     )
     .unwrap();
     let source = pt::task_context(&conn, task).unwrap();
-    let expected_closed_at = source.gates[0].closed_at.clone();
+    let expected_gate_resolved_at = source.gates[0].resolved_at.clone();
     let expected_resolved_at = source.blockers[0].resolved_at.clone();
     let dump = pt::export(&conn, None).unwrap();
 
     let restored = db();
     pt::import(&restored, "restore", &dump).unwrap();
     let actual = pt::task_context(&restored, task).unwrap();
-    assert_eq!(actual.gates[0].closed_at, expected_closed_at);
+    assert_eq!(actual.gates[0].resolved_at, expected_gate_resolved_at);
     assert_eq!(actual.blockers[0].resolved_at, expected_resolved_at);
 }
 
@@ -2618,32 +2804,32 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
     for (fixture, expected) in [
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","gates":[{
                     "name":"proof","kind":"test","requirement":"prove it",
-                    "status":"closed","evidence_locator":"file:evidence.json"
+                    "status":"resolved","evidence_locator":"file:evidence.json"
                 }]}]
             }"#,
-            "lacks closed_at",
+            "lacks resolved_at",
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","gates":[{
                     "name":"proof","kind":"test","requirement":"prove it",
-                    "closed_at":"2026-08-04T12:00:00Z"
+                    "resolved_at":"2026-08-04T12:00:00Z"
                 }]}]
             }"#,
-            "carries completion evidence or closed_at",
+            "carries completion evidence or resolved_at",
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","blockers":[{
-                    "name":"receipt","reason":"missing","status":"resolved",
+                    "name":"receipt","condition":"missing","status":"resolved",
                     "evidence_locator":"file:receipt.json","resolved_at":"yesterday"
                 }]}]
             }"#,
@@ -2651,10 +2837,10 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","blockers":[{
-                    "name":"receipt","reason":"missing","status":"waived","note":"not needed"
+                    "name":"receipt","condition":"missing","status":"waived","note":"not needed"
                 }]}]
             }"#,
             "lacks resolved_at",
@@ -2676,7 +2862,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
     for (fixture, expected) in [
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -2691,7 +2877,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"},{"slug":"q","title":"Q"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -2707,7 +2893,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v9",
+                "schema":"papertiger.dump.v10",
                 "plans":[{"slug":"p","title":"P"},{"slug":"q","title":"Q"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -2738,7 +2924,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
 fn import_refuses_invalid_task_status_event_targets_atomically() {
     let dump: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v9",
+            "schema":"papertiger.dump.v10",
             "plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"task"}],
             "events":[{
@@ -2788,7 +2974,7 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
 
     let external_event: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v9",
+            "schema":"papertiger.dump.v10",
             "plans":[{"slug":"incoming","title":"Incoming"}],
             "tasks":[{"seq":2,"plan":"incoming","title":"imported task"}],
             "events":[{
@@ -2820,7 +3006,7 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
 
     let collision: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v9",
+            "schema":"papertiger.dump.v10",
             "plans":[{"slug":"incoming","title":"Incoming"}],
             "tasks":[{"seq":1,"plan":"incoming","title":"colliding task"}]
         }"#,
@@ -2990,11 +3176,11 @@ fn commit_evidence_requires_full_oid_while_audit_finds_noncanonical_values() {
     let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
     pt::add_gate(&conn, "agent", task, "proof", "review", "commit proof").unwrap();
     let error =
-        pt::close_gate(&conn, "agent", task, "proof", "commit:abc1234", None, None).unwrap_err();
+        pt::resolve_gate(&conn, "agent", task, "proof", "commit:abc1234", None, None).unwrap_err();
     assert!(error.to_string().contains("full 40- or 64-character"));
 
     conn.execute(
-        "UPDATE gates SET status='closed', evidence_locator='commit:abc1234', closed_at=?1",
+        "UPDATE gates SET status='resolved', evidence_locator='commit:abc1234', resolved_at=?1",
         rusqlite::params![pt::now()],
     )
     .unwrap();
@@ -3373,7 +3559,7 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
         .unwrap();
 
         let dump = pt::export(&conn, plan_scope.then_some("main")).unwrap();
-        assert_eq!(dump.schema, "papertiger.dump.v9");
+        assert_eq!(dump.schema, "papertiger.dump.v10");
         let duplicate_dump = dump
             .tasks
             .iter()
@@ -3423,23 +3609,23 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
 fn import_refuses_invalid_replacement_graphs_atomically() {
     for (fixture, expected) in [
         (
-            r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"live","replacement_seq":2},{"seq":2,"plan":"p","title":"target"}]}"#,
+            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"live","replacement_seq":2},{"seq":2,"plan":"p","title":"target"}]}"#,
             "is not retired",
         ),
         (
-            r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":99}]}"#,
+            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":99}]}"#,
             "missing replacement #99",
         ),
         (
-            r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"a","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"b","status":"retired","replacement_seq":1}]}"#,
+            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"a","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"b","status":"retired","replacement_seq":1}]}"#,
             "replacement cycle",
         ),
         (
-            r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"rejected endpoint","status":"rejected"}]}"#,
+            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"rejected endpoint","status":"rejected"}]}"#,
             "replacement chain terminates",
         ),
         (
-            r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"retired endpoint","status":"retired"}]}"#,
+            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"retired endpoint","status":"retired"}]}"#,
             "retired without its own replacement",
         ),
     ] {
@@ -3757,6 +3943,7 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
          DROP VIEW canonical_events;
          DROP TABLE event_quarantines;
          DROP TABLE external_references;
+         ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
          UPDATE meta SET value='5' WHERE key='schema_version';",
     )
     .unwrap();
@@ -4209,7 +4396,7 @@ fn recovery_export_file_is_atomic_hash_bound_and_refuses_unreviewed_replace() {
     let receipt = pt::write_export_file(&path, &dump, false).unwrap();
     let first_bytes = std::fs::read(&path).unwrap();
     assert_eq!(receipt.schema, "papertiger.export_file.v1");
-    assert_eq!(receipt.dump_schema, "papertiger.dump.v9");
+    assert_eq!(receipt.dump_schema, "papertiger.dump.v10");
     assert_eq!(receipt.sha256, pt::sha256(&first_bytes));
     assert_eq!(receipt.bytes, first_bytes.len());
     assert!(first_bytes.ends_with(b"\n"));

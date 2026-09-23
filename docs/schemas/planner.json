@@ -584,7 +584,7 @@
         "status": {
           "enum": [
             "open",
-            "closed",
+            "resolved",
             "waived"
           ]
         },
@@ -618,7 +618,7 @@
             }
           ]
         },
-        "closed_at": {
+        "resolved_at": {
           "anyOf": [
             {
               "type": "string"
@@ -637,7 +637,7 @@
         "evidence_locator",
         "evidence_sha256",
         "note",
-        "closed_at"
+        "resolved_at"
       ],
       "additionalProperties": false
     },
@@ -647,7 +647,7 @@
         "name": {
           "type": "string"
         },
-        "reason": {
+        "condition": {
           "type": "string"
         },
         "status": {
@@ -700,7 +700,7 @@
       },
       "required": [
         "name",
-        "reason",
+        "condition",
         "status",
         "evidence_locator",
         "evidence_sha256",
@@ -717,7 +717,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_context.v7"
+          "const": "papertiger.task_context.v8"
         },
         "plan": {
           "$ref": "#/$defs/plan"
@@ -1211,7 +1211,7 @@
               "type": "string"
             },
             "schema_version": {
-              "const": 12
+              "const": 13
             },
             "event_head": {
               "anyOf": [
@@ -1484,7 +1484,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.dump.v9"
+          "const": "papertiger.dump.v10"
         },
         "plans": {
           "type": "array",
@@ -1611,7 +1611,7 @@
         "status": {
           "enum": [
             "open",
-            "closed",
+            "resolved",
             "waived"
           ]
         },
@@ -1645,7 +1645,7 @@
             }
           ]
         },
-        "closed_at": {
+        "resolved_at": {
           "anyOf": [
             {
               "type": "string"
@@ -1669,7 +1669,7 @@
         "name": {
           "type": "string"
         },
-        "reason": {
+        "condition": {
           "type": "string"
         },
         "status": {
@@ -1722,7 +1722,7 @@
       },
       "required": [
         "name",
-        "reason"
+        "condition"
       ],
       "additionalProperties": false
     },
@@ -1782,7 +1782,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_current.v2"
+          "const": "papertiger.task_current.v3"
         },
         "plan": {
           "$ref": "#/$defs/plan"

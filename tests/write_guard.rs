@@ -139,7 +139,10 @@ fn migration_guards_new_writes_and_preserves_earlier_malformed_rows() {
     }
     conn.execute_batch("DROP VIEW canonical_events; DROP TABLE event_quarantines;")
         .unwrap();
-    conn.execute_batch("UPDATE meta SET value='10' WHERE key='schema_version';")
+    conn.execute_batch(
+        "ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
+         UPDATE meta SET value='10' WHERE key='schema_version';",
+    )
         .unwrap();
     conn.execute_batch(&insert_event(
         "2026-09-19 02:41:00",
@@ -152,7 +155,7 @@ fn migration_guards_new_writes_and_preserves_earlier_malformed_rows() {
 
     assert!(matches!(
         pt::init(&conn).unwrap(),
-        pt::InitOutcome::Migrated { from: 10, to: 12 }
+        pt::InitOutcome::Migrated { from: 10, to: 13 }
     ));
     let installed: i64 = conn
         .query_row(
@@ -248,7 +251,7 @@ fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
     ] {
         let error = refusal(&raw, sql);
         assert!(
-            error.contains("papertiger_write_requires_executable"),
+            error.contains("papertiger_write_requires_public_api"),
             "{sql}: {error}"
         );
     }
@@ -258,7 +261,7 @@ fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
     let api = pt::open_existing(path.to_str().unwrap()).unwrap();
     assert!(
         refusal(&api, "UPDATE tasks SET priority=4")
-            .contains("papertiger_write_requires_executable")
+            .contains("papertiger_write_requires_public_api")
     );
     pt::add_note(&api, "agent", Some(1), "use the public API").unwrap();
     assert!(pt::audit(&api).unwrap().is_empty());

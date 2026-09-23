@@ -188,7 +188,7 @@ pub fn verify_evidence(
         },
         projection: EvidenceVerificationProjection {
             scope: format!(
-                "closed gates and resolved blockers{task_scope}; outcome={}; task_state={}",
+                "resolved gates and blockers{task_scope}; outcome={}; task_state={}",
                 options.outcome.as_str(),
                 options.task_state.as_str()
             ),

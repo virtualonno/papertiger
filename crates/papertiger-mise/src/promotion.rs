@@ -235,7 +235,7 @@ pub(crate) fn verify_papertiger_gate(
                 binding.task_seq, binding.gate_name
             )
         })?;
-    if gate.status != "closed"
+    if gate.status != "resolved"
         || gate.evidence_locator.as_deref() != Some(binding.evidence_locator.as_str())
         || gate.evidence_sha256.as_deref() != Some(binding.evidence_sha256.as_str())
     {
@@ -255,9 +255,9 @@ pub(crate) fn verify_papertiger_gate(
         evidence_locator: binding.evidence_locator.clone(),
         evidence_sha256: binding.evidence_sha256.clone(),
         closed_at: gate
-            .closed_at
+            .resolved_at
             .clone()
-            .context("closed Papertiger gate has no closure timestamp")?,
+            .context("resolved Papertiger gate has no resolution timestamp")?,
     })
 }
 
@@ -324,7 +324,7 @@ mod tests {
         let digest = "a".repeat(64);
         let nomination_id = "nomination-fixture";
         let evidence_locator = format!("papertiger-mise:nomination/{nomination_id}");
-        papertiger::close_gate(
+        papertiger::resolve_gate(
             &conn,
             "test",
             task,

@@ -73,7 +73,7 @@ pub use mise_projection_contract::{
     MiseSourceProjection,
 };
 
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.planner";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
 pub const TASK_DEFINITION_REVISION_SCHEMA: &str = "papertiger.task_definition_revision.v1";
@@ -453,18 +453,18 @@ CREATE TABLE gates (
   kind TEXT NOT NULL
     CHECK (kind IN ('test','benchmark','review','capture','fixture','build','doc','other')),
   requirement TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','waived')),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
   evidence_locator TEXT,
   evidence_sha256 TEXT,
   note TEXT,
-  closed_at TEXT,
+  resolved_at TEXT,
   UNIQUE (task_id, name)
 );
 CREATE TABLE task_blockers (
   blocker_id INTEGER PRIMARY KEY,
   task_id INTEGER NOT NULL REFERENCES tasks(task_id),
   name TEXT NOT NULL,
-  reason TEXT NOT NULL,
+  condition TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
   evidence_locator TEXT,
   evidence_sha256 TEXT,
@@ -516,6 +516,35 @@ CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, c
     tx.commit()?;
     Ok(InitOutcome::Created)
 }
+
+/// Blockers name their `condition`; gates share the blockers' `resolved`
+/// vocabulary. SQLite cannot alter a CHECK constraint, so gates are rebuilt.
+/// Stored events keep their original kinds and payloads.
+const SCHEMA_V13_MIGRATION: &str = r#"
+ALTER TABLE task_blockers RENAME COLUMN reason TO condition;
+CREATE TABLE gates_v13 (
+  gate_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL
+    CHECK (kind IN ('test','benchmark','review','capture','fixture','build','doc','other')),
+  requirement TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
+  evidence_locator TEXT,
+  evidence_sha256 TEXT,
+  note TEXT,
+  resolved_at TEXT,
+  UNIQUE (task_id, name)
+);
+INSERT INTO gates_v13
+  (gate_id, task_id, name, kind, requirement, status, evidence_locator, evidence_sha256, note, resolved_at)
+SELECT gate_id, task_id, name, kind, requirement,
+       CASE status WHEN 'closed' THEN 'resolved' ELSE status END,
+       evidence_locator, evidence_sha256, note, closed_at
+  FROM gates;
+DROP TABLE gates;
+ALTER TABLE gates_v13 RENAME TO gates;
+"#;
 
 fn migrate(conn: &Connection, from: i64) -> Result<()> {
     if from > SCHEMA_VERSION {
@@ -660,6 +689,14 @@ ALTER TABLE tasks
         history_recovery::install_schema(&tx)?;
         write_guard::install(&tx)?;
         version = 12;
+    }
+    if version == 12 {
+        // v12 admission triggers still call the retired function name; admit
+        // them for this migration, then reinstall the v13 boundary.
+        write_guard::admit_v12_migration(&tx)?;
+        tx.execute_batch(SCHEMA_V13_MIGRATION)?;
+        write_guard::install(&tx)?;
+        version = 13;
     }
     if version != SCHEMA_VERSION {
         bail!("no papertiger migration path from schema v{from} to v{SCHEMA_VERSION}");
@@ -1978,7 +2015,7 @@ pub fn complete_task_with_source(
     let open = open_gates(&tx, task.task_id)?;
     if !open.is_empty() {
         bail!(
-            "#{seq} has open gate(s): {}; close with evidence or waive with --why",
+            "#{seq} has open gate(s): {}; resolve each with `papertiger gate resolve {seq} <name> --evidence <locator>` or waive it with `papertiger gate waive {seq} <name> --why <reason>`",
             open.join(", ")
         );
     }
@@ -2365,7 +2402,7 @@ pub fn add_gate(
     Ok(())
 }
 
-pub fn close_gate(
+pub fn resolve_gate(
     conn: &Connection,
     actor: &str,
     seq: i64,
@@ -2379,7 +2416,7 @@ pub fn close_gate(
         actor,
         seq,
         name,
-        "closed",
+        "resolved",
         Some(evidence),
         sha256,
         note,
@@ -2471,7 +2508,7 @@ pub fn reopen_gate(conn: &Connection, actor: &str, seq: i64, name: &str, why: &s
     tx.execute(
         "UPDATE gates
             SET status='open', evidence_locator=NULL, evidence_sha256=NULL,
-                note=NULL, closed_at=NULL
+                note=NULL, resolved_at=NULL
           WHERE gate_id=?1",
         params![gate_id],
     )?;
@@ -2520,7 +2557,7 @@ fn resolve_open_gate_then(
     validate_optional_sha256(sha256)?;
     let stored_note = if to == "waived" { why } else { note };
     tx.execute(
-        "UPDATE gates SET status=?1, evidence_locator=?2, evidence_sha256=?3, note=?4, closed_at=?5
+        "UPDATE gates SET status=?1, evidence_locator=?2, evidence_sha256=?3, note=?4, resolved_at=?5
          WHERE gate_id=?6",
         params![to, evidence, sha256, stored_note, now(), gate_id],
     )?;
@@ -2590,7 +2627,7 @@ fn validate_optional_sha256(sha256: Option<&str>) -> Result<()> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskBlocker {
     pub name: String,
-    pub reason: String,
+    pub condition: String,
     #[serde(default = "default_open")]
     pub status: String,
     pub evidence_locator: Option<String>,
@@ -2601,7 +2638,7 @@ pub struct TaskBlocker {
 
 pub fn task_blockers(conn: &Connection, task_id: i64) -> Result<Vec<TaskBlocker>> {
     let mut statement = conn.prepare(
-        "SELECT name, reason, status, evidence_locator, evidence_sha256, note, resolved_at
+        "SELECT name, condition, status, evidence_locator, evidence_sha256, note, resolved_at
            FROM task_blockers
           WHERE task_id=?1
           ORDER BY blocker_id",
@@ -2610,7 +2647,7 @@ pub fn task_blockers(conn: &Connection, task_id: i64) -> Result<Vec<TaskBlocker>
         .query_map(params![task_id], |row| {
             Ok(TaskBlocker {
                 name: row.get(0)?,
-                reason: row.get(1)?,
+                condition: row.get(1)?,
                 status: row.get(2)?,
                 evidence_locator: row.get(3)?,
                 evidence_sha256: row.get(4)?,
@@ -2637,10 +2674,12 @@ pub fn add_task_blocker(
     actor: &str,
     seq: i64,
     name: &str,
-    reason: &str,
+    condition: &str,
 ) -> Result<()> {
-    if name.trim().is_empty() || reason.trim().is_empty() {
-        bail!("adding a blocker requires a nonblank name and reason");
+    if name.trim().is_empty() || condition.trim().is_empty() {
+        bail!(
+            "adding a blocker requires a nonblank name and condition; run `papertiger blocker add <task> <name> --condition <text>`"
+        );
     }
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
@@ -2651,9 +2690,9 @@ pub fn add_task_blocker(
         );
     }
     tx.execute(
-        "INSERT INTO task_blockers (task_id, name, reason)
+        "INSERT INTO task_blockers (task_id, name, condition)
          VALUES (?1, ?2, ?3)",
-        params![task.task_id, name.trim(), reason.trim()],
+        params![task.task_id, name.trim(), condition.trim()],
     )
     .with_context(|| {
         format!(
@@ -2667,7 +2706,7 @@ pub fn add_task_blocker(
         "task",
         Some(task.task_id),
         "blocker_add",
-        Some(reason.trim()),
+        Some(condition.trim()),
         Some(&serde_json::json!({"seq": seq, "name": name.trim()})),
     )?;
     tx.commit()?;
@@ -2847,13 +2886,13 @@ pub fn remove_open_task_blocker(
     let task = get_task(&tx, seq)?;
     let blocker: Option<(i64, String)> = tx
         .query_row(
-            "SELECT blocker_id, reason FROM task_blockers
+            "SELECT blocker_id, condition FROM task_blockers
               WHERE task_id=?1 AND name=?2 AND status='open'",
             params![task.task_id, name],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    let (blocker_id, reason) =
+    let (blocker_id, condition) =
         blocker.ok_or_else(|| anyhow!("no open blocker '{name}' on #{seq}"))?;
     tx.execute(
         "DELETE FROM task_blockers WHERE blocker_id=?1",
@@ -2869,7 +2908,7 @@ pub fn remove_open_task_blocker(
         Some(&serde_json::json!({
             "seq": seq,
             "name": name,
-            "reason": reason,
+            "condition": condition,
         })),
     )?;
     tx.commit()?;
@@ -2885,7 +2924,7 @@ pub struct GateRecord {
     pub evidence_locator: Option<String>,
     pub evidence_sha256: Option<String>,
     pub note: Option<String>,
-    pub closed_at: Option<String>,
+    pub resolved_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2923,7 +2962,7 @@ pub fn task_current(conn: &Connection, seq: i64) -> Result<serde_json::Value> {
     object.remove("recent_events");
     object.remove("recent_events_truncated");
     object.remove("older_events_cursor");
-    object.insert("schema".into(), "papertiger.task_current.v2".into());
+    object.insert("schema".into(), "papertiger.task_current.v3".into());
     object.insert(
         "history_command".into(),
         format!("papertiger log --task {seq} --json").into(),
@@ -2993,7 +3032,7 @@ fn task_context_with_history(
 
     let mut statement = conn.prepare(
         "SELECT name, kind, requirement, status, evidence_locator,
-                evidence_sha256, note, closed_at
+                evidence_sha256, note, resolved_at
            FROM gates
           WHERE task_id=?1
           ORDER BY gate_id",
@@ -3008,7 +3047,7 @@ fn task_context_with_history(
                 evidence_locator: row.get(4)?,
                 evidence_sha256: row.get(5)?,
                 note: row.get(6)?,
-                closed_at: row.get(7)?,
+                resolved_at: row.get(7)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -3022,7 +3061,7 @@ fn task_context_with_history(
     };
 
     Ok(TaskContext {
-        schema: "papertiger.task_context.v7".into(),
+        schema: "papertiger.task_context.v8".into(),
         plan,
         tags,
         parent: parent.as_ref().map(TaskSummary::from),
@@ -3707,10 +3746,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         }
     }
 
-    // Closed gates with malformed or unknown-scheme evidence.
+    // Resolved gates with malformed or unknown-scheme evidence.
     let mut st = conn.prepare(
         "SELECT t.seq, g.name, g.evidence_locator FROM gates g JOIN tasks t ON t.task_id=g.task_id
-         WHERE g.status='closed'",
+         WHERE g.status='resolved'",
     )?;
     let rows: Vec<(i64, String, Option<String>)> = st
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
@@ -3719,7 +3758,7 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         match loc {
             None => push(
                 "gate_no_evidence",
-                format!("#{seq} gate '{name}' closed without locator"),
+                format!("#{seq} gate '{name}' resolved without locator"),
             ),
             Some(l) => {
                 if validate_new_evidence_locator(&l).is_err() {
@@ -4136,10 +4175,60 @@ pub struct Dump {
     pub mise_projections: Vec<MiseProjectionDump>,
 }
 
+pub const DUMP_SCHEMA: &str = "papertiger.dump.v10";
+const DUMP_SCHEMA_V9: &str = "papertiger.dump.v9";
+
 /// Parse an exported dump, accepting the UTF-8 BOM emitted by Windows
-/// PowerShell 5's common `Set-Content -Encoding utf8` workflow.
+/// PowerShell 5's common `Set-Content -Encoding utf8` workflow. A
+/// `papertiger.dump.v9` document is converted by [`convert_dump_v9`] first.
 pub fn parse_dump_json(text: &str) -> Result<Dump> {
-    serde_json::from_str(text.trim_start_matches('\u{feff}')).context("parse papertiger dump")
+    let mut value: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        .context("parse papertiger dump")?;
+    if value.get("schema").and_then(serde_json::Value::as_str) == Some(DUMP_SCHEMA_V9) {
+        value = convert_dump_v9(value)?;
+    }
+    serde_json::from_value(value).context("parse papertiger dump")
+}
+
+/// The only legacy dump conversion: v9 named blocker text `reason`, used the
+/// gate status `closed` and its `closed_at` timestamp. Events and Mise
+/// projection documents are historical records and pass through unchanged.
+pub fn convert_dump_v9(mut value: serde_json::Value) -> Result<serde_json::Value> {
+    let invalid = || {
+        anyhow!(
+            "papertiger.dump.v9 is malformed; re-export it with the Papertiger release that produced it"
+        )
+    };
+    if value.get("schema").and_then(serde_json::Value::as_str) != Some(DUMP_SCHEMA_V9) {
+        return Err(invalid());
+    }
+    let tasks = value
+        .get_mut("tasks")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(invalid)?;
+    for task in tasks {
+        let task = task.as_object_mut().ok_or_else(invalid)?;
+        if let Some(gates) = task.get_mut("gates") {
+            for gate in gates.as_array_mut().ok_or_else(invalid)? {
+                let gate = gate.as_object_mut().ok_or_else(invalid)?;
+                if gate.get("status").and_then(serde_json::Value::as_str) == Some("closed") {
+                    gate.insert("status".into(), "resolved".into());
+                }
+                if let Some(closed_at) = gate.remove("closed_at") {
+                    gate.insert("resolved_at".into(), closed_at);
+                }
+            }
+        }
+        if let Some(blockers) = task.get_mut("blockers") {
+            for blocker in blockers.as_array_mut().ok_or_else(invalid)? {
+                let blocker = blocker.as_object_mut().ok_or_else(invalid)?;
+                let reason = blocker.remove("reason").ok_or_else(invalid)?;
+                blocker.insert("condition".into(), reason);
+            }
+        }
+    }
+    value["schema"] = DUMP_SCHEMA.into();
+    Ok(value)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -4217,7 +4306,7 @@ pub struct GateDump {
     #[serde(default)]
     pub note: Option<String>,
     #[serde(default)]
-    pub closed_at: Option<String>,
+    pub resolved_at: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -4330,7 +4419,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                 .query_map(params![t.task_id], |r| r.get(0))?
                 .collect::<rusqlite::Result<_>>()?;
             let mut st = conn.prepare(
-                "SELECT name, kind, requirement, status, evidence_locator, evidence_sha256, note, closed_at
+                "SELECT name, kind, requirement, status, evidence_locator, evidence_sha256, note, resolved_at
                  FROM gates WHERE task_id=?1 ORDER BY gate_id",
             )?;
             let gates: Vec<GateDump> = st
@@ -4343,7 +4432,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                         evidence_locator: r.get(4)?,
                         evidence_sha256: r.get(5)?,
                         note: r.get(6)?,
-                        closed_at: r.get(7)?,
+                        resolved_at: r.get(7)?,
                     })
                 })?
                 .collect::<rusqlite::Result<_>>()?;
@@ -4484,7 +4573,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
         mise_projection::export_mise_projections(conn, &selected_task_sequences)?;
 
     Ok(Dump {
-        schema: "papertiger.dump.v9".into(),
+        schema: DUMP_SCHEMA.into(),
         plans,
         tasks,
         events,
@@ -4493,9 +4582,9 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
 }
 
 pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usize)> {
-    if dump.schema != "papertiger.dump.v9" {
+    if dump.schema != DUMP_SCHEMA {
         bail!(
-            "unsupported dump schema '{}'; use the Papertiger release that produced it to import it into a temporary authority, run current `papertiger --db <temporary-authority> init`, then re-export `papertiger.dump.v9`",
+            "unsupported dump schema '{}'; `papertiger import <file>` reads {DUMP_SCHEMA} and converts {DUMP_SCHEMA_V9}; for older dumps, import into a temporary authority with the Papertiger release that produced it, run current `papertiger --db <temporary-authority> init`, then re-export {DUMP_SCHEMA}",
             dump.schema
         );
     }
@@ -4703,7 +4792,7 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
                     g.kind
                 );
             }
-            if !["open", "closed", "waived"].contains(&g.status.as_str()) {
+            if !["open", "resolved", "waived"].contains(&g.status.as_str()) {
                 bail!(
                     "import: gate '{}' on '{}' has unknown status '{}'",
                     g.name,
@@ -4711,50 +4800,50 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
                     g.status
                 );
             }
-            let closed_at = match g.status.as_str() {
+            let resolved_at = match g.status.as_str() {
                 "open" => {
                     if g.evidence_locator.is_some()
                         || g.evidence_sha256.is_some()
-                        || g.closed_at.is_some()
+                        || g.resolved_at.is_some()
                     {
                         bail!(
-                            "import: open gate '{}' on '{}' carries completion evidence or closed_at",
+                            "import: open gate '{}' on '{}' carries completion evidence or resolved_at",
                             g.name,
                             td.title
                         );
                     }
                     None
                 }
-                "closed" => {
+                "resolved" => {
                     let locator = g.evidence_locator.as_deref().with_context(|| {
                         format!(
-                            "import: closed gate '{}' on '{}' lacks evidence_locator",
+                            "import: resolved gate '{}' on '{}' lacks evidence_locator",
                             g.name, td.title
                         )
                     })?;
                     validate_new_evidence_locator(locator).with_context(|| {
                         format!(
-                            "import closed gate '{}' on '{}' has invalid evidence_locator {locator:?}",
+                            "import resolved gate '{}' on '{}' has invalid evidence_locator {locator:?}",
                             g.name, td.title
                         )
                     })?;
                     validate_optional_sha256(g.evidence_sha256.as_deref())?;
-                    let closed_at = g.closed_at.as_deref().with_context(|| {
+                    let resolved_at = g.resolved_at.as_deref().with_context(|| {
                         format!(
-                            "import: closed gate '{}' on '{}' lacks closed_at",
+                            "import: resolved gate '{}' on '{}' lacks resolved_at",
                             g.name, td.title
                         )
                     })?;
-                    let closed_at = closed_at.trim();
-                    chrono::DateTime::parse_from_rfc3339(closed_at).with_context(|| {
+                    let resolved_at = resolved_at.trim();
+                    chrono::DateTime::parse_from_rfc3339(resolved_at).with_context(|| {
                         format!(
-                            "import: closed gate '{}' on '{}' has invalid closed_at '{}'",
+                            "import: resolved gate '{}' on '{}' has invalid resolved_at '{}'",
                             g.name,
                             td.title,
-                            g.closed_at.as_deref().unwrap_or_default()
+                            g.resolved_at.as_deref().unwrap_or_default()
                         )
                     })?;
-                    Some(closed_at)
+                    Some(resolved_at)
                 }
                 "waived" => {
                     if g.note.as_deref().map(str::trim).is_none_or(str::is_empty) {
@@ -4771,39 +4860,39 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
                             td.title
                         );
                     }
-                    let closed_at = g.closed_at.as_deref().with_context(|| {
+                    let resolved_at = g.resolved_at.as_deref().with_context(|| {
                         format!(
-                            "import: waived gate '{}' on '{}' lacks closed_at",
+                            "import: waived gate '{}' on '{}' lacks resolved_at",
                             g.name, td.title
                         )
                     })?;
-                    let closed_at = closed_at.trim();
-                    chrono::DateTime::parse_from_rfc3339(closed_at).with_context(|| {
+                    let resolved_at = resolved_at.trim();
+                    chrono::DateTime::parse_from_rfc3339(resolved_at).with_context(|| {
                         format!(
-                            "import: waived gate '{}' on '{}' has invalid closed_at '{}'",
+                            "import: waived gate '{}' on '{}' has invalid resolved_at '{}'",
                             g.name,
                             td.title,
-                            g.closed_at.as_deref().unwrap_or_default()
+                            g.resolved_at.as_deref().unwrap_or_default()
                         )
                     })?;
-                    Some(closed_at)
+                    Some(resolved_at)
                 }
                 _ => unreachable!(),
             };
             tx.execute(
-                "INSERT INTO gates (task_id, name, kind, requirement, status, evidence_locator, evidence_sha256, note, closed_at)
+                "INSERT INTO gates (task_id, name, kind, requirement, status, evidence_locator, evidence_sha256, note, resolved_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     id, g.name, g.kind, g.requirement, g.status,
                     g.evidence_locator, g.evidence_sha256, g.note,
-                    closed_at
+                    resolved_at
                 ],
             )?;
         }
         for blocker in &td.blockers {
-            if blocker.name.trim().is_empty() || blocker.reason.trim().is_empty() {
+            if blocker.name.trim().is_empty() || blocker.condition.trim().is_empty() {
                 bail!(
-                    "import: blocker on '{}' has a blank name or reason",
+                    "import: blocker on '{}' has a blank name or condition",
                     td.title
                 );
             }
@@ -4901,12 +4990,12 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
             };
             tx.execute(
                 "INSERT INTO task_blockers
-                 (task_id, name, reason, status, evidence_locator, evidence_sha256, note, resolved_at)
+                 (task_id, name, condition, status, evidence_locator, evidence_sha256, note, resolved_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     id,
                     blocker.name,
-                    blocker.reason,
+                    blocker.condition,
                     blocker.status,
                     blocker.evidence_locator,
                     blocker.evidence_sha256,

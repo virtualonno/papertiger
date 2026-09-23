@@ -1310,7 +1310,7 @@ impl DogfoodFixture {
         .expect("planner gate");
         papertiger::start_task(&planner, "independent-operator", task, None, None)
             .expect("start planner task");
-        papertiger::close_gate(
+        papertiger::resolve_gate(
             &planner,
             "independent-operator",
             task,
@@ -1401,7 +1401,7 @@ impl DogfoodFixture {
             budget_balances(connection, CAMPAIGN_ID).expect("unchanged parent balances"),
             balances_before
         );
-        papertiger::close_gate(
+        papertiger::resolve_gate(
             &planner,
             "independent-operator",
             task,
@@ -1472,7 +1472,7 @@ impl DogfoodFixture {
         )
         .expect("reopen admitted gate");
         std::thread::sleep(Duration::from_millis(2));
-        papertiger::close_gate(
+        papertiger::resolve_gate(
             &planner,
             "independent-operator",
             task,

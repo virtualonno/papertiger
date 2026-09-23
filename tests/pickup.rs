@@ -226,12 +226,13 @@ fn migration_preserves_history_without_inventing_session_identity() {
     conn.execute_batch(
         "DROP VIEW canonical_events; DROP TABLE event_quarantines; ALTER TABLE tasks DROP COLUMN pickup_at;
         ALTER TABLE tasks DROP COLUMN pickup_session;
+        ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
         UPDATE meta SET value='9' WHERE key='schema_version';",
     )
     .unwrap();
     assert!(matches!(
         pt::init(&conn).unwrap(),
-        pt::InitOutcome::Migrated { from: 9, to: 12 }
+        pt::InitOutcome::Migrated { from: 9, to: 13 }
     ));
     assert!(matches!(pt::init(&conn).unwrap(), pt::InitOutcome::Current));
     let task = pt::get_task(&conn, first).unwrap();

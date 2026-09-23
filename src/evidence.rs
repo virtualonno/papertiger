@@ -98,7 +98,7 @@ pub(crate) fn verify_all_evidence(
            FROM gates gate
            JOIN tasks task ON task.task_id=gate.task_id
            LEFT JOIN tasks replacement ON replacement.task_id=task.replacement_task_id
-          WHERE gate.status='closed' AND (?1 IS NULL OR task.seq=?1)
+          WHERE gate.status='resolved' AND (?1 IS NULL OR task.seq=?1)
           ORDER BY task.seq, gate.gate_id",
     )?;
     bindings.extend(
@@ -298,7 +298,7 @@ fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerific
     let Some(expected) = binding.expected_sha256.as_deref() else {
         result.status = "unhashed".into();
         result.detail =
-            Some("binding has no stored SHA-256; reopen and close it with --sha256".into());
+            Some("binding has no stored SHA-256; reopen and resolve it with --sha256".into());
         return add_corrective_commands(result, &binding);
     };
     if let Err(error) = validate_sha256(expected, "stored evidence SHA-256") {
@@ -348,11 +348,6 @@ fn add_corrective_commands(
         "--why".into(),
         reason.into(),
     ]));
-    let action = if binding.entity == "gate" {
-        "close"
-    } else {
-        "resolve"
-    };
     let replacement_locator = if matches!(
         result.status.as_str(),
         "invalid_locator" | "invalid_path" | "path_escape" | "not_regular_file"
@@ -363,7 +358,7 @@ fn add_corrective_commands(
     };
     result.corrective_commands.push(command([
         binding.entity.into(),
-        action.into(),
+        "resolve".into(),
         binding.task_seq.to_string(),
         binding.name.clone(),
         "--evidence".into(),

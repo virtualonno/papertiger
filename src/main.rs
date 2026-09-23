@@ -367,7 +367,7 @@ enum Cmd {
         #[arg(long, value_name = "PATH")]
         output: std::path::PathBuf,
     },
-    /// Import a papertiger.dump.v9 JSON file
+    /// Import a papertiger.dump.v10 JSON file (papertiger.dump.v9 is converted)
     Import {
         /// Dump file to validate and import atomically
         file: String,
@@ -559,12 +559,12 @@ enum GateCmd {
         /// Evidence kind: test, benchmark, review, capture, fixture, build, doc, or other
         #[arg(long)]
         kind: String,
-        /// Exact condition required to close the gate
+        /// Proof required to resolve the gate
         #[arg(long)]
         requirement: String,
     },
-    /// Close an open gate with an evidence locator
-    Close {
+    /// Resolve an open gate with an evidence locator
+    Resolve {
         /// Task sequence that owns the gate
         task: String,
         /// Name of the open gate
@@ -588,7 +588,7 @@ enum GateCmd {
         #[command(flatten)]
         why: WhyArgs,
     },
-    /// Reopen a closed or waived gate
+    /// Reopen a resolved or waived gate
     Reopen {
         /// Task sequence that owns the gate
         task: String,
@@ -623,7 +623,7 @@ enum BlockerCmd {
         name: String,
         /// External condition preventing progress
         #[arg(long)]
-        reason: String,
+        condition: String,
     },
     /// Resolve an open blocker with external evidence
     Resolve {
@@ -998,7 +998,7 @@ fn print_task_context(context: &pt::TaskContext) {
             .unwrap_or_default();
         println!(
             "  blocker [{}] {}: {}{}{}{}",
-            blocker.status, blocker.name, blocker.reason, evidence, digest, note
+            blocker.status, blocker.name, blocker.condition, evidence, digest, note
         );
     }
     for commit in &context.commit_associations {
@@ -1934,7 +1934,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 pt::add_gate(&conn, &actor, seq, &name, &kind, &requirement)?;
                 mutation_output!("gate '{name}' added to #{seq}");
             }
-            GateCmd::Close {
+            GateCmd::Resolve {
                 task,
                 name,
                 evidence,
@@ -1942,7 +1942,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 note,
             } => {
                 let seq = pt::parse_task_ref(&task)?;
-                pt::close_gate(
+                pt::resolve_gate(
                     &conn,
                     &actor,
                     seq,
@@ -1951,7 +1951,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     sha256.as_deref(),
                     note.as_deref(),
                 )?;
-                mutation_output!("gate '{name}' on #{seq} closed");
+                mutation_output!("gate '{name}' on #{seq} resolved");
             }
             GateCmd::Waive { task, name, why } => {
                 let why = why.required()?;
@@ -1987,9 +1987,13 @@ fn run_planner(cli: Cli) -> Result<()> {
             }
         },
         Cmd::Blocker { cmd } => match cmd {
-            BlockerCmd::Add { task, name, reason } => {
+            BlockerCmd::Add {
+                task,
+                name,
+                condition,
+            } => {
                 let seq = pt::parse_task_ref(&task)?;
-                pt::add_task_blocker(&conn, &actor, seq, &name, &reason)?;
+                pt::add_task_blocker(&conn, &actor, seq, &name, &condition)?;
                 mutation_output!("blocker '{name}' added to #{seq}");
             }
             BlockerCmd::Resolve {
@@ -2036,7 +2040,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                         "[{}] {}: {}{}",
                         blocker.status,
                         blocker.name,
-                        blocker.reason,
+                        blocker.condition,
                         blocker
                             .evidence_locator
                             .map(|locator| format!(" -> {locator}"))

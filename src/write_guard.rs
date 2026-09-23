@@ -6,9 +6,9 @@
 //! only: rows stored before schema v11 stay untouched and remain visible to
 //! `papertiger audit` as evidence.
 //!
-//! Schema v12 also requires a connection-local function installed by
-//! `begin_mutation`. An ordinary SQLite writer lacks that function, even when
-//! its SQL is well formed. Calling the public mutation API explicitly admits
+//! Every table also carries admission triggers that call a connection-local
+//! function installed by `begin_mutation`. An ordinary SQLite writer lacks
+//! that function, even when its SQL is well formed. Calling the public mutation API explicitly admits
 //! that connection; callers of that API are trusted. This is an accident and
 //! agent-misuse boundary, not a sandbox against a filesystem owner capable of
 //! replacing triggers, registering functions, or rewriting the database file.
@@ -16,9 +16,21 @@
 use anyhow::{Result, bail};
 use rusqlite::{Connection, OptionalExtension, functions::FunctionFlags};
 
+const ADMISSION_FUNCTION: &str = "papertiger_write_requires_public_api";
+
 pub(crate) fn admit(conn: &Connection) -> Result<()> {
+    register_admission(conn, ADMISSION_FUNCTION)
+}
+
+/// Schema v12 triggers call the function's former name. Only the v12→v13
+/// migration admits it, inside the transaction that replaces those triggers.
+pub(crate) fn admit_v12_migration(conn: &Connection) -> Result<()> {
+    register_admission(conn, "papertiger_write_requires_executable")
+}
+
+fn register_admission(conn: &Connection, name: &str) -> Result<()> {
     conn.create_scalar_function(
-        "papertiger_write_requires_executable",
+        name,
         0,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_INNOCUOUS,
         |_| Ok(1_i64),
@@ -47,7 +59,7 @@ fn canonical_guards(conn: &Connection) -> Result<Vec<(String, String)>> {
         for operation in ["INSERT", "UPDATE", "DELETE"] {
             let name = format!("papertiger_admit_{table}_{}", operation.to_lowercase());
             let sql = format!(
-                "CREATE TRIGGER \"{}\" BEFORE {operation} ON \"{}\" BEGIN SELECT papertiger_write_requires_executable(); END",
+                "CREATE TRIGGER \"{}\" BEFORE {operation} ON \"{}\" BEGIN SELECT {ADMISSION_FUNCTION}(); END",
                 name.replace('"', "\"\""),
                 table.replace('"', "\"\"")
             );
