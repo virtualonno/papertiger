@@ -6,18 +6,22 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-23
+
 This release renames planner storage, commands, flags and JSON identifiers
 with no compatibility aliases. To upgrade an authority, run
 `papertiger --db <authority> backup --output <new-path>` with the new binary,
 then `papertiger init` to migrate it from schema v12 to v13. Until then
 commands that open the authority, other than `init` and `backup`, refuse it
-and name that command. Then
-update scripts for the renames below and rerun `setup-project` from the
+and name that command. A Mise authority likewise needs
+`papertiger-mise --db <database> init` (schema v10). Then update scripts for the renames below and rerun `setup-project` from the
 verified release binary so the project skill and reference match.
 
 ### Changed
 
-- Release archives carry `papertiger.release_manifest.v3` (was `papertiger.release-manifest.v2`); update any script that checks the manifest schema.
+- Release archives carry `papertiger.release_manifest.v3` (was
+  `papertiger.release-manifest.v2`); update scripts that check the manifest
+  schema.
 - Blockers record a `condition`: `blocker add <task> <name> --condition <text>`
   replaces `--reason`, and JSON, dumps and the database column use `condition`.
 - Gates use the blockers' vocabulary: `gate resolve` replaces `gate close`, and
@@ -75,7 +79,8 @@ verified release binary so the project skill and reference match.
   JSON `target` for a paired execution is `paired_execution`.
 - Mise authority schema v10 renames the recorded cancellation rationale to
   `why` and the recorded Papertiger gate time to `papertiger_gate_resolved_at`;
-  promotion proofs and successor admissions report it as `resolved_at`. Run `papertiger-mise --db <database> init` once after upgrading;
+  promotion proofs and successor admissions report it as `resolved_at`.
+  Run `papertiger-mise --db <database> init` once after upgrading;
   read commands refuse a v9 authority and name that command.
 - Every Mise schema, protocol and domain-separation id is
   `papertiger-mise.<snake_case_name>.v<N>` with its version advanced, and
