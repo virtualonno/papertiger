@@ -10,6 +10,10 @@ pub const MISE_PLANNER_PROJECTION_SCHEMA: &str = "papertiger.mise_planner_projec
 /// Documents recorded before 0.18 carry this id inside their hashed bytes.
 /// They stay readable and importable; new recordings must use the current id.
 pub const MISE_PLANNER_PROJECTION_SCHEMA_V1: &str = "papertiger.mise-planner-projection.v1";
+/// Candidate material id a projection must embed: a pre-0.18 projection keeps
+/// the material id it was hashed with; a current projection uses the current id.
+const CANDIDATE_MATERIAL_SCHEMA: &str = "papertiger-mise.candidate_material.v2";
+const CANDIDATE_MATERIAL_SCHEMA_V1: &str = "papertiger-mise.candidate-material.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -180,10 +184,17 @@ impl MisePlannerProjection {
         }
         let material: Value = serde_json::from_slice(material_bytes)
             .context("projected candidate material is not JSON")?;
-        if material.get("schema").and_then(Value::as_str)
-            != Some("papertiger-mise.candidate_material.v2")
-        {
-            bail!("projected candidate material has an unsupported schema");
+        let expected_material = if self.schema == MISE_PLANNER_PROJECTION_SCHEMA_V1 {
+            CANDIDATE_MATERIAL_SCHEMA_V1
+        } else {
+            CANDIDATE_MATERIAL_SCHEMA
+        };
+        let found_material = material.get("schema").and_then(Value::as_str);
+        if found_material != Some(expected_material) {
+            bail!(
+                "projected candidate material schema {found_material:?} does not match projection schema '{}' (expected '{expected_material}'); export the projection again with this release's `papertiger-mise projection export`",
+                self.schema
+            );
         }
         let material_paths = material
             .pointer("/scope/changed_paths")

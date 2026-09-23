@@ -312,8 +312,7 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
     downgrade_to_v12(&path);
     // A projection recorded before 0.18 carries the retired id inside its
     // hashed bytes; the immutable row can never be rewritten.
-    let mut legacy = mise_projection_fixture();
-    legacy.schema = pt::MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned();
+    let legacy = legacy_mise_projection_fixture();
     let legacy_sha256 = legacy.projection_sha256().unwrap();
     let raw = rusqlite::Connection::open(&path).unwrap();
     raw.create_scalar_function(
@@ -2430,6 +2429,38 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
     assert!(pt::audit(&restored).unwrap().is_empty());
 }
 
+/// A projection exactly as recorded before 0.18: both the projection id and
+/// the embedded candidate material id are the retired hyphenated forms.
+fn legacy_mise_projection_fixture() -> pt::MisePlannerProjection {
+    let mut legacy = mise_projection_fixture();
+    legacy.schema = pt::MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned();
+    legacy.candidate_material_json = legacy.candidate_material_json.replace(
+        "papertiger-mise.candidate_material.v2",
+        "papertiger-mise.candidate-material.v1",
+    );
+    legacy.candidate_material_sha256 = pt::sha256(legacy.candidate_material_json.as_bytes());
+    legacy
+}
+
+#[test]
+fn projection_and_candidate_material_ids_must_share_a_generation() {
+    let legacy = legacy_mise_projection_fixture();
+    let mut current_outer = legacy.clone();
+    current_outer.schema = pt::MISE_PLANNER_PROJECTION_SCHEMA.to_owned();
+    let mut legacy_outer = mise_projection_fixture();
+    legacy_outer.schema = pt::MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned();
+    for mixed in [current_outer, legacy_outer] {
+        let error = mixed.validate().unwrap_err().to_string();
+        assert!(
+            error.contains("does not match projection schema")
+                && error.contains("papertiger-mise projection export"),
+            "{error}"
+        );
+    }
+    legacy.validate().unwrap();
+    mise_projection_fixture().validate().unwrap();
+}
+
 fn mise_projection_fixture() -> pt::MisePlannerProjection {
     use pt::{
         MISE_PLANNER_PROJECTION_SCHEMA, MiseBudgetProjection, MiseMutationProjection,
@@ -2520,8 +2551,7 @@ fn mise_projection_is_immutable_idempotent_non_authoritative_and_transferable() 
 
 #[test]
 fn legacy_mise_projection_id_is_readable_history_but_not_recordable() {
-    let mut legacy = mise_projection_fixture();
-    legacy.schema = pt::MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned();
+    let legacy = legacy_mise_projection_fixture();
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "projection", "Projection", "").unwrap();
     let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("evidence")).unwrap();
