@@ -430,9 +430,10 @@ authority is tracked, review it and use `git rm --cached -- <path>`. Start a
 fresh harness session after a skill changes.
 
 `uninstall-project` is the inverse: run it from an external binary matching the
-receipt version and preview with `--dry-run`. It removes the reference, the
-receipt's skill files, and the receipt; it removes the host binary and its
-receipt only when they match that release, and refuses otherwise. Planner and
+receipt version and preview with `--dry-run`. It removes every owned path
+without comparing content: the reference, the receipt's skill files, the host
+binary and its runtime receipt, and the receipt. It refuses a symlink or
+non-regular file at an owned path. Planner and
 Mise authorities, sidecars, Mise objects, repository guidance and the
 `.gitignore` policy stay in place; data disposal is a separate decision.
 

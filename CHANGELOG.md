@@ -16,20 +16,23 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Changed
 
-- Installed skills and the project reference are release files:
-  `setup-project` and `setup-user` overwrite them with the release version, and
-  `uninstall-project`/`uninstall-user` remove them, whether or not they were
-  edited. Keep project-specific guidance in `AGENTS.md` or `CLAUDE.md`, which
-  setup never touches. Binaries are still identity-checked: the personal
-  runtime refuses to run, and uninstall refuses to remove, a binary that
-  differs from its receipt.
+- Installed skills, the project reference and installed binaries are release
+  files: `setup-project` and `setup-user` overwrite them with the release
+  version, and `uninstall-project`/`uninstall-user` remove them, whether or not
+  they were edited. Keep project-specific guidance in `AGENTS.md` or
+  `CLAUDE.md`, which setup never touches. A binary's identity is checked only
+  before it runs: project discovery and the personal runtime refuse a binary
+  that differs from its receipt, and uninstall removes it.
 - Project receipts are `papertiger.project_install.v3` and personal receipts
   `papertiger.user_install.v2`; neither records file hashes. The next
   `setup-project` or `setup-user` rewrites a v2 project or v1 personal receipt.
   An older receipt is refused: move it aside and rerun setup to reinstall.
-- `setup-project` reports `papertiger.project_install_result.v7` and
+- `setup-project` reports `papertiger.project_install_result.v7`,
+  `uninstall-project` reports `papertiger.project_uninstall.v3` and
   `setup-user` reports `papertiger.user_setup.v2`; update scripts that check
-  these schemas.
+  these schemas. The uninstall result's only refusal action is
+  `non_file_refusal`, for a symlink or non-regular file at an owned path; it
+  replaces `modified_refusal`.
 - Mise refuses an unrecognized schema or protocol id by naming the id it
   expects. `papertiger_mise::schema_ids` is no longer public.
 - Mise command messages consistently say "paired execution" (for example

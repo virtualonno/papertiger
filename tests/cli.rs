@@ -1880,6 +1880,10 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
         uninstall.contains("preserves authority and repository policy"),
         "{uninstall}"
     );
+    assert!(
+        uninstall.contains("papertiger.project_uninstall.v3"),
+        "{uninstall}"
+    );
 
     let plan = command_help(&["plan"]);
     for description in [

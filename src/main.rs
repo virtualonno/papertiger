@@ -64,7 +64,8 @@ enum Cmd {
         #[arg(long, value_enum, value_name = "auto|agents|claude|both|none")]
         skill_target: Option<project_setup::SkillTargetRequest>,
     },
-    /// Remove the receipt-named project integration files; preserves authority and repository policy
+    /// Remove every path the project integration owns, edited or not; preserves authority and repository policy
+    #[command(after_help = "JSON schema: papertiger.project_uninstall.v3")]
     UninstallProject {
         /// Existing consuming project directory
         project_root: std::path::PathBuf,

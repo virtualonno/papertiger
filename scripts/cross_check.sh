@@ -21,7 +21,7 @@ planner_semver="${planner_version#papertiger }"
 test "$planner_semver" = "${mise_version#papertiger-mise }"
 
 release_workflow="$root/.github/workflows/release-artifacts.yml"
-grep -Fq '"schema": "papertiger.project_uninstall.v2"' "$release_workflow"
+grep -Fq '"schema": "papertiger.project_uninstall.v3"' "$release_workflow"
 
 bash scripts/validate_release_dispatch.sh \
   "$planner_semver" false refs/heads/codex/local-verification
@@ -191,9 +191,19 @@ fi
 
 ignore_fingerprint="$(cksum "$project/.gitignore")"
 mise_fingerprint="$(cksum "$project/state/papertiger-mise.sqlite")"
+# Ownership is by path: a tampered host binary refuses to run, and uninstall
+# still removes it without comparing content.
+printf 'tampered' >> "$installed_planner"
+if (cd "$project/nested/work" && "$installed_planner" status --json) \
+    > /dev/null 2> "$fixture/tampered-status.err"; then
+  echo "project discovery ran a tampered host binary" >&2
+  exit 1
+fi
+grep -q 'installed Papertiger binary identity does not match' \
+  "$fixture/tampered-status.err"
 "$planner" uninstall-project "$project" --dry-run --json \
   > "$fixture/uninstall-dry-run.json"
-grep -q '"schema": "papertiger.project_uninstall.v2"' \
+grep -q '"schema": "papertiger.project_uninstall.v3"' \
   "$fixture/uninstall-dry-run.json"
 grep -q '"operation": "remove"' "$fixture/uninstall-dry-run.json"
 test -f "$project/tools/papertiger/project-install.json"

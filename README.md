@@ -77,18 +77,20 @@ shared Agent Skills location; Claude reads its generated copy. Other harnesses m
 an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
-A host-local `user-install.json` lists the installed files and records the tool
-version and the runtime binary's SHA-256. The skills and reference belong to the
-release: setup writes them as shipped, so keep personal guidance elsewhere. The
-installed runtime refuses a missing receipt or a binary that differs from it.
+A host-local `user-install.json` lists the installed paths and records the tool
+version and the runtime binary's SHA-256. The skills, reference and runtime
+belong to the release: setup writes them as shipped, so keep personal guidance
+elsewhere. Before every command, the installed runtime refuses a missing
+receipt or a binary that differs from it.
 Run repair or upgrade from an external release, not the installed executable.
 Installation preflights all managed paths, but does not promise a crash-atomic
 multi-file transaction; an interrupted install must be repaired before the
 runtime can run.
 
-`uninstall-user --dry-run` previews removal. `uninstall-user` removes the
-receipt-listed skill and reference files, and the runtime when it matches the
-receipt, then retains the lifecycle receipt;
+`uninstall-user --dry-run` previews removal. `uninstall-user` removes every
+receipt-listed path (skills, reference and runtime) without comparing content,
+so it also removes a tampered runtime that refuses to run. It refuses a link or
+non-file at an owned path, then retains the lifecycle receipt;
 it never removes project installations or unrelated skills. Do not copy personal
 receipts between machines or move their home: install for the new home instead.
 
@@ -302,11 +304,13 @@ papertiger uninstall-project /path/to/project --dry-run --json
 papertiger uninstall-project /path/to/project --json
 ```
 
-Uninstall requires a matching-version receipt and removes the contract, the
-receipt's skill files, the native binary when its bytes equal the external
-release binary, its exact host receipt, and finally the tracked receipt. It
-refuses a differing binary or host receipt and project-local self-deletion
-before writing. It deliberately retains the planner authority
+Uninstall requires a matching-version receipt and removes, by path and without
+comparing content, the contract, the receipt's skill files, the native binary,
+its host receipt, and finally the tracked receipt. A tampered binary refuses to
+run but is still removed. Before writing, uninstall refuses a symlink or
+non-regular file at an owned path (`non_file_refusal` in its
+`papertiger.project_uninstall.v3` result) and project-local self-deletion. It
+deliberately retains the planner authority
 and SQLite sidecars, Mise authority and evidence store, repository guidance,
 unrelated skills, and the complete `.gitignore` policy. Removing or archiving
 retained authority is a separate data-lifecycle decision.

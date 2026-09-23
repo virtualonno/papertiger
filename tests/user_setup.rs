@@ -137,9 +137,17 @@ fn personal_skills_are_release_owned_and_runtime_identity_is_gated() {
         "a divergent runtime must fail closed"
     );
     assert!(String::from_utf8_lossy(&runtime.stderr).contains("differs from its receipt"));
-    let before = snapshot(&f.0);
-    assert!(!f.run(&["uninstall-user"]).status.success());
-    assert_eq!(snapshot(&f.0), before);
+    let removal = f.run(&["uninstall-user"]);
+    assert!(
+        removal.status.success(),
+        "uninstall-user removes owned paths without comparing content: {}",
+        String::from_utf8_lossy(&removal.stderr)
+    );
+    assert!(
+        !f.runtime().exists(),
+        "a tampered runtime is removed by path"
+    );
+    assert!(!f.skill().exists());
     f.install();
     assert!(
         Command::new(f.runtime())
@@ -149,6 +157,19 @@ fn personal_skills_are_release_owned_and_runtime_identity_is_gated() {
             .status
             .success()
     );
+}
+#[test]
+fn non_file_at_owned_personal_path_refuses_uninstall() {
+    let f = Fixture::new();
+    f.install();
+    fs::remove_file(f.skill()).unwrap();
+    fs::create_dir(f.skill()).unwrap();
+    let before = snapshot(&f.0);
+    let removal = f.run(&["uninstall-user"]);
+    assert!(!removal.status.success());
+    assert!(String::from_utf8_lossy(&removal.stderr).contains("wrong file type"));
+    assert_eq!(snapshot(&f.0), before);
+    assert!(f.runtime().is_file());
 }
 #[test]
 fn personal_receipt_cannot_claim_foreign_paths_or_downgrade() {

@@ -40,8 +40,9 @@ pub(crate) enum Command {
 const RECEIPT_SCHEMA: &str = "papertiger.user_install.v2";
 const PREVIOUS_RECEIPT_SCHEMA: &str = "papertiger.user_install.v1";
 
-/// Skills and the reference are release-owned and listed by path only; the
-/// runtime binary keeps its SHA-256 identity for the per-run gate.
+/// Every installed file is release-owned and listed by path only; setup and
+/// uninstall never compare content. `runtime_sha256` exists solely for the
+/// runtime's per-run gate in `verify_runtime`.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Receipt {
@@ -274,17 +275,6 @@ pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<se
             match existing {
                 None => "absent",
                 Some(_) if !listed => "preserve",
-                Some(bytes)
-                    if relative == binary_path()
-                        && previous.as_ref().and_then(|r| r.runtime_sha256.as_deref())
-                            != Some(sha256(&bytes).as_str()) =>
-                {
-                    bail!(
-                        "personal runtime {} differs from its receipt; repair it with setup-user --home {:?} from a verified external release, then rerun uninstall-user",
-                        path.display(),
-                        home
-                    )
-                }
                 Some(_) => "remove",
             }
         } else {

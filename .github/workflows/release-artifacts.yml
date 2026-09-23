@@ -280,7 +280,7 @@ jobs:
           planner_db_fingerprint="$(cksum "$project/state/papertiger.sqlite")"
           mise_db_fingerprint="$(cksum "$project/state/papertiger-mise.sqlite")"
           "$bundle/bin/papertiger" uninstall-project "$project" --dry-run --json > "$verify/uninstall-dry-run.json"
-          grep -Fq '"schema": "papertiger.project_uninstall.v2"' "$verify/uninstall-dry-run.json"
+          grep -Fq '"schema": "papertiger.project_uninstall.v3"' "$verify/uninstall-dry-run.json"
           test -f "$project/tools/papertiger/project-install.json"
           "$bundle/bin/papertiger" uninstall-project "$project" --json > "$verify/uninstall.json"
           test ! -e "$project/tools/papertiger/project-install.json"
