@@ -18,6 +18,11 @@ All notable user-visible changes are documented here. Papertiger follows
 - `repair-guards --json` reports each entry's `state` as `missing`, `altered`
   or `foreign`.
 
+### Changed
+
+- `search --compact` and `show --no-history` print JSON without `--json`;
+  both are JSON-only projections and previously refused the command.
+
 ## [0.17.1] - 2026-09-22
 
 No schema change; 0.17.0 authorities need no migration.

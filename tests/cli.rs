@@ -260,10 +260,24 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
         vec!["list", "--all-plans", "--after-seq", "1"],
         vec!["list", "--all-plans", "--plan", "active"],
         vec!["list", "--all-plans", "--sort", "activity"],
-        vec!["search", "discovery", "--compact"],
-        vec!["show", "1", "--no-history"],
     ] {
         assert!(!invoke(&args).status.success(), "{args:?}");
+    }
+    // JSON-only projections select JSON without a separate --json.
+    for (args, schema) in [
+        (
+            vec!["search", "discovery", "--compact"],
+            "papertiger.search_compact.v1",
+        ),
+        (
+            vec!["show", "1", "--no-history"],
+            "papertiger.task_current.v2",
+        ),
+    ] {
+        let output = invoke(&args);
+        assert!(output.status.success(), "{args:?}");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["schema"], schema, "{args:?}");
     }
 }
 

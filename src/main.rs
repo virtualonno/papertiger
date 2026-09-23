@@ -124,8 +124,8 @@ enum Cmd {
     Show {
         /// Task sequence (bare N is shell-portable; quoted #N also works)
         task: String,
-        /// Omit historical payloads; use log --task N --json for rationale/history
-        #[arg(long, requires = "json")]
+        /// Current state without historical payloads, as JSON (implies --json); use log --task N --json for rationale/history
+        #[arg(long)]
         no_history: bool,
     },
     /// List tasks (compact)
@@ -168,8 +168,8 @@ enum Cmd {
         /// Maximum ranked results to return
         #[arg(long, default_value_t = 20)]
         limit: usize,
-        /// Structured identity, ranking and excerpt without full task bodies
-        #[arg(long, requires = "json")]
+        /// Structured identity, ranking and excerpt without full task bodies (implies --json)
+        #[arg(long)]
         compact: bool,
     },
     /// Edit a task
@@ -720,6 +720,18 @@ enum DepCmd {
 }
 
 impl Cmd {
+    /// Projection flags that only exist as JSON select it without `--json`.
+    fn implies_json(&self) -> bool {
+        matches!(
+            self,
+            Self::Search { compact: true, .. }
+                | Self::Show {
+                    no_history: true,
+                    ..
+                }
+        )
+    }
+
     fn opens_authority_read_only(&self) -> bool {
         matches!(
             self,
@@ -1139,7 +1151,7 @@ fn run(cli: Cli) -> Result<()> {
 }
 
 fn run_planner(cli: Cli) -> Result<()> {
-    let json = cli.json;
+    let json = cli.json || cli.cmd.implies_json();
     let session = cli
         .session
         .or_else(|| std::env::var("PAPERTIGER_SESSION").ok());
