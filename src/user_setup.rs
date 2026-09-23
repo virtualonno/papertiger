@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use papertiger::sha256;
 const TOOL: &str = "papertiger";
 const SKILL: &str = include_str!("../templates/skills/papertiger/SKILL.md");
 const REFERENCE: &[u8] = include_bytes!("../templates/agent_integration.md");
@@ -40,9 +39,9 @@ pub(crate) enum Command {
 const RECEIPT_SCHEMA: &str = "papertiger.user_install.v2";
 const PREVIOUS_RECEIPT_SCHEMA: &str = "papertiger.user_install.v1";
 
-/// Every installed file is release-owned and listed by path only; setup and
-/// uninstall never compare content. `runtime_sha256` exists solely for the
-/// runtime's per-run gate in `verify_runtime`.
+/// Every installed file is release-owned and listed by path only; setup,
+/// uninstall and the runtime never compare content. Binaries are verified at
+/// download against the release checksum.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Receipt {
@@ -51,10 +50,10 @@ struct Receipt {
     home: PathBuf,
     installed: bool,
     files: BTreeSet<String>,
-    runtime_sha256: Option<String>,
 }
 
-/// A v1 receipt maps every path to a hash; setup-user rewrites it as v2.
+/// A v1 receipt maps every path to a hash; setup-user ignores the hashes and
+/// rewrites it as v2.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreviousReceipt {
@@ -87,7 +86,6 @@ fn parse_receipt(path: &Path, bytes: &[u8]) -> Result<Receipt> {
                 version: previous.version,
                 home: previous.home,
                 installed: previous.installed,
-                runtime_sha256: previous.files.get(&binary_path()).cloned(),
                 files: previous.files.into_keys().collect(),
             })
         }
@@ -96,10 +94,6 @@ fn parse_receipt(path: &Path, bytes: &[u8]) -> Result<Receipt> {
             path.display()
         ),
     }
-}
-
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn personal_root() -> String {
@@ -201,11 +195,8 @@ pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<se
     if let Some(receipt) = &previous {
         let expected: BTreeSet<String> = paths().into_iter().collect();
         if receipt.home != home
-            || (receipt.installed
-                && (receipt.files != expected
-                    || !receipt.runtime_sha256.as_deref().is_some_and(is_sha256)))
-            || (!receipt.installed
-                && (!receipt.files.is_empty() || receipt.runtime_sha256.is_some()))
+            || (receipt.installed && receipt.files != expected)
+            || (!receipt.installed && !receipt.files.is_empty())
         {
             bail!(
                 "personal receipt identity or paths are invalid; restore user-install.json for this home before setup-user"
@@ -329,7 +320,6 @@ pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<se
             home: home.clone(),
             installed: !remove,
             files: wanted.keys().cloned().collect(),
-            runtime_sha256: wanted.get(&binary_path()).map(|bytes| sha256(bytes)),
         };
         let bytes = serde_json::to_vec_pretty(&receipt)?;
         if read_optional(&receipt_path)?.as_deref() != Some(bytes.as_slice()) {
@@ -356,7 +346,7 @@ pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<se
 
 fn installed_binding(home: &Path) -> String {
     format!(
-        "Personal executable: `{}`. Its default authority is the consuming project's receipt-bound store when present, otherwise its installed private store with plan `personal`; no --db argument is needed. Use --project-root only to select an existing project installation, not to label a personal task. Include the absolute consuming-project root in personal task intent and search that root before creating work. This store was initialized by setup-user; never initialize it to replace missing history. An explicitly selected canonical project authority or shared tracker still takes precedence.\n",
+        "Personal executable: `{}`. Its default authority is the consuming project's receipt-selected store when present, otherwise its installed private store with plan `personal`; no --db argument is needed. Use --project-root only to select an existing project installation, not to label a personal task. Include the absolute consuming-project root in personal task intent and search that root before creating work. This store was initialized by setup-user; never initialize it to replace missing history. An explicitly selected canonical project authority or shared tracker still takes precedence.\n",
         home.join(binary_path())
             .to_string_lossy()
             .replace('\\', "/")
@@ -485,7 +475,8 @@ pub(crate) fn fallback_authority() -> Result<Option<PathBuf>> {
     personal_home()?.map(|home| authority(&home)).transpose()
 }
 
-/// Refuse a torn or divergent installation before doing work.
+/// Refuse a personal runtime whose receipt names another release or home.
+/// The runtime's bytes are not read: they were verified at download.
 pub(crate) fn verify_runtime() -> Result<()> {
     let Some(home) = personal_home()? else {
         return Ok(());
@@ -497,9 +488,7 @@ pub(crate) fn verify_runtime() -> Result<()> {
             "personal receipt is missing; run {TOOL} setup-user from a verified external release"
         )
     })?;
-    let receipt: Receipt = serde_json::from_slice(&bytes).context(
-        "invalid personal receipt; restore it or repair with setup-user from a verified release",
-    )?;
+    let receipt = parse_receipt(&path, &bytes)?;
     let expected_root = receipt.home.join(personal_root());
     if !receipt.installed
         || receipt.schema != RECEIPT_SCHEMA
@@ -507,16 +496,10 @@ pub(crate) fn verify_runtime() -> Result<()> {
         || fs::canonicalize(expected_root)? != fs::canonicalize(&root)?
     {
         bail!(
-            "personal installation identity differs; run {TOOL} setup-user from a verified external release"
-        );
-    }
-    let runtime = validate_path(&receipt.home, &binary_path())?;
-    let bytes = fs::read(&runtime)
-        .with_context(|| format!("missing {}; repair with setup-user", runtime.display()))?;
-    if receipt.runtime_sha256.as_deref() != Some(sha256(&bytes).as_str()) {
-        bail!(
-            "personal runtime {} differs from its receipt; repair it with setup-user from a verified external release",
-            runtime.display()
+            "personal installation receipt {} does not describe this Papertiger {} runtime; run {TOOL} setup-user from a verified external Papertiger {} release",
+            path.display(),
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_VERSION")
         );
     }
     Ok(())

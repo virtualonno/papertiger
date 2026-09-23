@@ -1,4 +1,4 @@
-//! Receipt-bound removal of project integration surfaces.
+//! Receipt-selected removal of project integration surfaces.
 
 use std::fs;
 use std::path::Path;
@@ -8,7 +8,6 @@ use serde::Serialize;
 
 use super::filesystem::validate_destination;
 use super::receipt::{InstallReceipt, load_install_receipt};
-use super::runtime_receipt::runtime_receipt_relative_path;
 use super::{AGENT_INTEGRATION_PATH, INSTALL_RECEIPT_PATH, normalized_path};
 
 #[derive(Debug)]
@@ -55,7 +54,7 @@ pub(crate) struct UninstallProjectResult {
 }
 
 /// Remove every release-owned path of the project installation, including the
-/// host binary and its runtime receipt. Ownership is by path: content is never
+/// host binary. Ownership is by path: content is never
 /// compared, so an edited or tampered file is removed like an intact one.
 pub(crate) fn uninstall_project(
     request: UninstallProjectRequest<'_>,
@@ -90,9 +89,6 @@ pub(crate) fn uninstall_project(
     let runtime_relative = runtime_relative_path(&source_binary)?;
     let runtime_path = root.join(&runtime_relative);
     refuse_self_uninstall(&source_binary, &runtime_path)?;
-    let runtime_receipt_relative = normalized_path(&runtime_receipt_relative_path(Path::new(
-        &runtime_relative,
-    ))?);
 
     // The tracked receipt is deliberately last so an interrupted removal
     // retains the ownership record needed to retry or repair the installation.
@@ -103,11 +99,7 @@ pub(crate) fn uninstall_project(
                 .iter()
                 .map(|target| target.managed_path().to_owned()),
         )
-        .chain([
-            runtime_relative,
-            runtime_receipt_relative,
-            INSTALL_RECEIPT_PATH.to_owned(),
-        ])
+        .chain([runtime_relative, INSTALL_RECEIPT_PATH.to_owned()])
         .collect::<Vec<_>>();
 
     let mut actions = Vec::with_capacity(targets.len());
@@ -357,12 +349,7 @@ mod tests {
         assert!(!project.join(INSTALL_RECEIPT_PATH).exists());
         assert!(
             !project
-                .join(
-                    runtime_receipt_relative_path(Path::new(
-                        &runtime_relative_path(&binary).unwrap()
-                    ))
-                    .unwrap()
-                )
+                .join(runtime_relative_path(&binary).unwrap())
                 .exists()
         );
         assert!(
@@ -405,26 +392,21 @@ mod tests {
     }
 
     #[test]
-    fn tampered_runtime_refuses_discovery_and_is_removed_by_uninstall() {
-        let (project, binary) = fixture("tampered-runtime");
+    fn edited_runtime_is_removed_by_path() {
+        let (project, binary) = fixture("edited-runtime");
         install(&project, &binary, SkillTargetRequest::Agents);
         let runtime = project.join(runtime_relative_path(&binary).unwrap());
-        let runtime_receipt = project.join(
-            runtime_receipt_relative_path(Path::new(&runtime_relative_path(&binary).unwrap()))
-                .unwrap(),
-        );
-        fs::write(&runtime, b"tampered-binary").unwrap();
-        fs::write(&runtime_receipt, b"{\"tampered\": true}\n").unwrap();
-
-        let error = crate::project_setup::discover_project_authority(&project).unwrap_err();
-        assert!(format!("{error:#}").contains("runtime-install receipt"));
+        fs::write(&runtime, b"different-binary").unwrap();
 
         let preview = uninstall_project(request(&project, &binary, true)).unwrap();
         assert_eq!(preview.operation, UninstallOperation::Remove);
-        assert!(runtime.is_file() && runtime_receipt.is_file());
+        assert!(preview.actions.iter().any(|action| {
+            action.path == runtime_relative_path(&binary).unwrap()
+                && action.action == UninstallActionKind::Remove
+        }));
+        assert!(runtime.is_file());
         uninstall_project(request(&project, &binary, false)).unwrap();
         assert!(!runtime.exists());
-        assert!(!runtime_receipt.exists());
         assert!(!project.join(AGENT_INTEGRATION_PATH).exists());
         assert!(!project.join(".agents/skills/papertiger/SKILL.md").exists());
         assert!(!project.join(INSTALL_RECEIPT_PATH).exists());

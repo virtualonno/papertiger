@@ -7,7 +7,6 @@ use serde::Serialize;
 
 mod filesystem;
 mod receipt;
-mod runtime_receipt;
 mod uninstall;
 
 pub(crate) use uninstall::{UninstallProjectRequest, uninstall_project};
@@ -19,11 +18,6 @@ use filesystem::{
 use receipt::{
     InstallReceipt, SkillTarget, build_install_receipt, load_install_receipt, receipt_bytes,
     refuse_release_downgrade,
-};
-use runtime_receipt::{
-    RuntimeInstallReceipt, build_runtime_install_receipt, current_host_binary_path,
-    load_runtime_install_receipt, preflight_runtime_receipt, runtime_receipt_bytes,
-    runtime_receipt_relative_path, verify_runtime_installation, write_runtime_receipt,
 };
 
 const AGENT_INTEGRATION: &[u8] = include_bytes!("../../templates/agent_integration.md");
@@ -105,8 +99,6 @@ pub(crate) struct SetupProjectResult {
     pub(crate) project_root: String,
     pub(crate) authority_path: String,
     pub(crate) skill_targets: Vec<SkillTarget>,
-    pub(crate) runtime_receipt_path: String,
-    pub(crate) runtime_install: RuntimeInstallReceipt,
     pub(crate) dry_run: bool,
     pub(crate) operation: SetupOperation,
     pub(crate) actions: Vec<SetupAction>,
@@ -169,15 +161,11 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     let binary = fs::read(&source_binary)
         .with_context(|| format!("read source binary {}", source_binary.display()))?;
     let binary_relative = PathBuf::from(format!("tools/papertiger/bin/papertiger{suffix}"));
-    let desired_runtime_receipt = build_runtime_install_receipt(&binary_relative, &binary);
-    let desired_runtime_receipt_bytes = runtime_receipt_bytes(&desired_runtime_receipt)?;
 
     let receipt_relative = Path::new(INSTALL_RECEIPT_PATH);
     validate_destination(&root, receipt_relative)?;
     let receipt_path = root.join(receipt_relative);
-    let runtime_receipt_relative = runtime_receipt_relative_path(&binary_relative)?;
-    validate_destination(&root, &runtime_receipt_relative)?;
-    let runtime_receipt_path = root.join(&runtime_receipt_relative);
+    let retired_runtime_receipt = retired_runtime_receipt_action(&root, &binary_relative)?;
     let prior_receipt = load_install_receipt(&receipt_path)?;
     if let Some(receipt) = prior_receipt.as_ref() {
         refuse_release_downgrade(receipt)?;
@@ -225,7 +213,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         .iter()
         .any(|file| root.join(&file.relative_path).exists())
         || receipt_path.exists()
-        || runtime_receipt_path.exists();
+        || retired_runtime_receipt.is_some();
 
     let mut managed_actions = Vec::with_capacity(managed.len());
     for file in &managed {
@@ -292,8 +280,6 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
     };
 
     let receipt_action = preflight_text_file(&receipt_path, &desired_receipt_bytes)?;
-    let runtime_receipt_action =
-        preflight_runtime_receipt(&runtime_receipt_path, &desired_runtime_receipt_bytes)?;
 
     let mut actions = managed_actions.clone();
     actions.extend(deselected.iter().cloned());
@@ -305,10 +291,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         path: INSTALL_RECEIPT_PATH.to_owned(),
         action: receipt_action,
     });
-    actions.push(SetupAction {
-        path: normalized_path(&runtime_receipt_relative),
-        action: runtime_receipt_action,
-    });
+    actions.extend(retired_runtime_receipt.iter().cloned());
     let operation = setup_operation(
         prior_receipt.as_ref(),
         &desired_receipt,
@@ -347,15 +330,15 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         }
         write_install_receipt(&receipt_path, &desired_receipt_bytes, receipt_action)?;
         verify_installation(&root, &managed)?;
-        // This ignored receipt is the final installation commit marker. If a
-        // crash occurs before it is written, ordinary commands refuse the
-        // incomplete installation and direct the operator back to setup.
-        write_runtime_receipt(
-            &runtime_receipt_path,
-            &desired_runtime_receipt_bytes,
-            runtime_receipt_action,
-        )?;
-        verify_runtime_installation(&root, &desired_runtime_receipt)?;
+        if let Some(action) = &retired_runtime_receipt {
+            let destination = root.join(&action.path);
+            fs::remove_file(&destination).with_context(|| {
+                format!(
+                    "remove retired runtime-install receipt {}",
+                    destination.display()
+                )
+            })?;
+        }
     }
 
     let authority_exists = root.join(Path::new(&authority_path)).is_file();
@@ -418,13 +401,37 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         project_root: normalized_path(&root),
         authority_path,
         skill_targets,
-        runtime_receipt_path: normalized_path(&runtime_receipt_relative),
-        runtime_install: desired_runtime_receipt,
         dry_run: request.dry_run,
         operation,
         actions,
         next_actions,
     })
+}
+
+/// Papertiger 0.18 wrote an ignored `<binary>.runtime-install.json` beside the
+/// host binary. That file belongs to the previous release, so setup removes it.
+fn retired_runtime_receipt_action(
+    root: &Path,
+    binary_relative: &Path,
+) -> Result<Option<SetupAction>> {
+    let relative = PathBuf::from(format!(
+        "{}.runtime-install.json",
+        normalized_path(binary_relative)
+    ));
+    validate_destination(root, &relative)?;
+    let path = root.join(&relative);
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("inspect {}", path.display())),
+        Ok(metadata) if metadata.is_file() => Ok(Some(SetupAction {
+            path: normalized_path(&relative),
+            action: SetupActionKind::Remove,
+        })),
+        Ok(_) => Err(anyhow!(
+            "retired runtime-install receipt path is not a regular file: {}; move it aside, then rerun setup-project",
+            path.display()
+        )),
+    }
 }
 
 fn select_authority_path(
@@ -681,22 +688,6 @@ fn load_running_project_receipt(root: &Path) -> Result<Option<InstallReceipt>> {
             root.display()
         ));
     }
-    let runtime_receipt_path =
-        root.join(runtime_receipt_relative_path(&current_host_binary_path())?);
-    let runtime_receipt = load_runtime_install_receipt(&runtime_receipt_path).with_context(|| {
-        format!(
-            "validate host-local identity for project-install receipt {}; repair this installation with: papertiger setup-project \"{}\"",
-            receipt_path.display(),
-            root.display()
-        )
-    })?;
-    verify_runtime_installation(root, &runtime_receipt).with_context(|| {
-        format!(
-            "validate host-local identity for project-install receipt {}; repair this installation with: papertiger setup-project \"{}\"",
-            receipt_path.display(),
-            root.display()
-        )
-    })?;
     Ok(Some(receipt))
 }
 
@@ -912,17 +903,11 @@ mod tests {
         let result = setup_project(request).unwrap();
         assert!(result.dry_run);
         assert_eq!(result.schema, "papertiger.project_install_result.v7");
-        assert_eq!(result.runtime_install.binary.bytes, 17);
-        assert_eq!(
-            result.runtime_install.binary.sha256,
-            papertiger::sha256(b"papertiger-binary")
-        );
-        assert_eq!(
-            result.runtime_receipt_path,
-            format!(
-                "tools/papertiger/bin/papertiger{}.runtime-install.json",
-                std::env::consts::EXE_SUFFIX
-            )
+        assert!(
+            result
+                .actions
+                .iter()
+                .all(|action| !action.path.ends_with(".runtime-install.json"))
         );
         assert!(
             result
@@ -1261,7 +1246,7 @@ mod tests {
             receipt.skill_targets,
             vec![SkillTarget::Agents, SkillTarget::Claude]
         );
-        assert!(project.join(&first.runtime_receipt_path).is_file());
+        assert!(!project.join(retired_runtime_receipt_path()).exists());
 
         let second = setup_project(request(&project, &binary)).unwrap();
         assert_eq!(second.operation, SetupOperation::Unchanged);
@@ -1307,7 +1292,7 @@ mod tests {
     #[test]
     fn older_release_upgrade_replaces_release_owned_files() {
         let (project, binary) = fixture("receipt-upgrade");
-        let initial = setup_project(request(&project, &binary)).unwrap();
+        setup_project(request(&project, &binary)).unwrap();
         fs::write(
             project.join(AGENT_INTEGRATION_PATH),
             b"old release contract\n",
@@ -1317,23 +1302,17 @@ mod tests {
         let mut receipt = load_install_receipt(&receipt_path).unwrap().unwrap();
         receipt.papertiger_version = "0.4.0".to_owned();
         fs::write(&receipt_path, receipt_bytes(&receipt).unwrap()).unwrap();
-
-        let runtime_receipt_path = project.join(&initial.runtime_receipt_path);
-        let mut runtime_receipt: RuntimeInstallReceipt =
-            serde_json::from_slice(&fs::read(&runtime_receipt_path).unwrap()).unwrap();
-        runtime_receipt.papertiger_version = "0.4.0".to_owned();
-        fs::write(
-            &runtime_receipt_path,
-            runtime_receipt_bytes(&runtime_receipt).unwrap(),
-        )
-        .unwrap();
         fs::write(&binary, b"new-papertiger-binary").unwrap();
+        let binary_path = format!(
+            "tools/papertiger/bin/papertiger{}",
+            std::env::consts::EXE_SUFFIX
+        );
 
         let upgraded = setup_project(request(&project, &binary)).unwrap();
         assert_eq!(upgraded.operation, SetupOperation::Upgrade);
         for path in [
             AGENT_INTEGRATION_PATH,
-            upgraded.runtime_receipt_path.as_str(),
+            binary_path.as_str(),
             INSTALL_RECEIPT_PATH,
         ] {
             assert!(
@@ -1515,54 +1494,101 @@ mod tests {
         cleanup(&project);
     }
 
+    fn retired_runtime_receipt_path() -> String {
+        format!(
+            "tools/papertiger/bin/papertiger{}.runtime-install.json",
+            std::env::consts::EXE_SUFFIX
+        )
+    }
+
     #[test]
-    fn discovery_refuses_missing_or_drifted_host_identity_and_setup_repairs_it() {
-        let (project, binary) = fixture("runtime-identity-repair");
-        let installed = setup_project(request(&project, &binary)).unwrap();
-        let runtime_receipt_path = project.join(&installed.runtime_receipt_path);
-        fs::remove_file(&runtime_receipt_path).unwrap();
-
-        let error = discover_project_authority(&project).unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("runtime-install receipt"), "{message}");
-        assert!(message.contains("papertiger setup-project"), "{message}");
-
-        let repaired = setup_project(request(&project, &binary)).unwrap();
-        assert_eq!(repaired.operation, SetupOperation::Repair);
-        assert!(repaired.actions.iter().any(|action| {
-            action.path == repaired.runtime_receipt_path && action.action == SetupActionKind::Create
-        }));
-        assert!(discover_project_authority(&project).unwrap().is_some());
-
-        let installed_binary = project.join(&repaired.runtime_install.binary.path);
-        fs::write(&installed_binary, b"tampered-binary").unwrap();
-        let error = discover_project_authority(&project).unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("identity does not match"), "{message}");
-        assert!(message.contains("SHA-256"), "{message}");
-        assert!(message.contains("trusted external"), "{message}");
-
-        let repaired = setup_project(request(&project, &binary)).unwrap();
-        assert_eq!(
-            fs::read(project.join(&repaired.runtime_install.binary.path)).unwrap(),
-            b"papertiger-binary"
+    fn discovery_selects_the_receipt_authority_without_reading_the_installed_binary() {
+        let (project, binary) = fixture("discovery-without-binary-identity");
+        setup_project(request(&project, &binary)).unwrap();
+        let installed_binary = project.join(format!(
+            "tools/papertiger/bin/papertiger{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        let expected = Some(
+            fs::canonicalize(&project)
+                .unwrap()
+                .join(DEFAULT_AUTHORITY_PATH),
         );
-        assert!(discover_project_authority(&project).unwrap().is_some());
 
-        fs::write(&runtime_receipt_path, b"not-json\n").unwrap();
-        let error = discover_project_authority(&project).unwrap_err();
+        fs::write(&installed_binary, b"different-bytes").unwrap();
+        assert_eq!(discover_project_authority(&project).unwrap(), expected);
+        fs::remove_file(&installed_binary).unwrap();
+        assert_eq!(discover_project_authority(&project).unwrap(), expected);
+        assert_eq!(
+            project_authority(&project).unwrap(),
+            expected.clone().unwrap()
+        );
+        cleanup(&project);
+    }
+
+    #[test]
+    fn setup_removes_the_previous_release_runtime_receipt() {
+        let (project, binary) = fixture("retired-runtime-receipt");
+        setup_project(request(&project, &binary)).unwrap();
+        let receipt_path = project.join(INSTALL_RECEIPT_PATH);
+        let previous = serde_json::json!({
+            "schema": "papertiger.project_install.v2",
+            "papertiger_version": "0.18.0",
+            "authority_path": DEFAULT_AUTHORITY_PATH,
+            "skill_targets": ["agents", "claude"],
+            "managed_files": [],
+        });
+        fs::write(&receipt_path, serde_json::to_vec_pretty(&previous).unwrap()).unwrap();
+        let retired = project.join(retired_runtime_receipt_path());
+        fs::write(
+            &retired,
+            b"{\"schema\": \"papertiger.runtime_install.v1\"}
+",
+        )
+        .unwrap();
+
+        let mut preview = request(&project, &binary);
+        preview.dry_run = true;
+        preview.skill_target = None;
+        let preview = setup_project(preview).unwrap();
+        assert_eq!(preview.operation, SetupOperation::Upgrade);
+        assert!(preview.actions.iter().any(|action| {
+            action.path == retired_runtime_receipt_path()
+                && action.action == SetupActionKind::Remove
+        }));
+        assert!(retired.is_file());
+
+        let mut upgrade = request(&project, &binary);
+        upgrade.skill_target = None;
+        setup_project(upgrade).unwrap();
+        assert!(!retired.exists());
+        let current = setup_project(request(&project, &binary)).unwrap();
+        assert_eq!(current.operation, SetupOperation::Unchanged);
+        assert!(
+            current
+                .actions
+                .iter()
+                .all(|action| action.path != retired_runtime_receipt_path())
+        );
+        cleanup(&project);
+    }
+
+    #[test]
+    fn non_file_retired_runtime_receipt_refuses_before_any_write() {
+        let (project, binary) = fixture("retired-runtime-receipt-directory");
+        let retired = project.join(retired_runtime_receipt_path());
+        fs::create_dir_all(&retired).unwrap();
+
+        let error = setup_project(request(&project, &binary)).unwrap_err();
         let message = format!("{error:#}");
         assert!(
-            message.contains("parse runtime-install receipt"),
+            message.contains("retired runtime-install receipt path is not a regular file")
+                && message.contains("rerun setup-project"),
             "{message}"
         );
-        let repaired_receipt = setup_project(request(&project, &binary)).unwrap();
-        assert_eq!(repaired_receipt.operation, SetupOperation::Repair);
-        assert!(repaired_receipt.actions.iter().any(|action| {
-            action.path == repaired_receipt.runtime_receipt_path
-                && action.action == SetupActionKind::Replace
-        }));
-        assert!(discover_project_authority(&project).unwrap().is_some());
+        assert!(!project.join(INSTALL_RECEIPT_PATH).exists());
+        assert!(!project.join(AGENT_INTEGRATION_PATH).exists());
+        assert!(retired.is_dir());
         cleanup(&project);
     }
 

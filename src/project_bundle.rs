@@ -1,15 +1,19 @@
 //! Relocatable release identity; local receipts retain authority selection.
-use std::{collections::BTreeMap, fs, path::Path};
+//!
+//! Binary bytes are verified once, at download, against the release checksum.
+//! At run time the manifest only has to name this release.
+use std::{fs, path::Path};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+
+const MANIFEST_SCHEMA: &str = "papertiger.release_manifest.v3";
 
 #[derive(Deserialize)]
 struct Manifest {
     schema: String,
     name: String,
     version: String,
-    binary_sha256: BTreeMap<String, String>,
 }
 
 pub(crate) fn verify(root: &Path) -> Result<bool> {
@@ -18,30 +22,29 @@ pub(crate) fn verify(root: &Path) -> Result<bool> {
         return Ok(false);
     }
     let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let header: serde_json::Value = serde_json::from_slice(&bytes)
-        .context("invalid bundle manifest; restore tools/papertiger from a verified release")?;
-    let manifest: Manifest = serde_json::from_value(header)
-        .context("incomplete bundle manifest; restore tools/papertiger from a verified release")?;
-    let binary = format!("bin/papertiger{}", std::env::consts::EXE_SUFFIX);
-    let expected = manifest.binary_sha256.get(&binary);
-    let installed = root.join("tools/papertiger").join(&binary);
-    if manifest.schema != "papertiger.release_manifest.v3"
-        || manifest.name != "papertiger"
-        || manifest.version != env!("CARGO_PKG_VERSION")
-        || expected
-            != Some(&papertiger::sha256(&fs::read(&installed).with_context(
-                || {
-                    format!(
-                        "missing {}; restore the complete project release",
-                        installed.display()
-                    )
-                },
-            )?))
-        || expected != Some(&papertiger::sha256(&fs::read(std::env::current_exe()?)?))
-    {
+    let manifest: Manifest = serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "invalid bundle manifest {}; restore tools/papertiger from a verified release",
+            path.display()
+        )
+    })?;
+    if manifest.schema != MANIFEST_SCHEMA || manifest.name != "papertiger" {
         bail!(
-            "project bundle identity differs from the running executable; use {} from a complete verified release",
-            installed.display()
+            "bundle manifest {} is not a {MANIFEST_SCHEMA} Papertiger manifest; restore tools/papertiger from a verified release",
+            path.display()
+        );
+    }
+    let running = env!("CARGO_PKG_VERSION");
+    if manifest.version != running {
+        bail!(
+            "project bundle {} is Papertiger {}, but the running binary is {running}; invoke {} from that release, or unpack the verified Papertiger {running} release over the project root",
+            path.display(),
+            manifest.version,
+            root.join(format!(
+                "tools/papertiger/bin/papertiger{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+            .display()
         );
     }
     Ok(true)

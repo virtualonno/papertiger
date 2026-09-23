@@ -92,7 +92,7 @@ fn overlay_discovers_root_without_setup_and_never_recreates_missing_history() {
 }
 
 #[test]
-fn overlay_retains_custom_authority_from_an_older_receipt_and_refuses_changed_identity() {
+fn overlay_retains_custom_authority_from_an_older_receipt_and_refuses_another_release() {
     let f = Fixture::new();
     let setup = Command::new(BINARY)
         .args([
@@ -143,5 +143,24 @@ fn overlay_retains_custom_authority_from_an_older_receipt_and_refuses_changed_id
     let mut value: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
     value["version"] = json!("0.1.0");
     fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
-    assert!(!f.run(&["status"]).status.success());
+    let refused = f.run(&["status"]);
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains("is Papertiger 0.1.0") && error.contains("unpack the verified Papertiger"),
+        "{error}"
+    );
+}
+
+#[test]
+fn overlay_runs_without_hashing_installed_binaries() {
+    let f = Fixture::new();
+    f.overlay();
+    let manifest = f.0.join("tools/papertiger/manifest.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    let key = format!("bin/papertiger{}", std::env::consts::EXE_SUFFIX);
+    value["binary_sha256"][&key] = json!("0".repeat(64));
+    fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    f.ok(&["init"]);
+    f.ok(&["status"]);
 }

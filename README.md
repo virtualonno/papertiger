@@ -13,7 +13,7 @@ Papertiger has no server or account. It ships as two Rust binaries:
   close planning tasks, integrate changes, or deploy software.
 
 The vendored planning skill supplies the ordinary task workflow without
-requiring the full installation reference. It resumes existing outcomes,
+requiring the full reference. It resumes existing outcomes,
 records validated follow-up, and leaves transient checklist steps alone.
 For a fixed comparison of plausible candidates, start with `papertiger-mise
 guide`; `campaign inspect <id>` discovers retained work in bounded pages.
@@ -22,14 +22,18 @@ CAS evidence or establish that a campaign can still execute.
 
 ## Add to a project (default)
 
-Download the archive for the machine where the agent runs, verify its checksum,
-and merge its contents into the project root, including the dot-directories:
+Download the archive for the machine where the agent runs, verify it against
+its adjacent `.sha256` file, and merge its contents into the project root,
+including the dot-directories:
 
 ```text
 .agents/skills/papertiger/SKILL.md
 .claude/skills/papertiger/SKILL.md
 tools/papertiger/bin/papertiger[.exe]
-tools/papertiger/README.md
+tools/papertiger/bin/papertiger-mise[.exe]
+tools/papertiger/manifest.json
+tools/papertiger/agent_integration.md
+tools/papertiger/README.md, CHANGELOG.md, MISE.md and the licenses
 ```
 
 The skills and native executable are already in place. Start a fresh agent
@@ -42,8 +46,13 @@ remains discretionary.
 Only namespaced skills and `tools/papertiger` are shipped. Existing project guidance,
 configuration, receipts and databases are not included or overwritten. Preserve
 any customizations inside those tool-owned directories before replacing them.
-README, licenses, optional operating references and the source manifest live
-under `tools/papertiger`. Papertiger initializes a new database only on first use through its native init command; established projects reuse existing history.
+The checksum verified at download is the binaries' integrity check; Papertiger
+does not re-hash its executables when it runs. `manifest.json` names the
+release and its source commit, and a binary refuses a project whose manifest
+names another release. Papertiger creates a database only through `init`, for
+a project with no planning history; established projects reuse theirs. Add
+`state/papertiger.sqlite` and its `-journal`, `-wal` and `-shm` sidecars to
+`.gitignore` before `init` (`setup-project` writes these rules).
 
 ## Optional personal installation
 
@@ -78,10 +87,10 @@ an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
 A host-local `user-install.json` lists the installed paths and records the tool
-version and the runtime binary's SHA-256. The skills, reference and runtime
+version and home; it records no hashes. The skills, reference and runtime
 belong to the release: setup writes them as shipped, so keep personal guidance
 elsewhere. Before every command, the installed runtime refuses a missing
-receipt or a binary that differs from it.
+receipt or one that names another release or home, naming `setup-user`.
 Run repair or upgrade from an external release, not the installed executable.
 Installation preflights all managed paths, but does not promise a crash-atomic
 multi-file transaction; an interrupted install must be repaired before the
@@ -89,7 +98,7 @@ runtime can run.
 
 `uninstall-user --dry-run` previews removal. `uninstall-user` removes every
 receipt-listed path (skills, reference and runtime) without comparing content,
-so it also removes a tampered runtime that refuses to run. It refuses a link or
+so an edited file is removed like an intact one. It refuses a link or
 non-file at an owned path, then retains the lifecycle receipt;
 it never removes project installations or unrelated skills. Do not copy personal
 receipts between machines or move their home: install for the new home instead.
@@ -127,8 +136,9 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
 - `show --json` is the task work record. Task context v8 includes full details
   for the selected task and compact identity/status summaries for related
   tasks; read a related task explicitly for its full context. `schema` prints
-  the bundled JSON Schema for context, status, task lists, history, recovery,
-  and mutation receipts without opening a database. All fields are local
+  the bundled JSON Schema without opening a database; its top-level `oneOf`
+  lists the covered documents. Not every JSON output is covered
+  (`evidence verify` and `audit` are not). All fields are local
   planning data and require editorial review before external publication.
 - Mutations accept `--json` to emit `papertiger.mutation.v1`: the exact committed
   events and their task/plan snapshots, captured inside the transaction. Clients
@@ -272,18 +282,14 @@ belong to the release: setup writes them as shipped on every install, repair,
 or upgrade, and a deselected skill target's file is removed. Keep
 project-specific guidance outside them. The tracked receipt records the
 release, authority path, and resolved skill targets. It omits
-platform-specific binary bytes so clones stay portable. Instead, the ignored
-sibling `tools/papertiger/bin/papertiger[.exe].runtime-install.json` records the
-exact installed path, byte count, and SHA-256. `setup-project --dry-run --json`
-exposes that identity in `runtime_install` of its
-`papertiger.project_install_result.v7` result without an ad hoc hash command.
-Setup never edits or owns `AGENTS.md` or `CLAUDE.md`. The host receipt is
-written atomically as the final installation commit marker. Ordinary receipt
-discovery refuses a missing, malformed, or mismatched host receipt with the
-repair command, which is `setup-project` from a verified release. This
-identity is an observable local fact, not a claim that separate platform
-builds reproduce identical bytes. A release refuses to downgrade a newer
-receipt; rerun setup with the recorded release or a newer one.
+platform-specific binary bytes so clones stay portable. Setup replaces the
+installed binary when it differs from the release binary running setup; the
+binary is not checked again when it runs, because the release checksum
+verified it at download. Setup removes a leftover
+`tools/papertiger/bin/papertiger[.exe].runtime-install.json` from an earlier
+release. Setup never edits or owns `AGENTS.md` or `CLAUDE.md`. A release
+refuses to downgrade a newer receipt; rerun setup with the recorded release or
+a newer one. Start a fresh agent session after setup changes a skill.
 
 Setup appends required `.gitignore` entries but does not initialize a database
 or edit the project's agent guidance. It installs no hooks, MCP server, global
@@ -306,8 +312,8 @@ papertiger uninstall-project /path/to/project --json
 
 Uninstall requires a matching-version receipt and removes, by path and without
 comparing content, the contract, the receipt's skill files, the native binary,
-its host receipt, and finally the tracked receipt. A tampered binary refuses to
-run but is still removed. Before writing, uninstall refuses a symlink or
+and finally the tracked receipt, so an edited file is removed like an intact
+one. Before writing, uninstall refuses a symlink or
 non-regular file at an owned path (`non_file_refusal` in its
 `papertiger.project_uninstall.v3` result) and project-local self-deletion. It
 deliberately retains the planner authority
@@ -329,10 +335,10 @@ papertiger search "<terms>" --json
 papertiger log --json
 ```
 
-The binary walks upward from the current directory to find the nearest tracked
-`tools/papertiger/project-install.json`, verifies its version and the matching
-host-local runtime receipt and binary identity, then resolves its authority
-against that project root. This works from nested directories without a
+The binary walks upward from the current directory to the nearest tracked
+`tools/papertiger/project-install.json` or release `tools/papertiger/manifest.json`,
+refuses one that names another Papertiger release with the corrective command,
+then resolves its authority against that project root. This works from nested directories without a
 launcher or shell wrapper.
 For an intentional command issued from a different repository, select the
 canonical installed project explicitly:
@@ -341,7 +347,7 @@ canonical installed project explicitly:
 papertiger --project-root /path/to/canonical-project status
 ```
 
-`--project-root` selects the exact root's receipt-bound authority (checking
+`--project-root` selects the exact root's receipt-selected authority (checking
 its version); without a receipt, the release bundle's or an existing
 `state/papertiger.sqlite`. It never walks upward into another project. Without
 a receipt or bundle it selects only a database that already exists; `init`
@@ -442,8 +448,8 @@ the immutable audit receipt as evidence, then record the full commit object ID
 separately with `commit add`. Neither identity substitutes for the other.
 
 The installer copies [templates/agent_integration.md](templates/agent_integration.md) into the
-project as the reference the skill links to for installation, migration and
-recovery. No repository guidance edit is required.
+project as the reference the skill links to for authority changes, migration
+and recovery. No repository guidance edit is required.
 
 ## Add Mise when a campaign is warranted
 

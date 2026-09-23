@@ -20,11 +20,26 @@ All notable user-visible changes are documented here. Papertiger follows
   files: `setup-project` and `setup-user` overwrite them with the release
   version, and `uninstall-project`/`uninstall-user` remove them, whether or not
   they were edited. Keep project-specific guidance in `AGENTS.md` or
-  `CLAUDE.md`, which setup never touches. A binary's identity is checked only
-  before it runs: project discovery and the personal runtime refuse a binary
-  that differs from its receipt, and uninstall removes it.
+  `CLAUDE.md`, which setup never touches.
+- Binaries are verified once, at download, against the release's `.sha256`
+  file; Papertiger no longer hashes installed binaries when it runs. Project
+  discovery, `--project-root`, release bundles and the personal runtime check
+  only that the receipt or manifest names the running release (and, for the
+  personal runtime, its home), and each refusal names the command that fixes
+  it. `setup-project` still replaces an installed binary that differs from the
+  release binary running it.
+- `setup-project` no longer writes the host-local
+  `tools/papertiger/bin/papertiger[.exe].runtime-install.json` receipt, and
+  removes one left by an earlier release. Its result no longer has
+  `runtime_receipt_path` or `runtime_install`, and `uninstall-project` no
+  longer lists that receipt.
+- `init --json` names `init`'s plain-text report in its refusal instead of the
+  generic "no JSON projection" message.
+- The project reference installed as `tools/papertiger/agent_integration.md`
+  teaches planning use only; installation, upgrade and removal are in the
+  README and `--help`.
 - Project receipts are `papertiger.project_install.v3` and personal receipts
-  `papertiger.user_install.v2`; neither records file hashes. The next
+  `papertiger.user_install.v2`; neither records file or binary hashes. The next
   `setup-project` or `setup-user` rewrites a v2 project or v1 personal receipt.
   An older receipt is refused: move it aside and rerun setup to reinstall.
 - `setup-project` reports `papertiger.project_install_result.v7`,

@@ -421,6 +421,27 @@ fn mutation_receipts_model_attribution_and_task_moves_are_cli_usable() {
     assert!(invalid.stdout.is_empty());
 }
 
+#[test]
+fn init_refuses_json_and_names_its_plain_text_report() {
+    let db = TestDatabase::new("init-json-refusal");
+    let refused = papertiger(&db.0, &["init", "--json"]);
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains("init reports in plain text only") && error.contains("omit --json"),
+        "{error}"
+    );
+    assert!(
+        !db.0.exists(),
+        "a refused init must not create the authority"
+    );
+
+    let initialized = papertiger(&db.0, &["init"]);
+    assert_success(&initialized);
+    assert!(String::from_utf8_lossy(&initialized.stdout).starts_with("initialized "));
+}
+
 struct TestDatabase(PathBuf);
 
 #[test]

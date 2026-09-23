@@ -70,9 +70,9 @@ with tempfile.TemporaryDirectory(prefix=tool + ' project overlay ') as directory
     assert not database.exists(), 'reads must not replace missing history'
     metadata = project / 'tools/papertiger/manifest.json'
     bad = json.loads(metadata.read_text())
-    bad['binary_sha256']['bin/papertiger' + suffix] = '0' * 64
+    bad['version'] = '0.0.1'
     metadata.write_text(json.dumps(bad))
-    run('status', success=False)
+    assert 'is Papertiger 0.0.1' in run('status', success=False)
     for name, content in baseline.items():
         assert (project / name).read_bytes() == content
 print(tool + ': direct project overlay smoke passed')

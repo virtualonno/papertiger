@@ -247,6 +247,7 @@ jobs:
           "$bundle/bin/papertiger" setup-project "$project" --json > "$verify/setup.json"
           grep -Fq '"schema": "papertiger.project_install_result.v7"' "$verify/setup.json"
           test -f "$project/tools/papertiger/bin/papertiger"
+          test ! -e "$project/tools/papertiger/bin/papertiger.runtime-install.json"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise"
           test -f "$project/tools/papertiger/project-install.json"
           grep -Fq '"schema": "papertiger.project_install.v3"' \
@@ -330,6 +331,7 @@ jobs:
           "$planner" setup-project "$project" --json > "$verify/setup.json"
           grep -Fq '"schema": "papertiger.project_install_result.v7"' "$verify/setup.json"
           test -f "$project/tools/papertiger/bin/papertiger.exe"
+          test ! -e "$project/tools/papertiger/bin/papertiger.exe.runtime-install.json"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise.exe"
           test -f "$project/tools/papertiger/project-install.json"
           grep -Fq '"schema": "papertiger.project_install.v3"' \

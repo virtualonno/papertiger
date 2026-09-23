@@ -189,18 +189,30 @@ if grep -Eq '"action": "(create|replace|update_gitignore)"' "$fixture/setup-seco
   exit 1
 fi
 
+# Binaries are checked at install time only: setup replaces a host binary that
+# differs from the release binary and removes an earlier release's runtime
+# receipt; ordinary commands never read the installed binary's bytes.
+retired_receipt="$installed_planner.runtime-install.json"
+printf '{"schema": "papertiger.runtime_install.v1"}\n' > "$retired_receipt"
+printf 'modified' >> "$installed_planner"
+"$planner" setup-project "$project" --dry-run --json > "$fixture/setup-repair-preview.json"
+grep -Fq "\"path\": \"tools/papertiger/bin/papertiger$exe\"" \
+  "$fixture/setup-repair-preview.json"
+grep -Fq '"action": "replace"' "$fixture/setup-repair-preview.json"
+grep -Fq '"action": "remove"' "$fixture/setup-repair-preview.json"
+test -f "$retired_receipt"
+"$planner" setup-project "$project" --json > "$fixture/setup-repair.json"
+test ! -e "$retired_receipt"
+cmp "$installed_planner" "$planner"
+(cd "$project/nested/work" && "$installed_planner" status --json) \
+  > "$fixture/repaired-status.json"
+grep -q '"schema": "papertiger.status.v3"' "$fixture/repaired-status.json"
+
 ignore_fingerprint="$(cksum "$project/.gitignore")"
 mise_fingerprint="$(cksum "$project/state/papertiger-mise.sqlite")"
-# Ownership is by path: a tampered host binary refuses to run, and uninstall
-# still removes it without comparing content.
-printf 'tampered' >> "$installed_planner"
-if (cd "$project/nested/work" && "$installed_planner" status --json) \
-    > /dev/null 2> "$fixture/tampered-status.err"; then
-  echo "project discovery ran a tampered host binary" >&2
-  exit 1
-fi
-grep -q 'installed Papertiger binary identity does not match' \
-  "$fixture/tampered-status.err"
+# Ownership is by path: uninstall removes an edited host binary without
+# comparing content.
+printf 'modified' >> "$installed_planner"
 "$planner" uninstall-project "$project" --dry-run --json \
   > "$fixture/uninstall-dry-run.json"
 grep -q '"schema": "papertiger.project_uninstall.v3"' \

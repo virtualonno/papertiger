@@ -105,7 +105,7 @@ fn personal_install_is_guidance_free_idempotent_and_reversible() {
     f.install();
 }
 #[test]
-fn personal_skills_are_release_owned_and_runtime_identity_is_gated() {
+fn personal_skills_are_release_owned_and_runtime_receipt_names_its_release() {
     let f = Fixture::new();
     fs::create_dir_all(f.skill().parent().unwrap()).unwrap();
     fs::write(f.skill(), "Locally owned skill").unwrap();
@@ -128,25 +128,31 @@ fn personal_skills_are_release_owned_and_runtime_identity_is_gated() {
     f.install();
     assert!(!fs::read_to_string(f.skill()).unwrap().contains("Modified"));
 
-    let mut tampered = fs::read(f.runtime()).unwrap();
-    tampered.extend_from_slice(b"tampered");
-    fs::write(f.runtime(), &tampered).unwrap();
+    let path = f.0.join(format!(".local/share/{TOOL}/user-install.json"));
+    let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert!(
+        receipt.get("runtime_sha256").is_none(),
+        "the personal receipt records paths, never binary hashes"
+    );
+    receipt["version"] = Value::String("0.1.0".into());
+    fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
     let runtime = Command::new(f.runtime()).arg("--version").output().unwrap();
     assert!(
         !runtime.status.success(),
-        "a divergent runtime must fail closed"
+        "a runtime whose receipt names another release must refuse"
     );
-    assert!(String::from_utf8_lossy(&runtime.stderr).contains("differs from its receipt"));
+    let error = String::from_utf8_lossy(&runtime.stderr);
+    assert!(
+        error.contains("does not describe this Papertiger") && error.contains("setup-user"),
+        "{error}"
+    );
     let removal = f.run(&["uninstall-user"]);
     assert!(
         removal.status.success(),
         "uninstall-user removes owned paths without comparing content: {}",
         String::from_utf8_lossy(&removal.stderr)
     );
-    assert!(
-        !f.runtime().exists(),
-        "a tampered runtime is removed by path"
-    );
+    assert!(!f.runtime().exists());
     assert!(!f.skill().exists());
     f.install();
     assert!(

@@ -47,7 +47,7 @@ struct Cli {
 enum Cmd {
     #[command(flatten)]
     Personal(user_setup::Command),
-    /// Print the bundled JSON Schema for local planner reads, recovery, and mutation receipts; never opens authority
+    /// Print the bundled JSON Schema; its top-level oneOf lists every covered document. Never opens authority
     Schema,
     /// Install a project-local native binary, receipt, ignore policy, and agent contract
     #[command(after_help = "JSON schema: papertiger.project_install_result.v7")]
@@ -73,7 +73,7 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Create or upgrade a Papertiger database; refuses nonempty foreign databases
+    /// Create or upgrade a Papertiger database and report it in plain text; refuses nonempty foreign databases
     Init,
     /// One-screen orientation: authority, active plans, current work, ready work, recent notes
     Status {},
@@ -1198,11 +1198,15 @@ fn run_planner(cli: Cli) -> Result<()> {
             );
         }
     }
+    if json && matches!(cli.cmd, Cmd::Init) {
+        bail!(
+            "init reports in plain text only: one line naming the authority and whether it was initialized, migrated, or already current; omit --json and read that line, or run `status --json` afterwards"
+        );
+    }
     if json
         && matches!(
             cli.cmd,
-            Cmd::Init
-                | Cmd::Tree { .. }
+            Cmd::Tree { .. }
                 | Cmd::Gate {
                     cmd: GateCmd::List { .. }
                 }

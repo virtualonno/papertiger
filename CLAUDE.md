@@ -45,7 +45,7 @@ each under 32 KiB.
 
 ## Planning Use in This Repository
 
-- Invoke the receipt-bound `tools/papertiger/bin/papertiger[.exe]`; a build in
+- Invoke the installed `tools/papertiger/bin/papertiger[.exe]`; a build in
   `target/` is a development artifact, never this repository's planner.
 - Roadmap prose, handoff notes, and memories are orientation only: when they
   disagree with the DB, the DB wins and the prose gets corrected. Markdown
