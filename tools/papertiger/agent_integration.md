@@ -2,40 +2,28 @@
 
 ## First use
 
-Release archives already contain `.agents/skills/papertiger`, the complete
-Claude discovery copy, and `tools/papertiger/bin`. Copy these directories into
-the project root; no setup command or AGENTS.md edit is required. Existing
-projects continue with their selected authority and never repeat this section.
+The release archive is laid out for a project root: unpacked there, its skills
+and `tools/papertiger/bin/papertiger[.exe]` work as they are. `setup-project`
+and `setup-user` are optional managed installations; installation, upgrade and
+removal are covered by `--help` and the README, not by this reference.
 
-For a genuinely new project with no existing planning history, invoke the
-bundled executable from that project, set `PAPERTIGER_ACTOR` and a stable
-`PAPERTIGER_SESSION`, then run `init` without `--json` (initialization reports
-plain text). Keep the same executable and authority selectors used for `status`;
-an ordinary project overlay needs no `--db` override. Create a plan with
-`plan add <slug> "Title" --intent "Purpose"` only if no suitable plan exists.
-The default authority is `state/papertiger.sqlite`; an existing project receipt
-retains its configured authority. `init` creates or migrates through the public
-API. Never initialize a replacement when history is unexpectedly missing.
-Keep the database and its sidecars out of Git using the project's ignore policy.
-
-Archives contain no database, project receipt, root guidance, root README or
-project configuration. Merging their contents preserves those files. Release
-files under the two namespaced skill directories and `tools/papertiger` are
-replaced; preserve deliberate customizations there before replacing them.
-`setup-project` and `setup-user` remain optional managed installation paths.
-
-Optional personal installation with `papertiger setup-user` places the native
-runtime and skills under the user home and initializes a private fallback store.
-It never rewrites consuming projects. Use `setup-project` when a managed
-installation receipt is desired. All paths expose the same workflow through skills.
+Start from the authority the project already has. Only a genuinely new project
+with no planning history gets a new one: set `PAPERTIGER_ACTOR` and a stable
+`PAPERTIGER_SESSION`, then run `init` with the same executable and selectors you
+use for `status` (it reports in plain text and refuses `--json`). Add the
+database and its `-journal`, `-wal` and `-shm` sidecars to Git's ignore rules
+before `init`.
+Add a plan with `plan add <slug> "Title" --intent "Purpose"` only if no suitable
+plan exists. When history is unexpectedly missing, stop and restore it; never
+run `init` to replace it.
 
 Papertiger is optional. Use it when work has independently reviewable outcomes,
 separate commits, dependencies, external blockers, decisions, probes, or proof
 obligations that merit durable identity and cold-resume context. This can apply
 even when the operator requests all outcomes in one session.
 
-The skill carries the ordinary workflow; read this reference for installation,
-migration, recovery, transfer or authority changes, and record validated
+The skill carries the ordinary workflow; read this reference for migration,
+recovery, transfer or authority changes, and record validated
 deferred defects, dependencies, decisions or proof debt as they appear, never
 speculative observations or intermediate steps inside one independently
 reviewable outcome.
@@ -54,14 +42,20 @@ outcome; independent authorities cannot express replacements or dependencies
 between each other.
 
 The default authority is `state/papertiger.sqlite`. The native binary walks
-upward from the current directory to find the nearest
-`tools/papertiger/project-install.json`, verifies that its version matches the
-running binary, verifies the host-local runtime receipt and installed binary
-identity, and resolves its recorded authority against that project root.
+upward from the current directory to the nearest project-install receipt
+(`tools/papertiger/project-install.json`) or release manifest
+(`tools/papertiger/manifest.json`), refuses one that names another Papertiger
+release (the refusal names the corrective command), and resolves the selected
+authority against that project root. A manifest naming the running release
+takes precedence over an older receipt's recorded version; the receipt still
+selects the authority path.
 When an intentional command runs from another repository, pass the global
-`--project-root <canonical-project-root>` option. It requires a receipt at that
-exact root and selects the receipt-bound authority without changing the
-process working directory. `PAPERTIGER_DB` or an explicit global `--db`
+`--project-root <canonical-project-root>` option. At that exact root it selects
+the receipt's authority; without a receipt, the release bundle's or an
+existing `state/papertiger.sqlite`. It never walks upward or changes the process
+working directory. Without a receipt or bundle it selects only a database that
+already exists; `init` creates only the receipt- or bundle-selected authority. Discovery without
+`--project-root` uses only receipts and release bundles. `PAPERTIGER_DB` or an explicit global `--db`
 deliberately overrides receipt discovery. The installed personal executable falls back to its private
 store only when no project receipt is discovered. It needs no `--db` argument.
 Do not use a raw database override for ordinary
@@ -77,9 +71,6 @@ supplied project root.
   longer lock produces an explicit retry refusal. Independent authorities are
   never merged or synchronized; Git cannot merge changed database copies.
 - Mutate the database only through Papertiger commands and public APIs.
-- Ensure the database plus `-journal`, `-wal`, and `-shm` sidecars are ignored
-  before `init`. Never replace a missing authority with a fresh one when prior
-  work clearly existed.
 - `init` is the only command that initializes or migrates the selected live authority. Read commands never
   migrate; follow their exact corrective command deliberately.
 - The current planner authority schema is v13 and the current dump format is
@@ -135,8 +126,8 @@ facts. Markdown carries doctrine and rationale, never duplicated live status.
 ## Start from live truth
 
 Invoke the project executable `<project-root>/tools/papertiger/bin/papertiger[.exe]`
-directly, not through `PATH`, a shell script, or Contextmink's process bridge;
-project and authority selection belong to that binary. In the examples below,
+directly, not through `PATH` or a shell wrapper; project and authority
+selection belong to that binary. In the examples below,
 `papertiger` means that executable.
 
 ```bash
@@ -258,26 +249,14 @@ its task/plan snapshots captured inside the committed transaction. Obtain
 created task selectors from `events[].task.seq`. Failed mutations produce no
 success receipt, and idempotent operations may emit an empty event list with
 `changed=false`. Never recover a task number by parsing human prose. `init`
-retains its separate human-readable migration output.
+reports in plain text and refuses `--json`.
 
-For a concise acknowledgement, retain the receipt locally and display a projection
-of `changed` and each ordered event's `event_id`, `kind`, `task`, and `plan`.
-The optional `task` is a **summary** (`seq`, `title`, `status`, `kind`, `priority`),
-not a full task: it has no `intent` or `result`. Taskless events are legitimate.
-For example, after capturing successful JSON stdout in `$receipt` in PowerShell:
-
-```powershell
-$receipt | Select-Object schema, changed, @{Name='events'; Expression={
-    @($_.events | ForEach-Object {
-        [pscustomobject]@{
-            event_id = $_.event.event_id
-            kind = $_.event.kind
-            task = $_.task
-            plan = $_.plan
-        }
-    })
-}} | ConvertTo-Json -Depth 8
-```
+For a concise acknowledgement, keep the receipt and show `changed` plus, per
+event, `event.event_id` and `event.kind` with their sibling `task` (a summary of
+`seq`, `title`, `status`, `kind` and `priority`, without `intent` or `result`;
+taskless events are legitimate) and `plan`; in Windows PowerShell 5.1 pass
+`ConvertTo-Json -Depth 8`, because the default depth is 2, and wrap
+single-event lists in `@(...)`, because a one-item pipeline yields a scalar.
 
 Check the native command's exit code before parsing. If local parsing or display
 fails after a successful write, inspect the retained receipt and use read-only
@@ -318,9 +297,10 @@ event times as duration, productivity, or submission data.
 Task context v8 is the single work-record surface: full selected-task details,
 compact related-task summaries, and twelve recent events with a history cursor
 when older events remain. Use `show <related-seq> --json` for that task's full
-context. `schema` emits the bundled JSON Schema for context, status, task list,
-event log, dump, and mutation receipts without opening an authority. Every
-field is provider-local; stored prose and locators require editorial review
+context. `schema` emits the bundled JSON Schema without opening an authority;
+its top-level `oneOf` lists the documents it covers. Not every JSON output is
+among them (`evidence verify` and `audit` are not), so check that list before
+validating. Every field is provider-local; stored prose and locators require editorial review
 before external publication. There is no automatic publication renderer or
 provider-discovery protocol.
 
@@ -398,39 +378,6 @@ Mise projection remains the typed producer boundary.
 Blockers record the external `--condition` preventing progress
 (`blocker add <N> <name> --condition <text>`) and clear with
 `blocker resolve` or `blocker waive`, the same verbs gates use.
-
-## Project-local installation
-
-`setup-project` owns only these files and never edits `AGENTS.md`, `CLAUDE.md`,
-harness configuration, hooks or global state, invokes Git, or initializes or
-migrates an authority:
-
-- `tools/papertiger/bin/papertiger[.exe]` and its host-local
-  `.runtime-install.json` receipt (both ignored)
-- `tools/papertiger/agent_integration.md`
-- `tools/papertiger/project-install.json` (tracked version, authority path, and
-  managed-text hashes)
-- selected skill envelopes: `.agents/skills/papertiger/SKILL.md` and/or
-  `.claude/skills/papertiger/SKILL.md`
-- additive Papertiger entries in `.gitignore`
-
-Upgrade by running the newly verified release binary, never the project-local
-one: preview with `setup-project <root> --dry-run --json`, then apply the
-command it reports. Receipt-matching upgrades and missing-file repair are
-automatic; later upgrades preserve the receipt's authority path and skill
-targets. `--replace-managed` is only for a reviewed recovery of a modified
-managed path; modified retired files and downgrades always refuse. On a first
-install, pass `--authority-path <project-relative path>` when the project does
-not use `state/papertiger.sqlite`, and `--skill-target agents|claude|both|none`
-to override detection from existing harness markers. `.gitignore` cannot untrack
-a path; if the host binary or authority is tracked, review it and use
-`git rm --cached -- <path>`. Start a fresh harness session after a skill changes.
-
-`uninstall-project` is the inverse: run it from an external binary matching the
-receipt version, preview with `--dry-run`, and review all paths. It removes only
-receipt-owned content that still matches, refuses modified content, and leaves
-planner and Mise authorities, sidecars, Mise objects, repository guidance and
-the `.gitignore` policy in place; data disposal is a separate decision.
 
 ## Mise is an episodic external driver
 

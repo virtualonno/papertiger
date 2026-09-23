@@ -63,6 +63,6 @@ require results; `done` refuses open obligations. Resolve them with evidence,
 never route around a refusal. Run `audit` after planning changes.
 
 Use live `--help` for operations. Read [the reference](../../../tools/papertiger/agent_integration.md)
-for installation, authority changes, migration or recovery; its relevant section
+for authority changes, migration or recovery; its relevant section
 covers gates, transfers, external references and optional Mise. Only `init`
 initializes or migrates a database; never use it to replace missing history.
