@@ -227,6 +227,14 @@ Download the archive for your platform from
 the adjacent SHA-256 checksum, and extract it outside the consuming project.
 For an upgrade, run `setup-project` from that newly verified release binary;
 a project-local binary cannot overwrite itself while running on Windows.
+A project that was also unpacked from a release archive carries
+`tools/papertiger/manifest.json`, which discovery trusts ahead of the receipt.
+When that manifest names another release or cannot be read, `setup-project`
+and its `--dry-run` refuse before writing anything. Either unpack the new
+release archive over the project root, which replaces `tools/papertiger` and
+the skills while the receipt keeps selecting the authority, or move the
+manifest aside and rerun `setup-project` to manage the project through its
+receipt alone. Setup never writes or relabels a release manifest.
 
 Preview the installation:
 

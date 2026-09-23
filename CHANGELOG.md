@@ -61,6 +61,17 @@ All notable user-visible changes are documented here. Papertiger follows
   bundles with a `papertiger.release_manifest.v1` manifest; reinstall such a
   project with `setup-project` from this release.
 
+### Fixed
+
+- `setup-project` no longer reports a successful upgrade that leaves the project
+  unusable. When `tools/papertiger/manifest.json` from an unpacked release
+  archive names another release or cannot be read, `setup-project` and
+  `--dry-run` now refuse before writing anything. Before this fix, setup exited
+  0 and every later command refused the manifest. To upgrade such a project,
+  unpack the new release archive over the project root, or move the manifest
+  aside and rerun `setup-project`. A custom authority path stays selected
+  either way.
+
 ## [0.18.0] - 2026-09-23
 
 This release renames planner storage, commands, flags and JSON identifiers

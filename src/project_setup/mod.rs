@@ -135,6 +135,7 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
             root.display()
         ));
     }
+    refuse_other_release_overlay(&root)?;
 
     let source_binary = match request.source_binary {
         Some(path) => path.to_path_buf(),
@@ -406,6 +407,32 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         actions,
         next_actions,
     })
+}
+
+/// Discovery lets a bundle manifest outrank the receipt, so a receipt written
+/// beside a manifest naming another release would never be read. Setup refuses
+/// before any write, in preview and apply alike, and never rewrites the
+/// manifest: it belongs to the unpacked release.
+fn refuse_other_release_overlay(root: &Path) -> Result<()> {
+    let manifest = crate::project_bundle::MANIFEST_PATH;
+    let running = env!("CARGO_PKG_VERSION");
+    let remedies = format!(
+        "Either unpack the verified Papertiger {running} release archive over the project root (it replaces tools/papertiger and the Papertiger skills, and the receipt keeps selecting the authority), or move {manifest} aside and rerun setup-project to manage the project through its receipt alone"
+    );
+    let release = crate::project_bundle::release(root).with_context(|| {
+        format!(
+            "setup-project refuses {}: {manifest} is not a readable Papertiger release manifest, and nothing was written. {remedies}",
+            root.display()
+        )
+    })?;
+    match release {
+        crate::project_bundle::BundleRelease::Absent
+        | crate::project_bundle::BundleRelease::Running => Ok(()),
+        crate::project_bundle::BundleRelease::Other(version) => Err(anyhow!(
+            "setup-project refuses {}: {manifest} names Papertiger {version}, but the running binary is {running}, so discovery would never read the receipt setup writes; nothing was written. {remedies}",
+            root.display()
+        )),
+    }
 }
 
 /// Papertiger 0.18 wrote an ignored `<binary>.runtime-install.json` beside the
