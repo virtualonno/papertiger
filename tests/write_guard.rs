@@ -297,6 +297,7 @@ fn guard_drift_blocks_writes_but_never_reads_and_repair_restores_it() {
         "DROP TRIGGER papertiger_admit_tasks_update",
         "DROP TRIGGER papertiger_admit_tasks_update; CREATE TRIGGER papertiger_admit_tasks_update BEFORE UPDATE ON tasks BEGIN SELECT 1; END",
         "DROP TRIGGER events_append_only_update",
+        "DROP TRIGGER task_mise_projections_no_update",
     ] {
         let path = database_path("tamper");
         let db = path.to_str().unwrap();
@@ -350,6 +351,69 @@ fn guard_drift_blocks_writes_but_never_reads_and_repair_restores_it() {
         drop(conn);
         std::fs::remove_file(path).unwrap();
     }
+}
+
+#[test]
+fn foreign_triggers_are_drift_and_repair_removes_them() {
+    // A good-faith convenience trigger would otherwise run inside admitted
+    // mutations and change planning data without an event.
+    let path = database_path("foreign");
+    let db = path.to_str().unwrap();
+    let conn = Connection::open(&path).unwrap();
+    pt::init(&conn).unwrap();
+    let plan = pt::add_plan(&conn, "test", "work", "Work", "Keep").unwrap();
+    pt::add_task(&conn, "test", plan, "Task", "", None, &[], &[], 0, None).unwrap();
+    drop(conn);
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER foreign_touch AFTER INSERT ON events BEGIN UPDATE tasks SET title = title || ' [tampered]'; END",
+        )
+        .unwrap();
+
+    let writable = pt::open_existing(db).unwrap_err().to_string();
+    assert!(writable.contains("foreign_touch"), "{writable}");
+    assert!(
+        writable.contains("papertiger repair-guards --why"),
+        "{writable}"
+    );
+    let reader = pt::open_existing_read_only(db).unwrap();
+    assert!(
+        pt::audit(&reader)
+            .unwrap()
+            .iter()
+            .any(|f| f.kind == "write_guard_drift" && f.detail.contains("foreign_touch"))
+    );
+    drop(reader);
+
+    let repair = pt::open_existing_for_guard_repair(db).unwrap();
+    let repaired = pt::repair_write_guards(&repair, "operator", "agent added a trigger").unwrap();
+    assert_eq!(repaired.len(), 1);
+    assert_eq!(repaired[0].name, "foreign_touch");
+    assert_eq!(repaired[0].state, pt::GuardDriftState::Foreign);
+    assert!(
+        repaired[0]
+            .observed_sql
+            .as_deref()
+            .unwrap()
+            .contains("[tampered]")
+    );
+    drop(repair);
+
+    let conn = pt::open_existing(db).unwrap();
+    pt::add_note(&conn, "agent", Some(1), "after repair").unwrap();
+    assert_eq!(pt::get_task(&conn, 1).unwrap().title, "Task");
+    assert!(pt::audit(&conn).unwrap().is_empty());
+    let payload: String = conn
+        .query_row(
+            "SELECT payload FROM events WHERE kind='repair_write_guards'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(payload.contains("\"foreign\""), "{payload}");
+    drop(conn);
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]

@@ -352,7 +352,7 @@ enum Cmd {
         #[arg(long, requires = "output")]
         replace: bool,
     },
-    /// Reinstall missing or altered write guards with an audited record of the drift
+    /// Reinstall missing or altered write guards and remove foreign triggers, recording the drift
     RepairGuards {
         /// Explain what altered the guards and why reinstalling them is safe
         #[arg(long)]
@@ -1461,12 +1461,12 @@ fn run_planner(cli: Cli) -> Result<()> {
                 "reinstalled"
             };
             for guard in &drifted {
-                let state = if guard.observed_sql.is_some() {
-                    "altered"
-                } else {
-                    "missing"
+                let action = match (guard.state, *dry_run) {
+                    (pt::GuardDriftState::Foreign, true) => "would remove",
+                    (pt::GuardDriftState::Foreign, false) => "removed",
+                    _ => verb,
                 };
-                println!("{verb} {state} guard {}", guard.name);
+                println!("{action} {} trigger {}", guard.state.as_str(), guard.name);
             }
         }
         return Ok(());
@@ -1477,7 +1477,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         let drifted = pt::write_guard_drift(&conn)?;
         if !drifted.is_empty() {
             eprintln!(
-                "warning: {} write guard(s) are missing or altered; mutations refuse until `papertiger repair-guards --why <reason>` reinstalls them",
+                "warning: {} write guard(s) are missing, altered or foreign; mutations refuse until `papertiger repair-guards --why <reason>` restores them",
                 drifted.len()
             );
         }

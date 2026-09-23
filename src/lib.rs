@@ -38,7 +38,7 @@ pub use mutation::{
     MutationEvent, MutationReceipt, MutationRecorder, validate_model, validate_reasoning_effort,
 };
 pub use pickup::{TaskPickup, validate_session};
-pub use write_guard::GuardDrift;
+pub use write_guard::{GuardDrift, GuardDriftState};
 mod plan_move;
 pub use plan_move::move_tasks_to_plan;
 pub use read_model::{
@@ -141,8 +141,9 @@ pub fn open_existing(path: &str) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Open a writable authority whose only defect may be write-guard drift, so
-/// `repair-guards` can reinstall the guards. Every other check still applies.
+/// Open a writable authority whose write guards or canonical history view may
+/// have drifted, so `repair-guards` can reinstall them. Identity and schema
+/// version checks still apply; history validation waits for the repaired view.
 pub fn open_existing_for_guard_repair(path: &str) -> Result<Connection> {
     require_existing_authority_path(path)?;
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
@@ -165,7 +166,8 @@ pub fn open_existing_read_only(path: &str) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Guards that are missing or altered; empty for an intact authority.
+/// Guards that are missing or altered, plus foreign triggers; empty for an
+/// intact authority.
 pub fn write_guard_drift(conn: &Connection) -> Result<Vec<GuardDrift>> {
     write_guard::drift(conn)
 }
@@ -176,7 +178,8 @@ pub fn verify_write_guards(conn: &Connection) -> Result<()> {
     write_guard::verify(conn)
 }
 
-/// Reinstall canonical write guards with an audited `repair_write_guards` event.
+/// Reinstall canonical write guards and drop foreign triggers with an audited
+/// `repair_write_guards` event.
 /// Returns the repaired drift; an intact authority records nothing.
 pub fn repair_write_guards(conn: &Connection, actor: &str, why: &str) -> Result<Vec<GuardDrift>> {
     write_guard::repair(conn, actor, why)

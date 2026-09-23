@@ -31,6 +31,7 @@ fn canonical_guards(conn: &Connection) -> Result<Vec<(String, String)>> {
     for body in [
         WRITE_GUARD_SCHEMA_V11,
         crate::history_recovery::IMMUTABILITY,
+        crate::mise_projection::MISE_PROJECTION_SCHEMA_V4,
     ]
     .into_iter()
     .flat_map(|schema| schema.split("CREATE TRIGGER ").skip(1))
@@ -57,6 +58,10 @@ fn canonical_guards(conn: &Connection) -> Result<Vec<(String, String)>> {
 }
 
 pub(crate) fn install(conn: &Connection) -> Result<()> {
+    // Foreign triggers run inside admitted mutations, so they go first.
+    for name in foreign_triggers(conn)?.into_keys() {
+        conn.execute_batch(&format!("DROP TRIGGER \"{}\";", name.replace('"', "\"\"")))?;
+    }
     conn.execute_batch(&format!(
         "DROP VIEW IF EXISTS canonical_events; {};",
         crate::history_recovery::VIEW
@@ -70,12 +75,70 @@ pub(crate) fn install(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// A canonical guard that is absent or whose stored SQL differs.
+/// Triggers outside the canonical set, keyed by name. Any trigger fires
+/// inside admitted mutations, so an unknown one could write planning data
+/// without an event.
+fn foreign_triggers(conn: &Connection) -> Result<std::collections::BTreeMap<String, String>> {
+    let canonical: std::collections::HashSet<String> = canonical_guards(conn)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let mut stmt = conn.prepare("SELECT name, sql FROM sqlite_schema WHERE type='trigger'")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    })?;
+    let mut foreign = std::collections::BTreeMap::new();
+    for row in rows {
+        let (name, sql) = row?;
+        if !canonical.contains(&name) {
+            foreign.insert(name, sql.unwrap_or_default());
+        }
+    }
+    Ok(foreign)
+}
+
+/// How a guard deviates from the canonical boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuardDriftState {
+    Missing,
+    Altered,
+    /// A trigger the executable did not install.
+    Foreign,
+}
+
+impl GuardDriftState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Altered => "altered",
+            Self::Foreign => "foreign",
+        }
+    }
+}
+
+/// A canonical guard that is absent or altered, or a foreign trigger.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct GuardDrift {
     pub name: String,
-    /// Stored trigger SQL, or `None` when the guard is missing.
+    pub state: GuardDriftState,
+    /// Stored SQL, or `None` when the guard is missing.
     pub observed_sql: Option<String>,
+}
+
+impl GuardDrift {
+    fn observed(name: String, observed_sql: Option<String>) -> Self {
+        let state = if observed_sql.is_some() {
+            GuardDriftState::Altered
+        } else {
+            GuardDriftState::Missing
+        };
+        Self {
+            name,
+            state,
+            observed_sql,
+        }
+    }
 }
 
 pub(crate) fn drift(conn: &Connection) -> Result<Vec<GuardDrift>> {
@@ -89,8 +152,15 @@ pub(crate) fn drift(conn: &Connection) -> Result<Vec<GuardDrift>> {
             )
             .optional()?;
         if observed_sql.as_deref() != Some(expected.as_str()) {
-            drifted.push(GuardDrift { name, observed_sql });
+            drifted.push(GuardDrift::observed(name, observed_sql));
         }
+    }
+    for (name, sql) in foreign_triggers(conn)? {
+        drifted.push(GuardDrift {
+            name,
+            state: GuardDriftState::Foreign,
+            observed_sql: Some(sql),
+        });
     }
     let view: Option<String> = conn
         .query_row(
@@ -100,10 +170,7 @@ pub(crate) fn drift(conn: &Connection) -> Result<Vec<GuardDrift>> {
         )
         .optional()?;
     if view.as_deref() != Some(crate::history_recovery::VIEW) {
-        drifted.push(GuardDrift {
-            name: "canonical_events".into(),
-            observed_sql: view,
-        });
+        drifted.push(GuardDrift::observed("canonical_events".into(), view));
     }
     Ok(drifted)
 }
@@ -115,7 +182,7 @@ pub(crate) fn drift_correction(drifted: &[GuardDrift]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "Papertiger write guards are missing or altered ({names}); stop direct SQLite access, then run `papertiger repair-guards --why <reason>` to reinstall them with an audited record of what changed. Reads, export and backup remain available"
+        "Papertiger write guards are missing, altered or joined by foreign triggers ({names}); stop direct SQLite access, then run `papertiger repair-guards --why <reason>` to reinstall the guards and remove foreign triggers with an audited record of what changed. Reads, export and backup remain available"
     )
 }
 

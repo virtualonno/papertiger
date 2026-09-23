@@ -6,6 +6,18 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A trigger added by direct SQLite access is write-guard drift. Previously it
+  passed `audit` and `repair-guards --dry-run`, then ran inside the next
+  Papertiger mutation and could change planning data without an event. Writes
+  now refuse and name it; `repair-guards --why <reason>` removes it and records
+  its SQL. The Mise projection immutability triggers are also checked and
+  restored. An authority that already contains such a trigger refuses writes
+  after upgrading until `repair-guards` runs; reads, export and backup continue.
+- `repair-guards --json` reports each entry's `state` as `missing`, `altered`
+  or `foreign`.
+
 ## [0.17.1] - 2026-09-22
 
 No schema change; 0.17.0 authorities need no migration.
