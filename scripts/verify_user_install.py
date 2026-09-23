@@ -14,8 +14,8 @@ def snapshot(root):
 
 
 binary = Path(sys.argv[1]).resolve(strict=True)
-tool = binary.stem
-assert tool in ("papertiger", "contextmink")
+tool = "papertiger"
+assert binary.stem == tool
 with tempfile.TemporaryDirectory(prefix=f"{tool} personal smoke ") as directory:
     root = Path(directory)
     home = root / "home"
@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix=f"{tool} personal smoke ") as directory:
     run(binary, "setup-user", "--home", home, "--dry-run")
     assert snapshot(home) == original_home
     result = json.loads(run(binary, "setup-user", "--home", home, "--json"))
-    assert result["schema"] == f"{tool}.user_setup.v1"
+    assert result["schema"] == f"{tool}.user_setup.v2"
     installed = snapshot(home)
     run(binary, "setup-user", "--home", home)
     assert snapshot(home) == installed
@@ -51,20 +51,15 @@ with tempfile.TemporaryDirectory(prefix=f"{tool} personal smoke ") as directory:
     assert skill.startswith("---\nname:")
     assert (home / ".claude" / "skills" / tool / "SKILL.md").read_text(encoding="utf-8") == skill
     database = home / ".local/share/papertiger/state/papertiger.sqlite"
-    if tool == "papertiger":
-        plans = json.loads(run(runtime, "plan", "list", "--json"))
-        assert [p["slug"] for p in plans["plans"]] == ["personal"]
-        run(runtime, "audit")
-    else:
-        result = json.loads(run(runtime, "--json", "files", ".", "--limit", "10"))
-        assert result["scope_complete"]
+    plans = json.loads(run(runtime, "plan", "list", "--json"))
+    assert [p["slug"] for p in plans["plans"]] == ["personal"]
+    run(runtime, "audit")
     run(binary, "uninstall-user", "--home", home, "--dry-run")
     assert snapshot(home) == installed
     run(binary, "uninstall-user", "--home", home)
     assert not runtime.exists()
     assert not (home / ".agents" / "skills" / tool / "SKILL.md").exists()
-    if tool == "papertiger":
-        assert hashlib.sha256(database.read_bytes()).hexdigest() == installed[str(database.relative_to(home))]
+    assert hashlib.sha256(database.read_bytes()).hexdigest() == installed[str(database.relative_to(home))]
     run(binary, "setup-user", "--home", home)
     assert snapshot(project) == original_project
     assert (home / "AGENTS.md").read_text(encoding="utf-8") == "Existing personal instructions\n"

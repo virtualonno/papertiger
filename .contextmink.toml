@@ -1,6 +1,0 @@
-profile = "papertiger"
-
-exclude_globs = ["state/**", "dist/**"]
-
-destructive_guard_recursive_delete_fragments = ["state/papertiger.sqlite", "state/papertiger-mise.sqlite", "state/papertiger-mise-objects/"]
-destructive_guard_delete_fragments = ["state/papertiger.sqlite", "state/papertiger-mise.sqlite", "state/papertiger-mise-objects/"]

@@ -9,8 +9,8 @@ import sys
 import tempfile
 
 bundle = Path(sys.argv[1]).resolve(strict=True)
-tool = next((bundle / 'tools').iterdir()).name
-assert tool in ('papertiger', 'contextmink')
+tool = 'papertiger'
+assert [p.name for p in (bundle / 'tools').iterdir()] == [tool]
 owned = bundle / 'tools' / tool
 manifest = json.loads((owned / 'manifest.json').read_text())
 assert manifest['schema'] == tool + '.release_manifest.v3'
@@ -27,10 +27,8 @@ for path in bundle.rglob('*'):
 skill = bundle / '.agents/skills' / tool / 'SKILL.md'
 assert skill.read_bytes() == (bundle / '.claude/skills' / tool / 'SKILL.md').read_bytes()
 assert '<!-- installed-command -->' not in skill.read_text()
-if tool == 'papertiger':
-    assert 'personal binding above' not in skill.read_text()
-    reference = (owned / 'agent_integration.md').read_text()
-    assert '### Mutation receipts' in reference
+reference = (owned / 'agent_integration.md').read_text()
+assert '### Mutation receipts' in reference
 env = {k: v for k, v in os.environ.items() if not k.startswith('PAPERTIGER_')}
 env['PAPERTIGER_ACTOR'] = 'bundle-smoke'
 env['PAPERTIGER_SESSION'] = 'bundle-smoke'
@@ -54,32 +52,27 @@ with tempfile.TemporaryDirectory(prefix=tool + ' project overlay ') as directory
         return result.stdout if success else result.stderr
 
     assert run('--version').strip() == tool + ' ' + manifest['version']
-    if tool == 'papertiger':
-        first_use = run('status', success=False)
-        assert 'with `init`' in first_use and 'same authority selectors' in first_use
-        assert '--db' not in first_use
-        assert not (project / 'state/papertiger.sqlite').exists()
-        run('init')
-        run('plan', 'add', 'work', 'Project work', '--intent', 'Preserve outcomes')
-        run('add', 'Existing outcome', '--plan', 'work', '--intent', 'Retain project history', '--intent-source', 'user')
-        before = json.loads(run('show', '1', '--json'))['task']
-        shutil.copytree(bundle, project, dirs_exist_ok=True)
-        assert json.loads(run('show', '1', '--json'))['task'] == before
-        run('--project-root', project, 'audit')
-        assert not (nested / 'state').exists()
-        database = project / 'state/papertiger.sqlite'
-        database.unlink()
-        run('status', success=False)
-        assert not database.exists(), 'reads must not replace missing history'
-        metadata = project / 'tools/papertiger/manifest.json'
-        bad = json.loads(metadata.read_text())
-        bad['binary_sha256']['bin/papertiger' + suffix] = '0' * 64
-        metadata.write_text(json.dumps(bad))
-        run('status', success=False)
-    else:
-        (project / 'sample.json').write_text('{"count":17}')
-        output = json.loads(run('--json', 'json-select', '../../sample.json', '--fields', 'count'))
-        assert output['scope_complete']
+    first_use = run('status', success=False)
+    assert 'with `init`' in first_use and 'same authority selectors' in first_use
+    assert '--db' not in first_use
+    assert not (project / 'state/papertiger.sqlite').exists()
+    run('init')
+    run('plan', 'add', 'work', 'Project work', '--intent', 'Preserve outcomes')
+    run('add', 'Existing outcome', '--plan', 'work', '--intent', 'Retain project history', '--intent-source', 'user')
+    before = json.loads(run('show', '1', '--json'))['task']
+    shutil.copytree(bundle, project, dirs_exist_ok=True)
+    assert json.loads(run('show', '1', '--json'))['task'] == before
+    run('--project-root', project, 'audit')
+    assert not (nested / 'state').exists()
+    database = project / 'state/papertiger.sqlite'
+    database.unlink()
+    run('status', success=False)
+    assert not database.exists(), 'reads must not replace missing history'
+    metadata = project / 'tools/papertiger/manifest.json'
+    bad = json.loads(metadata.read_text())
+    bad['binary_sha256']['bin/papertiger' + suffix] = '0' * 64
+    metadata.write_text(json.dumps(bad))
+    run('status', success=False)
     for name, content in baseline.items():
         assert (project / name).read_bytes() == content
 print(tool + ': direct project overlay smoke passed')

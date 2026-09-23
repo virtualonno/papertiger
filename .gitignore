@@ -4,8 +4,6 @@
 /.claude/
 
 
-# contextmink project-local release binaries
-/tools/contextmink/bin/
 
 # Papertiger project-local runtime and authorities
 /tools/papertiger/bin/
