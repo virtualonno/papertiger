@@ -51,8 +51,6 @@ each under 32 KiB.
   disagree with the DB, the DB wins and the prose gets corrected. Markdown
   carries doctrine, never task status.
 
-Before broad or potentially high-output file, text, structured-data, or command-output reads, load `.agents/skills/contextmink/SKILL.md`. Skip known-small direct reads and project-native compact or domain-query commands.
-
 ## Coding Contract
 
 - Toolchain is pinned by `rust-toolchain.toml`. Run the `## Verification`
