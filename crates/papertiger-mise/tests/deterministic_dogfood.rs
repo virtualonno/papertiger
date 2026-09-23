@@ -1290,13 +1290,10 @@ impl DogfoodFixture {
             &planner,
             "independent-operator",
             plan,
-            "Authorize exact successor",
-            "Review one exact parent promotion proof",
-            None,
-            &[],
-            &[],
-            0,
-            None,
+            papertiger::TaskCreation {
+                intent: "Review one exact parent promotion proof",
+                ..papertiger::TaskCreation::new("Authorize exact successor")
+            },
         )
         .expect("planner task");
         papertiger::add_gate(

@@ -13,13 +13,10 @@ fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
             &conn,
             "test",
             plan,
-            title,
-            &narrative,
-            None,
-            &[],
-            &[],
-            0,
-            None,
+            pt::TaskCreation {
+                intent: &narrative,
+                ..pt::TaskCreation::new(title)
+            },
         )
         .unwrap()
     };
@@ -29,7 +26,7 @@ fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
     let blocked = add("Waiting work");
     pt::start_task(&conn, "same-harness", mine, None, Some("me")).unwrap();
     pt::start_task(&conn, "same-harness", other, None, Some("other")).unwrap();
-    pt::add_task_blocker(&conn, "test", other, "input", "waiting for input").unwrap();
+    pt::add_blocker(&conn, "test", other, "input", "waiting for input").unwrap();
     pt::add_dep(&conn, "test", blocked, ready, "prerequisite").unwrap();
     let before = serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap();
 
@@ -70,7 +67,7 @@ fn seed(conn: &Connection) -> (i64, i64, i64) {
     pt::init(conn).unwrap();
     pt::add_plan(conn, "test", "work", "Work", "").unwrap();
     let (plan, _) = pt::resolve_plan(conn, Some("work")).unwrap();
-    let add = |title| pt::add_task(conn, "test", plan, title, "", None, &[], &[], 0, None).unwrap();
+    let add = |title| pt::add_task(conn, "test", plan, pt::TaskCreation::new(title)).unwrap();
     (plan, add("First outcome"), add("Second outcome"))
 }
 
@@ -89,7 +86,7 @@ fn independent_sessions_prefer_other_work_without_stranding_abandoned_pickups() 
 
     // A vanishes without releasing anything. With no alternate work, the task
     // remains discoverable and B resumes immediately: no age, TTL, or hook.
-    pt::complete_task(&conn, "test", second, None).unwrap();
+    pt::complete_task(&conn, "test", second, None, None).unwrap();
     assert_eq!(select("b").projection.entries[0].task.seq, first);
     pt::start_task(&conn, "same-harness", first, None, Some("b")).unwrap();
     let resumed = pt::get_task(&conn, first).unwrap();
@@ -102,7 +99,7 @@ fn independent_sessions_prefer_other_work_without_stranding_abandoned_pickups() 
     assert_eq!(payload["before"]["session"], "a");
     assert_eq!(payload["after"]["session"], "b");
     // Identity is advisory, so it cannot prevent completion by another caller.
-    pt::complete_task(&conn, "operator", first, None).unwrap();
+    pt::complete_task(&conn, "operator", first, None, None).unwrap();
     assert!(pt::get_task(&conn, first).unwrap().pickup.is_none());
     assert!(pt::audit(&conn).unwrap().is_empty());
 }
@@ -120,9 +117,9 @@ fn identified_retries_are_eventless_and_real_blockers_remain_enforced() {
         before,
         serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap()
     );
-    pt::add_task_blocker(&conn, "test", first, "input", "missing input").unwrap();
+    pt::add_blocker(&conn, "test", first, "input", "missing input").unwrap();
     pt::start_task(&conn, "test", first, None, Some("b")).unwrap();
-    assert!(pt::complete_task(&conn, "test", first, None).is_err());
+    assert!(pt::complete_task(&conn, "test", first, None, None).is_err());
     let focus = pt::focus(&conn, plan, 1, false, Some("b")).unwrap();
     assert_eq!(focus.projection.entries[0].readiness, "mine");
     assert!(!focus.projection.entries[0].blockers.is_empty());

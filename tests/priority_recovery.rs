@@ -20,13 +20,10 @@ fn fixture() -> Connection {
         &conn,
         "test",
         plan,
-        "Recover priority",
-        "Keep the evidence",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            intent: "Keep the evidence",
+            ..pt::TaskCreation::new("Recover priority")
+        },
     )
     .unwrap();
     // Deliberately corrupt only a disposable test fixture, never an authority,

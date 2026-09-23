@@ -23,19 +23,7 @@ fn db() -> rusqlite::Connection {
 fn audit_reports_oversized_terminal_titles_that_would_block_recovery_import() {
     let conn = db();
     let plan = pt::add_plan(&conn, "fixture", "work", "Work", "").unwrap();
-    pt::add_task(
-        &conn,
-        "fixture",
-        plan,
-        "Original",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    pt::add_task(&conn, "fixture", plan, pt::TaskCreation::new("Original")).unwrap();
     // Explicitly admitted disposable fixture represents a legacy terminal task.
     conn.execute(
         "UPDATE tasks SET title=?1,status='retired'",
@@ -309,12 +297,12 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
     let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "gated", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("gated")).unwrap();
     pt::add_gate(&conn, "test", task, "proof", "test", "tests pass").unwrap();
     pt::add_gate(&conn, "test", task, "doc", "doc", "docs updated").unwrap();
     pt::resolve_gate(&conn, "test", task, "proof", "file:proof.json", None, None).unwrap();
     pt::waive_gate(&conn, "test", task, "doc", "not user-facing").unwrap();
-    pt::add_task_blocker(&conn, "test", task, "vendor", "vendor fix released").unwrap();
+    pt::add_blocker(&conn, "test", task, "vendor", "vendor fix released").unwrap();
     let resolved_at = pt::task_context(&conn, task).unwrap().gates[0]
         .resolved_at
         .clone()
@@ -905,24 +893,12 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
 fn task_lifecycle_and_gate_honesty_rule() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let seq = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "build thing",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let seq = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("build thing")).unwrap();
     assert_eq!(seq, 1);
     pt::add_gate(&conn, "test", seq, "smoke", "test", "smoke test passes").unwrap();
     pt::start_task(&conn, "test", seq, None, None).unwrap();
     // done refused while gate open
-    let err = pt::complete_task(&conn, "test", seq, None).unwrap_err();
+    let err = pt::complete_task(&conn, "test", seq, None, None).unwrap_err();
     assert!(err.to_string().contains("open gate"));
     // bad locator shape refused
     let err = pt::resolve_gate(&conn, "test", seq, "smoke", "no-scheme", None, None).unwrap_err();
@@ -937,7 +913,7 @@ fn task_lifecycle_and_gate_honesty_rule() {
         None,
     )
     .unwrap();
-    pt::complete_task(&conn, "test", seq, None).unwrap();
+    pt::complete_task(&conn, "test", seq, None, None).unwrap();
     assert_eq!(pt::get_task(&conn, seq).unwrap().status, "done");
 }
 
@@ -945,7 +921,7 @@ fn task_lifecycle_and_gate_honesty_rule() {
 fn waive_requires_why_via_retire_reject_paths() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let seq = pt::add_task(&conn, "test", plan, "t", "", None, &[], &[], 0, None).unwrap();
+    let seq = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("t")).unwrap();
     assert!(pt::retire_task(&conn, "test", seq, None, "").is_err());
     assert!(pt::reject_task(&conn, "test", seq, "").is_err());
     pt::reject_task(&conn, "test", seq, "approach disproven").unwrap();
@@ -955,9 +931,28 @@ fn waive_requires_why_via_retire_reject_paths() {
 fn dependency_cycles_rejected_and_readiness_derived() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let a = pt::add_task(&conn, "test", plan, "a", "", None, &[], &[], 0, None).unwrap();
-    let b = pt::add_task(&conn, "test", plan, "b", "", None, &[a], &[], 0, None).unwrap();
-    let c = pt::add_task(&conn, "test", plan, "c", "", None, &[b], &[], 5, None).unwrap();
+    let a = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("a")).unwrap();
+    let b = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            deps: &[a],
+            ..pt::TaskCreation::new("b")
+        },
+    )
+    .unwrap();
+    let c = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            deps: &[b],
+            priority: 5,
+            ..pt::TaskCreation::new("c")
+        },
+    )
+    .unwrap();
     // a <- b <- c; closing the loop is refused
     assert!(pt::add_dep(&conn, "test", a, c, "cycle probe").is_err());
     assert!(pt::add_dep(&conn, "test", a, a, "self-cycle probe").is_err());
@@ -970,7 +965,7 @@ fn dependency_cycles_rejected_and_readiness_derived() {
     let c_entry = all.iter().find(|e| e.task.seq == c).unwrap();
     assert_eq!(c_entry.blockers, vec![format!("dep:#{b}")]);
     // completing a readies b (priority ordering: c still blocked)
-    pt::complete_task(&conn, "test", a, None).unwrap();
+    pt::complete_task(&conn, "test", a, None, None).unwrap();
     let ready = pt::ready_tasks(&conn, plan, 10, false).unwrap();
     assert_eq!(
         ready.iter().map(|e| e.task.seq).collect::<Vec<_>>(),
@@ -983,22 +978,28 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
     let other_plan = pt::add_plan(&conn, "test", "other", "Other", "").unwrap();
-    let a = pt::add_task(&conn, "test", plan, "a", "", None, &[], &[], 0, None).unwrap();
-    let b = pt::add_task(&conn, "test", plan, "b", "", None, &[a], &[], 0, None).unwrap();
-    let c = pt::add_task(&conn, "test", plan, "c", "", None, &[b], &[], 0, None).unwrap();
-    let other = pt::add_task(
+    let a = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("a")).unwrap();
+    let b = pt::add_task(
         &conn,
         "test",
-        other_plan,
-        "other",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        plan,
+        pt::TaskCreation {
+            deps: &[a],
+            ..pt::TaskCreation::new("b")
+        },
     )
     .unwrap();
+    let c = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            deps: &[b],
+            ..pt::TaskCreation::new("c")
+        },
+    )
+    .unwrap();
+    let other = pt::add_task(&conn, "test", other_plan, pt::TaskCreation::new("other")).unwrap();
 
     assert_exact_error(
         pt::add_dep(&conn, "test", a, a, "self dependency"),
@@ -1050,30 +1051,16 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
 fn lifecycle_refusals_have_exact_corrective_messages() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let dependency = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "dependency",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let dependency =
+        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("dependency")).unwrap();
     let blocked = pt::add_task(
         &conn,
         "test",
         plan,
-        "blocked",
-        "",
-        None,
-        &[dependency],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            deps: &[dependency],
+            ..pt::TaskCreation::new("blocked")
+        },
     )
     .unwrap();
     assert_exact_error(
@@ -1083,13 +1070,13 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
     pt::start_task(&conn, "test", dependency, None, None).unwrap();
     // Explicit resumption is allowed; pickup is advisory, not an exclusive hold.
     pt::start_task(&conn, "test", dependency, None, None).unwrap();
-    pt::complete_task(&conn, "test", dependency, None).unwrap();
+    pt::complete_task(&conn, "test", dependency, None, None).unwrap();
     assert_exact_error(
         pt::start_task(&conn, "test", dependency, None, None),
         &format!("#{dependency} is done; use `reopen` before starting it"),
     );
     assert_exact_error(
-        pt::complete_task(&conn, "test", dependency, None),
+        pt::complete_task(&conn, "test", dependency, None, None),
         &format!("#{dependency} is already done"),
     );
     assert_exact_error(
@@ -1101,28 +1088,24 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
         "reopening a task requires a nonblank reason",
     );
 
-    let decision = pt::add_task_with_kind(
+    let decision = pt::add_task(
         &conn,
         "test",
         plan,
-        "decision",
-        "",
-        "decision",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            kind: "decision",
+            ..pt::TaskCreation::new("decision")
+        },
     )
     .unwrap();
     assert_exact_error(
-        pt::complete_task(&conn, "test", decision, None),
+        pt::complete_task(&conn, "test", decision, None, None),
         &format!(
             "completing decision task #{decision} requires --result or --result-file so the measured or selected outcome survives the session"
         ),
     );
     assert_exact_error(
-        pt::complete_task_with_source(&conn, "test", decision, None, Some("agent")),
+        pt::complete_task(&conn, "test", decision, None, Some("agent")),
         "--result-source requires --result or --result-file with a durable outcome",
     );
     assert_exact_error(
@@ -1136,7 +1119,7 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
         &format!("plan is paused; set it active before starting task #{blocked}"),
     );
     assert_exact_error(
-        pt::complete_task(&conn, "test", blocked, None),
+        pt::complete_task(&conn, "test", blocked, None, None),
         &format!("plan is paused; set it active before completing proposed task #{blocked}"),
     );
 }
@@ -1145,7 +1128,7 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
 fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
 
     assert_exact_error(
         pt::add_gate(&conn, "test", task, "proof", "invalid", "requirement"),
@@ -1180,27 +1163,27 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
         &format!("gate 'proof' on #{task} is already open"),
     );
     assert_exact_error(
-        pt::remove_open_gate(&conn, "test", task, "proof", ""),
+        pt::remove_gate(&conn, "test", task, "proof", ""),
         "removing a gate requires a nonblank reason",
     );
     pt::resolve_gate(&conn, "test", task, "proof", "file:proof.json", None, None).unwrap();
     assert_exact_error(
-        pt::remove_open_gate(&conn, "test", task, "proof", "closed"),
+        pt::remove_gate(&conn, "test", task, "proof", "closed"),
         &format!("no open gate 'proof' on #{task}"),
     );
     pt::reopen_gate(&conn, "test", task, "proof", "replace evidence").unwrap();
 
-    pt::add_task_blocker(&conn, "test", task, "input", "operator input").unwrap();
+    pt::add_blocker(&conn, "test", task, "input", "operator input").unwrap();
     assert_exact_error(
-        pt::reopen_task_blocker(&conn, "test", task, "input", "already open"),
+        pt::reopen_blocker(&conn, "test", task, "input", "already open"),
         &format!("blocker 'input' on #{task} is already open"),
     );
-    pt::resolve_task_blocker(&conn, "test", task, "input", "file:input.json", None, None).unwrap();
+    pt::resolve_blocker(&conn, "test", task, "input", "file:input.json", None, None).unwrap();
     assert_exact_error(
-        pt::remove_open_task_blocker(&conn, "test", task, "input", "closed"),
+        pt::remove_blocker(&conn, "test", task, "input", "closed"),
         &format!("no open blocker 'input' on #{task}"),
     );
-    pt::reopen_task_blocker(&conn, "test", task, "input", "replace evidence").unwrap();
+    pt::reopen_blocker(&conn, "test", task, "input", "replace evidence").unwrap();
     let blockers = pt::task_blockers(&conn, pt::get_task(&conn, task).unwrap().task_id).unwrap();
     assert_eq!(blockers[0].status, "open");
     assert_eq!(blockers[0].evidence_locator, None);
@@ -1222,7 +1205,7 @@ fn evidence_verifier_classifies_unhashed_missing_escaping_and_unsupported_bindin
     std::fs::write(root.join("docs/proof.txt"), b"proof\n").unwrap();
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     for (name, locator) in [
         ("unhashed", "file:docs/proof.txt"),
         ("missing", "file:docs/missing.txt"),
@@ -1286,13 +1269,7 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
             &conn,
             "test",
             plan,
-            &format!("task-{index:02}"),
-            "",
-            None,
-            &[],
-            &[],
-            0,
-            None,
+            pt::TaskCreation::new(&format!("task-{index:02}")),
         )
         .unwrap();
         let (name, locator, sha256) = match index % 3 {
@@ -1307,7 +1284,7 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
         pt::add_gate(&conn, "test", seq, name, "review", "retained evidence").unwrap();
         pt::resolve_gate(&conn, "test", seq, name, locator, sha256, None).unwrap();
         if index % 2 == 1 {
-            pt::complete_task(&conn, "test", seq, None).unwrap();
+            pt::complete_task(&conn, "test", seq, None, None).unwrap();
         }
     }
 
@@ -1416,8 +1393,17 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
 fn priority_orders_ready_queue() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let low = pt::add_task(&conn, "test", plan, "low", "", None, &[], &[], 0, None).unwrap();
-    let high = pt::add_task(&conn, "test", plan, "high", "", None, &[], &[], 9, None).unwrap();
+    let low = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("low")).unwrap();
+    let high = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            priority: 9,
+            ..pt::TaskCreation::new("high")
+        },
+    )
+    .unwrap();
     let ready = pt::ready_tasks(&conn, plan, 10, false).unwrap();
     assert_eq!(
         ready.iter().map(|e| e.task.seq).collect::<Vec<_>>(),
@@ -1429,23 +1415,28 @@ fn priority_orders_ready_queue() {
 fn ready_limit_applies_to_the_whole_result() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let blocker =
-        pt::add_task(&conn, "test", plan, "blocker", "", None, &[], &[], 0, None).unwrap();
+    let blocker = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("blocker")).unwrap();
     for title in ["ready-a", "ready-b"] {
-        pt::add_task(&conn, "test", plan, title, "", None, &[], &[], 1, None).unwrap();
+        pt::add_task(
+            &conn,
+            "test",
+            plan,
+            pt::TaskCreation {
+                priority: 1,
+                ..pt::TaskCreation::new(title)
+            },
+        )
+        .unwrap();
     }
     for title in ["blocked-a", "blocked-b"] {
         pt::add_task(
             &conn,
             "test",
             plan,
-            title,
-            "",
-            None,
-            &[blocker],
-            &[],
-            0,
-            None,
+            pt::TaskCreation {
+                deps: &[blocker],
+                ..pt::TaskCreation::new(title)
+            },
         )
         .unwrap();
     }
@@ -1473,41 +1464,35 @@ fn ready_limit_applies_to_the_whole_result() {
 fn audit_flags_dead_deps_and_lagging_parents() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let dead = pt::add_task(&conn, "test", plan, "dead", "", None, &[], &[], 0, None).unwrap();
-    let live = pt::add_task(&conn, "test", plan, "live", "", None, &[dead], &[], 0, None).unwrap();
+    let dead = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("dead")).unwrap();
+    let live = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            deps: &[dead],
+            ..pt::TaskCreation::new("live")
+        },
+    )
+    .unwrap();
     pt::reject_task(&conn, "test", dead, "nope").unwrap();
     let ready = pt::ready_tasks(&conn, plan, 10, false).unwrap();
     assert!(
         ready.iter().all(|entry| entry.task.seq != live),
         "a rejected prerequisite must keep its consumer blocked"
     );
-    let parent = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "milestone",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("milestone")).unwrap();
     let child = pt::add_task(
         &conn,
         "test",
         plan,
-        "child",
-        "",
-        Some(parent),
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            parent: Some(parent),
+            ..pt::TaskCreation::new("child")
+        },
     )
     .unwrap();
-    pt::complete_task(&conn, "test", child, None).unwrap();
+    pt::complete_task(&conn, "test", child, None, None).unwrap();
     let findings = pt::audit(&conn).unwrap();
     let kinds: Vec<&str> = findings.iter().map(|f| f.kind.as_str()).collect();
     assert!(kinds.contains(&"dep_on_dead"), "{kinds:?}");
@@ -1523,19 +1508,28 @@ fn export_import_roundtrip_preserves_graph() {
         &conn,
         "test",
         plan,
-        "a",
-        "intent a",
-        None,
-        &[],
-        &["track:x".into()],
-        2,
-        Some("roundtrip fixture"),
+        pt::TaskCreation {
+            intent: "intent a",
+            tags: &["track:x".into()],
+            priority: 2,
+            why: Some("roundtrip fixture"),
+            ..pt::TaskCreation::new("a")
+        },
     )
     .unwrap();
-    let b = pt::add_task(&conn, "test", plan, "b", "", None, &[a], &[], 0, None).unwrap();
+    let b = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            deps: &[a],
+            ..pt::TaskCreation::new("b")
+        },
+    )
+    .unwrap();
     pt::add_gate(&conn, "test", a, "smoke", "test", "passes").unwrap();
     pt::resolve_gate(&conn, "test", a, "smoke", "file:e.json", None, None).unwrap();
-    pt::complete_task(&conn, "test", a, None).unwrap();
+    pt::complete_task(&conn, "test", a, None, None).unwrap();
     let dump = pt::export(&conn, None).unwrap();
     let json = serde_json::to_string(&dump).unwrap();
 
@@ -1727,30 +1721,15 @@ fn import_refuses_superseded_dump_with_a_complete_recovery_path() {
 fn container_tasks_never_enter_ready_queue() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let parent = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "milestone",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("milestone")).unwrap();
     let child = pt::add_task(
         &conn,
         "test",
         plan,
-        "child",
-        "",
-        Some(parent),
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            parent: Some(parent),
+            ..pt::TaskCreation::new("child")
+        },
     )
     .unwrap();
     let ready = pt::ready_tasks(&conn, plan, 10, false).unwrap();
@@ -1864,8 +1843,7 @@ fn task_references_are_canonical_sequences_only() {
 fn failed_add_is_atomic() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let existing =
-        pt::add_task(&conn, "test", plan, "existing", "", None, &[], &[], 0, None).unwrap();
+    let existing = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("existing")).unwrap();
     let before_events: i64 = conn
         .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
         .unwrap();
@@ -1873,13 +1851,10 @@ fn failed_add_is_atomic() {
         &conn,
         "test",
         plan,
-        "must roll back",
-        "",
-        None,
-        &[existing, 999],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            deps: &[existing, 999],
+            ..pt::TaskCreation::new("must roll back")
+        },
     )
     .unwrap_err();
     assert!(error.to_string().contains("no task #999"));
@@ -1944,7 +1919,7 @@ fn import_allocates_omitted_sequences_before_linking() {
 fn evidence_and_waiver_reasons_are_durable() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     pt::add_gate(&conn, "test", task, "g", "test", "r").unwrap();
     let bad = pt::resolve_gate(
         &conn,
@@ -1958,7 +1933,14 @@ fn evidence_and_waiver_reasons_are_durable() {
     .unwrap_err();
     assert!(bad.to_string().contains("64 lowercase"));
     pt::waive_gate(&conn, "test", task, "g", "upstream fixture unavailable").unwrap();
-    pt::add_note(&conn, "test", Some(task), "cold-readable handoff note").unwrap();
+    pt::add_note(
+        &conn,
+        "test",
+        Some(task),
+        "cold-readable handoff note",
+        None,
+    )
+    .unwrap();
     let dump = pt::export(&conn, None).unwrap();
     assert!(!dump.events.is_empty());
 
@@ -1989,78 +1971,52 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
         &conn,
         "test",
         plan,
-        "container",
-        "",
-        None,
-        &[],
-        &[],
-        100,
-        None,
+        pt::TaskCreation {
+            priority: 100,
+            ..pt::TaskCreation::new("container")
+        },
     )
     .unwrap();
     let active_leaf = pt::add_task(
         &conn,
         "test",
         plan,
-        "active leaf",
-        "",
-        Some(container),
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            parent: Some(container),
+            ..pt::TaskCreation::new("active leaf")
+        },
     )
     .unwrap();
-    let prerequisite = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "prerequisite",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let prerequisite =
+        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("prerequisite")).unwrap();
     let independent = pt::add_task(
         &conn,
         "test",
         plan,
-        "independent",
-        "",
-        None,
-        &[],
-        &[],
-        50,
-        None,
+        pt::TaskCreation {
+            priority: 50,
+            ..pt::TaskCreation::new("independent")
+        },
     )
     .unwrap();
     let dependent = pt::add_task(
         &conn,
         "test",
         plan,
-        "dependent",
-        "",
-        None,
-        &[prerequisite],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            deps: &[prerequisite],
+            ..pt::TaskCreation::new("dependent")
+        },
     )
     .unwrap();
     let downstream = pt::add_task(
         &conn,
         "test",
         plan,
-        "downstream",
-        "",
-        None,
-        &[dependent],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            deps: &[dependent],
+            ..pt::TaskCreation::new("downstream")
+        },
     )
     .unwrap();
     pt::start_task(&conn, "test", container, None, None).unwrap();
@@ -2106,7 +2062,7 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
 fn tags_and_mistaken_open_gates_are_correctable_with_evented_reasons() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "corrections", "Corrections", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     pt::add_tag(
         &conn,
         "test",
@@ -2120,8 +2076,8 @@ fn tags_and_mistaken_open_gates_are_correctable_with_evented_reasons() {
     assert!(pt::remove_tag(&conn, "test", task, "calibration", "duplicate removal").is_err());
 
     pt::add_gate(&conn, "test", task, "wrong gate", "test", "obsolete").unwrap();
-    assert!(pt::remove_open_gate(&conn, "test", task, "wrong gate", "").is_err());
-    pt::remove_open_gate(
+    assert!(pt::remove_gate(&conn, "test", task, "wrong gate", "").is_err());
+    pt::remove_gate(
         &conn,
         "test",
         task,
@@ -2152,30 +2108,22 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
         &conn,
         "test",
         plan,
-        "collect evidence",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("collect evidence"),
     )
     .unwrap();
-    let decision = pt::add_task_with_kind(
+    let decision = pt::add_task(
         &conn,
         "test",
         plan,
-        "select design",
-        "",
-        "decision",
-        None,
-        &[prerequisite],
-        &[],
-        5,
-        None,
+        pt::TaskCreation {
+            kind: "decision",
+            deps: &[prerequisite],
+            priority: 5,
+            ..pt::TaskCreation::new("select design")
+        },
     )
     .unwrap();
-    pt::add_task_blocker(
+    pt::add_blocker(
         &conn,
         "test",
         decision,
@@ -2204,9 +2152,9 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
         .unwrap();
     assert_eq!(entry.readiness, "blocked");
 
-    pt::complete_task(&conn, "test", prerequisite, None).unwrap();
+    pt::complete_task(&conn, "test", prerequisite, None, None).unwrap();
     assert!(pt::start_task(&conn, "test", decision, None, None).is_err());
-    pt::resolve_task_blocker(
+    pt::resolve_blocker(
         &conn,
         "test",
         decision,
@@ -2217,12 +2165,13 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
     )
     .unwrap();
     pt::start_task(&conn, "test", decision, None, None).unwrap();
-    assert!(pt::complete_task(&conn, "test", decision, None).is_err());
+    assert!(pt::complete_task(&conn, "test", decision, None, None).is_err());
     pt::complete_task(
         &conn,
         "test",
         decision,
         Some("Use a bounded interface and reject implicit compatibility."),
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -2236,21 +2185,9 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
 fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "active-blocker", "Active blocker", "").unwrap();
-    let task = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "implement",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("implement")).unwrap();
     pt::start_task(&conn, "test", task, None, None).unwrap();
-    pt::add_task_blocker(
+    pt::add_blocker(
         &conn,
         "test",
         task,
@@ -2269,7 +2206,7 @@ fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
             .any(|finding| finding.kind == "done_with_open_blocker")
     );
 
-    pt::waive_task_blocker(
+    pt::waive_blocker(
         &conn,
         "test",
         task,
@@ -2277,7 +2214,7 @@ fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
         "the task was narrowed so the fixture is no longer applicable",
     )
     .unwrap();
-    pt::complete_task(&conn, "test", task, None).unwrap();
+    pt::complete_task(&conn, "test", task, None, None).unwrap();
     assert!(pt::audit(&conn).unwrap().is_empty());
 }
 
@@ -2285,18 +2222,14 @@ fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
 fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "reopen", "Reopen", "").unwrap();
-    let task = pt::add_task_with_kind(
+    let task = pt::add_task(
         &conn,
         "test",
         plan,
-        "measure behavior",
-        "",
-        "probe",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            kind: "probe",
+            ..pt::TaskCreation::new("measure behavior")
+        },
     )
     .unwrap();
     pt::add_gate(
@@ -2323,6 +2256,7 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
         "test",
         task,
         Some("The first hypothesis was falsified."),
+        None,
     )
     .unwrap();
 
@@ -2354,41 +2288,35 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
     let context = pt::task_context(&conn, task).unwrap();
     assert_eq!(context.gates[0].status, "open");
     assert_eq!(context.gates[0].evidence_locator, None);
-    assert!(pt::complete_task(&conn, "test", task, Some("premature")).is_err());
+    assert!(pt::complete_task(&conn, "test", task, Some("premature"), None).is_err());
 }
 
 #[test]
 fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "truth", "Truth", "").unwrap();
-    let parent = pt::add_task(&conn, "test", plan, "outcome", "", None, &[], &[], 0, None).unwrap();
+    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("outcome")).unwrap();
     let child = pt::add_task(
         &conn,
         "test",
         plan,
-        "deliverable",
-        "",
-        Some(parent),
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            parent: Some(parent),
+            ..pt::TaskCreation::new("deliverable")
+        },
     )
     .unwrap();
-    pt::complete_task(&conn, "test", child, None).unwrap();
-    pt::complete_task(&conn, "test", parent, None).unwrap();
+    pt::complete_task(&conn, "test", child, None, None).unwrap();
+    pt::complete_task(&conn, "test", parent, None, None).unwrap();
     assert!(
         pt::add_task(
             &conn,
             "test",
             plan,
-            "late child",
-            "",
-            Some(parent),
-            &[],
-            &[],
-            0,
-            None,
+            pt::TaskCreation {
+                parent: Some(parent),
+                ..pt::TaskCreation::new("late child")
+            }
         )
         .is_err()
     );
@@ -2405,34 +2333,20 @@ fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
     .unwrap();
     pt::reopen_task(&conn, "test", child, "the deliverable needs revision").unwrap();
 
-    let prerequisite = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "prerequisite",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let prerequisite =
+        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("prerequisite")).unwrap();
     let dependent = pt::add_task(
         &conn,
         "test",
         plan,
-        "dependent",
-        "",
-        None,
-        &[prerequisite],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            deps: &[prerequisite],
+            ..pt::TaskCreation::new("dependent")
+        },
     )
     .unwrap();
-    pt::complete_task(&conn, "test", prerequisite, None).unwrap();
-    pt::complete_task(&conn, "test", dependent, None).unwrap();
+    pt::complete_task(&conn, "test", prerequisite, None, None).unwrap();
+    pt::complete_task(&conn, "test", dependent, None, None).unwrap();
     assert!(
         pt::reopen_task(&conn, "test", prerequisite, "recheck evidence").is_err(),
         "reopening a prerequisite must not silently invalidate a completed dependent"
@@ -2456,21 +2370,21 @@ fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
 fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "roundtrip-v2", "Roundtrip v2", "").unwrap();
-    let task = pt::add_task_with_kind(
+    let task = pt::add_task(
         &conn,
         "test",
         plan,
-        "choose engine",
-        "Test the two viable engines and select one.",
-        "decision",
-        None,
-        &[],
-        &["architecture".into()],
-        7,
-        Some("decision fixture"),
+        pt::TaskCreation {
+            intent: "Test the two viable engines and select one.",
+            kind: "decision",
+            tags: &["architecture".into()],
+            priority: 7,
+            why: Some("decision fixture"),
+            ..pt::TaskCreation::new("choose engine")
+        },
     )
     .unwrap();
-    pt::add_task_blocker(
+    pt::add_blocker(
         &conn,
         "test",
         task,
@@ -2478,7 +2392,7 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
         "the benchmark has not completed",
     )
     .unwrap();
-    pt::resolve_task_blocker(
+    pt::resolve_blocker(
         &conn,
         "test",
         task,
@@ -2493,6 +2407,7 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
         "test",
         task,
         Some("Select engine B because it satisfies the bounded latency target."),
+        None,
     )
     .unwrap();
 
@@ -2563,32 +2478,8 @@ fn mise_projection_fixture() -> pt::MisePlannerProjection {
 fn mise_projection_is_immutable_idempotent_non_authoritative_and_transferable() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "projection", "Projection", "").unwrap();
-    let task = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "own evidence",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
-    let other = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "unrelated",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("own evidence")).unwrap();
+    let other = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("unrelated")).unwrap();
     let bytes = serde_json::to_vec_pretty(&mise_projection_fixture()).unwrap();
 
     let (outcome, record) = pt::record_mise_projection(&conn, "test", task, &bytes).unwrap();
@@ -2633,7 +2524,7 @@ fn legacy_mise_projection_id_is_readable_history_but_not_recordable() {
     legacy.schema = pt::MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned();
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "projection", "Projection", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "evidence", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("evidence")).unwrap();
     let error =
         pt::record_mise_projection(&conn, "test", task, &serde_json::to_vec(&legacy).unwrap())
             .unwrap_err()
@@ -2663,7 +2554,7 @@ fn legacy_mise_projection_id_is_readable_history_but_not_recordable() {
 fn task_context_includes_gate_waiver_and_reopen_history() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "gate-history", "Gate history", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     pt::add_gate(&conn, "test", task, "proof", "test", "must pass").unwrap();
     pt::waive_gate(&conn, "test", task, "proof", "fixture unavailable").unwrap();
     pt::reopen_gate(&conn, "test", task, "proof", "fixture restored").unwrap();
@@ -2686,9 +2577,9 @@ fn task_context_includes_gate_waiver_and_reopen_history() {
 fn task_context_reports_event_truncation_instead_of_hiding_it() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "event-page", "Event page", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     for index in 0..12 {
-        pt::add_note(&conn, "test", Some(task), &format!("note {index}"))
+        pt::add_note(&conn, "test", Some(task), &format!("note {index}"), None)
             .expect("record task note");
     }
 
@@ -2706,26 +2597,23 @@ fn canonical_task_queries_cover_status_tag_and_leaf_filters() {
         &conn,
         "test",
         plan,
-        "parent",
-        "",
-        None,
-        &[],
-        &["selected".to_owned()],
-        10,
-        None,
+        pt::TaskCreation {
+            tags: &["selected".to_owned()],
+            priority: 10,
+            ..pt::TaskCreation::new("parent")
+        },
     )
     .unwrap();
     let child = pt::add_task(
         &conn,
         "test",
         plan,
-        "child",
-        "",
-        Some(parent),
-        &[],
-        &["selected".to_owned()],
-        20,
-        None,
+        pt::TaskCreation {
+            parent: Some(parent),
+            tags: &["selected".to_owned()],
+            priority: 20,
+            ..pt::TaskCreation::new("child")
+        },
     )
     .unwrap();
     pt::start_task(&conn, "test", parent, None, None).unwrap();
@@ -2748,9 +2636,9 @@ fn canonical_task_queries_cover_status_tag_and_leaf_filters() {
 fn removed_gate_events_survive_export_import_without_recreating_the_gate() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "removed-gate", "Removed gate", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     pt::add_gate(&conn, "test", task, "mistake", "review", "wrong gate").unwrap();
-    pt::remove_open_gate(&conn, "test", task, "mistake", "attached by mistake").unwrap();
+    pt::remove_gate(&conn, "test", task, "mistake", "attached by mistake").unwrap();
 
     let dump = pt::export(&conn, Some("removed-gate")).unwrap();
     let create = dump
@@ -2806,9 +2694,9 @@ fn import_refuses_non_rfc3339_event_timestamps() {
 fn import_canonicalizes_event_timestamps_and_preserves_lifecycle_history() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "timestamps", "Timestamps", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     pt::start_task(&conn, "agent", task, Some("begin"), None).unwrap();
-    pt::complete_task(&conn, "agent", task, None).unwrap();
+    pt::complete_task(&conn, "agent", task, None, None).unwrap();
     let expected = pt::task_activity(&conn, task).unwrap();
     let mut dump = pt::export(&conn, None).unwrap();
     for event in &mut dump.events {
@@ -2836,7 +2724,7 @@ fn import_canonicalizes_event_timestamps_and_preserves_lifecycle_history() {
 fn terminal_gate_and_blocker_timestamps_roundtrip_without_import_fiction() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "receipts", "Receipts", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     pt::add_gate(&conn, "agent", task, "proof", "test", "prove it").unwrap();
     pt::resolve_gate(
         &conn,
@@ -2848,7 +2736,7 @@ fn terminal_gate_and_blocker_timestamps_roundtrip_without_import_fiction() {
         None,
     )
     .unwrap();
-    pt::add_task_blocker(
+    pt::add_blocker(
         &conn,
         "agent",
         task,
@@ -2856,7 +2744,7 @@ fn terminal_gate_and_blocker_timestamps_roundtrip_without_import_fiction() {
         "receipt not available",
     )
     .unwrap();
-    pt::resolve_task_blocker(
+    pt::resolve_blocker(
         &conn,
         "agent",
         task,
@@ -3040,13 +2928,7 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
         &destination,
         "test",
         existing_plan,
-        "existing task",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("existing task"),
     )
     .unwrap();
     assert_eq!(existing_task, 1);
@@ -3104,19 +2986,7 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
 fn commit_associations_are_exact_evented_reversible_and_transferable() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "commit_associations", "Commits", "").unwrap();
-    let task = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "implement",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("implement")).unwrap();
     let oid = "a".repeat(40);
     let record = pt::add_commit_association(
         &conn,
@@ -3185,10 +3055,10 @@ fn commit_associations_are_exact_evented_reversible_and_transferable() {
 fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "time", "Time", "").unwrap();
-    let first = pt::add_task(&conn, "test", plan, "first", "", None, &[], &[], 0, None).unwrap();
-    let second = pt::add_task(&conn, "test", plan, "second", "", None, &[], &[], 0, None).unwrap();
+    let first = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("first")).unwrap();
+    let second = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("second")).unwrap();
     pt::start_task(&conn, "agent", first, Some("begin"), None).unwrap();
-    pt::add_note(&conn, "agent", Some(first), "latest evidence").unwrap();
+    pt::add_note(&conn, "agent", Some(first), "latest evidence", None).unwrap();
     let ordered = pt::list_tasks_by_activity(&conn, plan, None, None).unwrap();
     assert_eq!(ordered[0].seq, first);
     assert_eq!(ordered[1].seq, second);
@@ -3229,7 +3099,7 @@ fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
     );
     assert_eq!(activity.completed_event, None);
 
-    pt::complete_task(&conn, "agent", first, None).unwrap();
+    pt::complete_task(&conn, "agent", first, None, None).unwrap();
     let done = pt::task_activity(&conn, first).unwrap();
     assert!(done.completed_event.is_some());
     assert_eq!(done.started_event, None);
@@ -3252,7 +3122,7 @@ fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
 fn commit_evidence_requires_full_oid_while_audit_finds_noncanonical_values() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "evidence", "Evidence", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     pt::add_gate(&conn, "agent", task, "proof", "review", "commit proof").unwrap();
     let error =
         pt::resolve_gate(&conn, "agent", task, "proof", "commit:abc1234", None, None).unwrap_err();
@@ -3272,8 +3142,8 @@ fn commit_evidence_requires_full_oid_while_audit_finds_noncanonical_values() {
 fn audit_reports_corrupt_commit_association_identity_and_timestamp_fields() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "commits", "Commits", "").unwrap();
-    let first = pt::add_task(&conn, "test", plan, "first", "", None, &[], &[], 0, None).unwrap();
-    let second = pt::add_task(&conn, "test", plan, "second", "", None, &[], &[], 0, None).unwrap();
+    let first = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("first")).unwrap();
+    let second = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("second")).unwrap();
     let first_oid = "a".repeat(40);
     let second_oid = "b".repeat(40);
     pt::add_commit_association(&conn, "agent", first, "crates/widget", &first_oid, None).unwrap();
@@ -3310,7 +3180,7 @@ fn audit_reports_corrupt_commit_association_identity_and_timestamp_fields() {
 fn audit_reports_invalid_event_time_status_target_and_payload_corruption() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "history", "History", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, "task", "", None, &[], &[], 0, None).unwrap();
+    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
     pt::start_task(&conn, "agent", task, Some("begin"), None).unwrap();
     // Model history corrupted before schema v11 refused malformed events.
     conn.execute_batch("DROP TRIGGER events_append_only_update;")
@@ -3356,97 +3226,28 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "main", "Main", "").unwrap();
     let other_plan = pt::add_plan(&conn, "test", "other", "Other", "").unwrap();
-    let duplicate = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "duplicate",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
-    let canonical = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "canonical",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let duplicate = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("duplicate")).unwrap();
+    let canonical = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("canonical")).unwrap();
     let other = pt::add_task(
         &conn,
         "test",
         other_plan,
-        "other-plan task",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("other-plan task"),
     )
     .unwrap();
-    let retired_target = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "retired target",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let retired_target =
+        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("retired target")).unwrap();
     let rejected_target = pt::add_task(
         &conn,
         "test",
         plan,
-        "rejected target",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("rejected target"),
     )
     .unwrap();
-    let final_target = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "final target",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
-    let cycle_target = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "cycle target",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let final_target =
+        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("final target")).unwrap();
+    let cycle_target =
+        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("cycle target")).unwrap();
     pt::retire_task(&conn, "test", retired_target, None, "no longer canonical").unwrap();
     pt::reject_task(&conn, "test", rejected_target, "disproven approach").unwrap();
 
@@ -3581,43 +3382,15 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
     for plan_scope in [true, false] {
         let conn = db();
         let plan = pt::add_plan(&conn, "test", "main", "Main", "").unwrap();
-        let duplicate = pt::add_task(
-            &conn,
-            "test",
-            plan,
-            "duplicate",
-            "",
-            None,
-            &[],
-            &[],
-            0,
-            None,
-        )
-        .unwrap();
-        let canonical = pt::add_task(
-            &conn,
-            "test",
-            plan,
-            "canonical",
-            "",
-            None,
-            &[],
-            &[],
-            0,
-            None,
-        )
-        .unwrap();
+        let duplicate =
+            pt::add_task(&conn, "test", plan, pt::TaskCreation::new("duplicate")).unwrap();
+        let canonical =
+            pt::add_task(&conn, "test", plan, pt::TaskCreation::new("canonical")).unwrap();
         let final_target = pt::add_task(
             &conn,
             "test",
             plan,
-            "final canonical task",
-            "",
-            None,
-            &[],
-            &[],
-            0,
-            None,
+            pt::TaskCreation::new("final canonical task"),
         )
         .unwrap();
         pt::retire_task(
@@ -3724,84 +3497,15 @@ fn audit_reports_corrupt_replacement_shapes() {
     let conn = db();
     let first_plan = pt::add_plan(&conn, "test", "first", "First", "").unwrap();
     let second_plan = pt::add_plan(&conn, "test", "second", "Second", "").unwrap();
-    let dangling = pt::add_task(
-        &conn,
-        "test",
-        first_plan,
-        "dangling",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
-    let live = pt::add_task(
-        &conn,
-        "test",
-        first_plan,
-        "live",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
-    let cross = pt::add_task(
-        &conn,
-        "test",
-        first_plan,
-        "cross",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
-    let cycle_a = pt::add_task(
-        &conn,
-        "test",
-        first_plan,
-        "cycle a",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
-    let cycle_b = pt::add_task(
-        &conn,
-        "test",
-        first_plan,
-        "cycle b",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
-    let remote = pt::add_task(
-        &conn,
-        "test",
-        second_plan,
-        "remote",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let dangling =
+        pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("dangling")).unwrap();
+    let live = pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("live")).unwrap();
+    let cross = pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("cross")).unwrap();
+    let cycle_a =
+        pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("cycle a")).unwrap();
+    let cycle_b =
+        pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("cycle b")).unwrap();
+    let remote = pt::add_task(&conn, "test", second_plan, pt::TaskCreation::new("remote")).unwrap();
     let id = |seq| pt::get_task(&conn, seq).unwrap().task_id;
     conn.pragma_update(None, "foreign_keys", "OFF").unwrap();
     conn.execute(
@@ -3883,56 +3587,22 @@ fn audit_reports_corrupt_replacement_shapes() {
 fn audit_and_export_refuse_terminal_replacement_dead_ends() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "terminal", "Terminal", "").unwrap();
-    let rejected_source = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "source one",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let rejected_source =
+        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("source one")).unwrap();
     let rejected_target = pt::add_task(
         &conn,
         "test",
         plan,
-        "rejected endpoint",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("rejected endpoint"),
     )
     .unwrap();
-    let retired_source = pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "source two",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    let retired_source =
+        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("source two")).unwrap();
     let retired_target = pt::add_task(
         &conn,
         "test",
         plan,
-        "retired endpoint",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("retired endpoint"),
     )
     .unwrap();
     pt::retire_task(
@@ -4000,19 +3670,7 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
     conn.pragma_update(None, "foreign_keys", "ON").unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    pt::add_task(
-        &conn,
-        "test",
-        plan,
-        "preserved",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
+    pt::add_task(&conn, "test", plan, pt::TaskCreation::new("preserved")).unwrap();
     conn.execute_batch(
         "ALTER TABLE tasks DROP COLUMN pickup_at;
          ALTER TABLE tasks DROP COLUMN pickup_session;
@@ -4061,21 +3719,9 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
 fn event_cursors_page_history_and_refuse_divergent_authorities() {
     let conn = db();
     let plan = pt::add_plan(&conn, "planner", "history", "History", "").unwrap();
-    let first = pt::add_task(&conn, "planner", plan, "first", "", None, &[], &[], 0, None).unwrap();
-    pt::add_task(
-        &conn,
-        "planner",
-        plan,
-        "second",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
-    )
-    .unwrap();
-    pt::add_note(&conn, "reviewer", Some(first), "fresh evidence").unwrap();
+    let first = pt::add_task(&conn, "planner", plan, pt::TaskCreation::new("first")).unwrap();
+    pt::add_task(&conn, "planner", plan, pt::TaskCreation::new("second")).unwrap();
+    pt::add_note(&conn, "reviewer", Some(first), "fresh evidence", None).unwrap();
 
     let latest = pt::event_log(&conn, None, 2, None, None).unwrap();
     assert_eq!(latest.schema, "papertiger.event_log.v1");
@@ -4123,7 +3769,7 @@ fn event_cursors_page_history_and_refuse_divergent_authorities() {
     let empty_poll = pt::event_log(&conn, None, 10, None, Some(&head.token)).unwrap();
     assert!(empty_poll.events.is_empty());
     assert_eq!(empty_poll.continuation.as_ref().unwrap().token, head.token);
-    pt::add_note(&conn, "writer", None, "arrived after the empty poll").unwrap();
+    pt::add_note(&conn, "writer", None, "arrived after the empty poll", None).unwrap();
     let next_poll = pt::event_log(
         &conn,
         None,
@@ -4156,13 +3802,7 @@ fn event_cursors_page_history_and_refuse_divergent_authorities() {
         &other,
         "other",
         other_plan,
-        "different",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("different"),
     )
     .unwrap();
     let error = pt::event_log(
@@ -4192,13 +3832,7 @@ fn task_activity_records_authors_without_creating_session_ownership() {
         &conn,
         "planner",
         plan,
-        "continue work",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("continue work"),
     )
     .unwrap();
     pt::start_task(
@@ -4214,6 +3848,7 @@ fn task_activity_records_authors_without_creating_session_ownership() {
         "fresh-session",
         Some(task),
         "continued after reading live state",
+        None,
     )
     .unwrap();
 
@@ -4249,52 +3884,34 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         &conn,
         "planner",
         primary,
-        "Object store recovery",
-        "repair retained evidence",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            intent: "repair retained evidence",
+            ..pt::TaskCreation::new("Object store recovery")
+        },
     )
     .unwrap();
     let intent_hit = pt::add_task(
         &conn,
         "planner",
         primary,
-        "Recovery mechanics",
-        "repair the object store",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            intent: "repair the object store",
+            ..pt::TaskCreation::new("Recovery mechanics")
+        },
     )
     .unwrap();
     pt::add_task(
         &conn,
         "planner",
         primary,
-        "Start activity",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("Start activity"),
     )
     .unwrap();
     let rejected = pt::add_task(
         &conn,
         "planner",
         primary,
-        "Historical checksum report",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("Historical checksum report"),
     )
     .unwrap();
     pt::reject_task(
@@ -4308,26 +3925,17 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         &conn,
         "planner",
         secondary,
-        "Object store elsewhere",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("Object store elsewhere"),
     )
     .unwrap();
     let cross_field_hit = pt::add_task(
         &conn,
         "planner",
         primary,
-        "Restore object",
-        "store the recovered bytes",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation {
+            intent: "store the recovered bytes",
+            ..pt::TaskCreation::new("Restore object")
+        },
     )
     .unwrap();
 
@@ -4404,13 +4012,7 @@ fn search_refuses_an_unpageable_result_set_with_narrowing_commands() {
             &conn,
             "planner",
             plan,
-            &format!("common outcome {index}"),
-            "",
-            None,
-            &[],
-            &[],
-            0,
-            None,
+            pt::TaskCreation::new(&format!("common outcome {index}")),
         )
         .unwrap();
     }
@@ -4425,9 +4027,9 @@ fn audit_advises_duplicate_live_titles_and_single_plan_export_keeps_global_event
     let conn = db();
     let plan = pt::add_plan(&conn, "planner", "work", "Work", "").unwrap();
     for title in ["Same outcome", "same outcome"] {
-        pt::add_task(&conn, "planner", plan, title, "", None, &[], &[], 0, None).unwrap();
+        pt::add_task(&conn, "planner", plan, pt::TaskCreation::new(title)).unwrap();
     }
-    pt::add_note(&conn, "planner", None, "authority-global note").unwrap();
+    pt::add_note(&conn, "planner", None, "authority-global note", None).unwrap();
     let findings = pt::audit(&conn).unwrap();
     assert!(
         findings
@@ -4461,13 +4063,7 @@ fn recovery_export_file_is_atomic_hash_bound_and_refuses_unreviewed_replace() {
         &conn,
         "planner",
         plan,
-        "preserve this",
-        "",
-        None,
-        &[],
-        &[],
-        0,
-        None,
+        pt::TaskCreation::new("preserve this"),
     )
     .unwrap();
     let path = unique_test_path("recovery-export").with_extension("json");
@@ -4484,7 +4080,7 @@ fn recovery_export_file_is_atomic_hash_bound_and_refuses_unreviewed_replace() {
     assert!(error.to_string().contains("--replace"));
     assert_eq!(std::fs::read(&path).unwrap(), first_bytes);
 
-    pt::add_note(&conn, "planner", None, "new recovery state").unwrap();
+    pt::add_note(&conn, "planner", None, "new recovery state", None).unwrap();
     let updated = pt::export(&conn, None).unwrap();
     let updated_receipt = pt::write_export_file(&path, &updated, true).unwrap();
     assert_ne!(updated_receipt.sha256, receipt.sha256);

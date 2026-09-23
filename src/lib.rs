@@ -709,11 +709,7 @@ ALTER TABLE tasks
     Ok(())
 }
 
-pub fn add_note(conn: &Connection, actor: &str, task_seq: Option<i64>, text: &str) -> Result<()> {
-    add_note_with_source(conn, actor, task_seq, text, None)
-}
-
-pub fn add_note_with_source(
+pub fn add_note(
     conn: &Connection,
     actor: &str,
     task_seq: Option<i64>,
@@ -1232,6 +1228,8 @@ pub fn set_plan_status(
     Ok(())
 }
 
+/// Everything a new task records. Start from [`TaskCreation::new`] and set
+/// only the fields that differ from a proposed, untagged work task.
 pub struct TaskCreation<'a> {
     pub title: &'a str,
     pub intent: &'a str,
@@ -1246,80 +1244,61 @@ pub struct TaskCreation<'a> {
     pub session: Option<&'a str>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn add_task(
-    conn: &Connection,
-    actor: &str,
-    plan_id: i64,
-    title: &str,
-    intent: &str,
-    parent: Option<i64>,
-    deps: &[i64],
-    tags: &[String],
-    priority: i64,
-    why: Option<&str>,
-) -> Result<i64> {
-    add_task_with_kind(
-        conn, actor, plan_id, title, intent, "work", parent, deps, tags, priority, why,
-    )
+impl<'a> TaskCreation<'a> {
+    pub fn new(title: &'a str) -> Self {
+        Self {
+            title,
+            intent: "",
+            intent_source: None,
+            kind: "work",
+            parent: None,
+            deps: &[],
+            tags: &[],
+            priority: 0,
+            why: None,
+            start: false,
+            session: None,
+        }
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn add_task_with_kind(
-    conn: &Connection,
-    actor: &str,
-    plan_id: i64,
-    title: &str,
-    intent: &str,
-    kind: &str,
-    parent: Option<i64>,
-    deps: &[i64],
-    tags: &[String],
-    priority: i64,
-    why: Option<&str>,
-) -> Result<i64> {
-    let tx = begin_mutation(conn)?;
-    let seq = add_task_in_mutation(
-        &tx, actor, plan_id, title, intent, None, kind, parent, deps, tags, priority, why,
-    )?;
-    tx.commit()?;
-    Ok(seq)
+/// The plan a new task joins.
+#[derive(Clone, Copy, Debug)]
+pub enum PlanSelector<'a> {
+    Id(i64),
+    Slug(&'a str),
+    /// The single active plan; refused when none or several are active.
+    Active,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn add_task_for_plan(
-    conn: &Connection,
-    actor: &str,
-    plan: Option<&str>,
-    title: &str,
-    intent: &str,
-    kind: &str,
-    parent: Option<i64>,
-    deps: &[i64],
-    tags: &[String],
-    priority: i64,
-    why: Option<&str>,
-) -> Result<(i64, String)> {
-    let tx = begin_mutation(conn)?;
-    let (plan_id, slug) = resolve_plan(&tx, plan)?;
-    let seq = add_task_in_mutation(
-        &tx, actor, plan_id, title, intent, None, kind, parent, deps, tags, priority, why,
-    )?;
-    tx.commit()?;
-    Ok((seq, slug))
+impl From<i64> for PlanSelector<'_> {
+    fn from(plan_id: i64) -> Self {
+        Self::Id(plan_id)
+    }
 }
 
-pub fn add_task_for_plan_with_options(
+impl<'a> From<Option<&'a str>> for PlanSelector<'a> {
+    fn from(slug: Option<&'a str>) -> Self {
+        slug.map_or(Self::Active, Self::Slug)
+    }
+}
+
+/// Create one task atomically, optionally starting it; returns its sequence.
+pub fn add_task<'a>(
     conn: &Connection,
     actor: &str,
-    plan: Option<&str>,
+    plan: impl Into<PlanSelector<'a>>,
     creation: TaskCreation<'_>,
-) -> Result<(i64, String)> {
+) -> Result<i64> {
     if creation.start && creation.why.is_none_or(|why| why.trim().is_empty()) {
         bail!("add --start requires --why or --why-file with a standalone rationale");
     }
     let tx = begin_mutation(conn)?;
-    let (plan_id, slug) = resolve_plan(&tx, plan)?;
+    let plan_id = match plan.into() {
+        PlanSelector::Id(plan_id) => plan_id,
+        PlanSelector::Slug(slug) => resolve_plan(&tx, Some(slug))?.0,
+        PlanSelector::Active => resolve_plan(&tx, None)?.0,
+    };
     let seq = add_task_in_mutation(
         &tx,
         actor,
@@ -1338,7 +1317,7 @@ pub fn add_task_for_plan_with_options(
         start_task_in_mutation(&tx, actor, seq, creation.why, true, creation.session)?;
     }
     tx.commit()?;
-    Ok((seq, slug))
+    Ok(seq)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1984,11 +1963,7 @@ fn start_task_in_mutation(
     Ok(())
 }
 
-pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&str>) -> Result<()> {
-    complete_task_with_source(conn, actor, seq, result, None)
-}
-
-pub fn complete_task_with_source(
+pub fn complete_task(
     conn: &Connection,
     actor: &str,
     seq: i64,
@@ -2441,13 +2416,7 @@ pub fn waive_gate(conn: &Connection, actor: &str, seq: i64, name: &str, why: &st
     )
 }
 
-pub fn remove_open_gate(
-    conn: &Connection,
-    actor: &str,
-    seq: i64,
-    name: &str,
-    why: &str,
-) -> Result<()> {
+pub fn remove_gate(conn: &Connection, actor: &str, seq: i64, name: &str, why: &str) -> Result<()> {
     if why.trim().is_empty() {
         bail!("removing a gate requires a nonblank reason");
     }
@@ -2669,7 +2638,7 @@ fn open_task_blocker_names(conn: &Connection, task_id: i64) -> Result<Vec<String
         .collect::<rusqlite::Result<_>>()?)
 }
 
-pub fn add_task_blocker(
+pub fn add_blocker(
     conn: &Connection,
     actor: &str,
     seq: i64,
@@ -2713,7 +2682,7 @@ pub fn add_task_blocker(
     Ok(())
 }
 
-pub fn resolve_task_blocker(
+pub fn resolve_blocker(
     conn: &Connection,
     actor: &str,
     seq: i64,
@@ -2738,7 +2707,7 @@ pub fn resolve_task_blocker(
     )
 }
 
-pub fn waive_task_blocker(
+pub fn waive_blocker(
     conn: &Connection,
     actor: &str,
     seq: i64,
@@ -2762,7 +2731,7 @@ pub fn waive_task_blocker(
     )
 }
 
-pub fn reopen_task_blocker(
+pub fn reopen_blocker(
     conn: &Connection,
     actor: &str,
     seq: i64,
@@ -2872,7 +2841,7 @@ fn resolve_open_task_blocker(
     Ok(())
 }
 
-pub fn remove_open_task_blocker(
+pub fn remove_blocker(
     conn: &Connection,
     actor: &str,
     seq: i64,

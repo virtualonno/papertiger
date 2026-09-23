@@ -153,7 +153,7 @@ fn quarantine_requires_exact_review_reason_and_structural_defect() {
 #[test]
 fn forged_quarantine_mapping_never_hides_damaged_evidence() {
     let (conn, id) = damaged();
-    pt::add_note(&conn, "test", None, "not a recovery envelope").unwrap();
+    pt::add_note(&conn, "test", None, "not a recovery envelope", None).unwrap();
     let unrelated = conn.last_insert_rowid();
     conn.execute(
         "INSERT INTO event_quarantines (event_id,recovery_event_id) VALUES (?1,?2)",

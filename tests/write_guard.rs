@@ -15,8 +15,8 @@ fn authority() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "work", "Work", "Guard history").unwrap();
-    pt::add_task(&conn, "test", plan, "Task", "", None, &[], &[], 0, None).unwrap();
-    pt::add_note(&conn, "test", Some(1), "canonical history").unwrap();
+    pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Task")).unwrap();
+    pt::add_note(&conn, "test", Some(1), "canonical history", None).unwrap();
     conn
 }
 
@@ -238,7 +238,7 @@ fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
     let conn = Connection::open(&path).unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "work", "Work", "").unwrap();
-    pt::add_task(&conn, "test", plan, "Task", "", None, &[], &[], 0, None).unwrap();
+    pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Task")).unwrap();
     drop(conn);
     let raw = Connection::open(&path).unwrap();
     for sql in [
@@ -263,7 +263,7 @@ fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
         refusal(&api, "UPDATE tasks SET priority=4")
             .contains("papertiger_write_requires_public_api")
     );
-    pt::add_note(&api, "agent", Some(1), "use the public API").unwrap();
+    pt::add_note(&api, "agent", Some(1), "use the public API", None).unwrap();
     assert!(pt::audit(&api).unwrap().is_empty());
     drop(api);
     drop(raw);
@@ -307,7 +307,7 @@ fn guard_drift_blocks_writes_but_never_reads_and_repair_restores_it() {
         let conn = Connection::open(&path).unwrap();
         pt::init(&conn).unwrap();
         let plan = pt::add_plan(&conn, "test", "work", "Work", "Keep").unwrap();
-        pt::add_task(&conn, "test", plan, "Task", "", None, &[], &[], 0, None).unwrap();
+        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Task")).unwrap();
         drop(conn);
         Connection::open(&path)
             .unwrap()
@@ -365,7 +365,7 @@ fn foreign_triggers_are_drift_and_repair_removes_them() {
     let conn = Connection::open(&path).unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "work", "Work", "Keep").unwrap();
-    pt::add_task(&conn, "test", plan, "Task", "", None, &[], &[], 0, None).unwrap();
+    pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Task")).unwrap();
     drop(conn);
     Connection::open(&path)
         .unwrap()
@@ -404,7 +404,7 @@ fn foreign_triggers_are_drift_and_repair_removes_them() {
     drop(repair);
 
     let conn = pt::open_existing(db).unwrap();
-    pt::add_note(&conn, "agent", Some(1), "after repair").unwrap();
+    pt::add_note(&conn, "agent", Some(1), "after repair", None).unwrap();
     assert_eq!(pt::get_task(&conn, 1).unwrap().title, "Task");
     assert!(pt::audit(&conn).unwrap().is_empty());
     let payload: String = conn

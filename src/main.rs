@@ -1634,7 +1634,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 .iter()
                 .map(|d| pt::parse_task_ref(d))
                 .collect::<Result<_>>()?;
-            let (seq, slug) = pt::add_task_for_plan_with_options(
+            let seq = pt::add_task(
                 &conn,
                 &actor,
                 plan.as_deref(),
@@ -1652,6 +1652,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     session: session.as_deref(),
                 },
             )?;
+            let slug = pt::get_plan(&conn, pt::get_task(&conn, seq)?.plan_id)?.slug;
             if start {
                 mutation_output!("#{seq} added to {slug} and in progress");
             } else {
@@ -1845,7 +1846,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         } => {
             let result = result.optional()?;
             let seq = pt::parse_task_ref(&task)?;
-            pt::complete_task_with_source(
+            pt::complete_task(
                 &conn,
                 &actor,
                 seq,
@@ -1922,7 +1923,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             GateCmd::Remove { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
-                pt::remove_open_gate(&conn, &actor, seq, &name, &why)?;
+                pt::remove_gate(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("gate '{name}' removed from #{seq}");
             }
             GateCmd::List { task } => {
@@ -1947,7 +1948,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 condition,
             } => {
                 let seq = pt::parse_task_ref(&task)?;
-                pt::add_task_blocker(&conn, &actor, seq, &name, &condition)?;
+                pt::add_blocker(&conn, &actor, seq, &name, &condition)?;
                 mutation_output!("blocker '{name}' added to #{seq}");
             }
             BlockerCmd::Resolve {
@@ -1958,7 +1959,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 note,
             } => {
                 let seq = pt::parse_task_ref(&task)?;
-                pt::resolve_task_blocker(
+                pt::resolve_blocker(
                     &conn,
                     &actor,
                     seq,
@@ -1972,19 +1973,19 @@ fn run_planner(cli: Cli) -> Result<()> {
             BlockerCmd::Waive { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
-                pt::waive_task_blocker(&conn, &actor, seq, &name, &why)?;
+                pt::waive_blocker(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("blocker '{name}' on #{seq} waived");
             }
             BlockerCmd::Reopen { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
-                pt::reopen_task_blocker(&conn, &actor, seq, &name, &why)?;
+                pt::reopen_blocker(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("blocker '{name}' on #{seq} reopened");
             }
             BlockerCmd::Remove { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::parse_task_ref(&task)?;
-                pt::remove_open_task_blocker(&conn, &actor, seq, &name, &why)?;
+                pt::remove_blocker(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("blocker '{name}' removed from #{seq}");
             }
             BlockerCmd::List { task } => {
@@ -2222,7 +2223,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Note { text, source, task } => {
             let text = text.required()?;
             let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
-            pt::add_note_with_source(&conn, &actor, task_seq, &text, source.as_deref())?;
+            pt::add_note(&conn, &actor, task_seq, &text, source.as_deref())?;
             mutation_output!("noted");
         }
         Cmd::Log {
