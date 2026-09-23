@@ -181,7 +181,7 @@ pub struct VerifiedParentPromotionGate {
     pub gate_name: String,
     pub evidence_locator: String,
     pub evidence_sha256: String,
-    pub closed_at: String,
+    pub resolved_at: String,
 }
 
 #[derive(Debug)]
@@ -540,7 +540,7 @@ fn verified_gate(
         gate_name: gate.gate_name,
         evidence_locator: gate.evidence_locator,
         evidence_sha256: gate.evidence_sha256,
-        closed_at: gate.closed_at,
+        resolved_at: gate.resolved_at,
     })
 }
 

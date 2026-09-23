@@ -73,7 +73,8 @@ verified release binary so the project skill and reference match.
   cancel`. Cancellation requests report the rationale as `why`, and their
   JSON `target` for a paired execution is `paired_execution`.
 - Mise authority schema v10 renames the recorded cancellation rationale to
-  `why`. Run `papertiger-mise --db <database> init` once after upgrading;
+  `why` and the recorded Papertiger gate time to `papertiger_gate_resolved_at`;
+  promotion proofs and successor admissions report it as `resolved_at`. Run `papertiger-mise --db <database> init` once after upgrading;
   read commands refuse a v9 authority and name that command.
 - Every Mise schema, protocol and domain-separation id is
   `papertiger-mise.<snake_case_name>.v<N>` with its version advanced, and

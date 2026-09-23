@@ -172,6 +172,10 @@ CREATE TRIGGER successor_admissions_no_delete BEFORE DELETE ON successor_admissi
 BEGIN SELECT RAISE(ABORT, 'successor admission history is immutable'); END;
 "#;
 
+/// v10 names the recorded Papertiger gate time after the planner's
+/// `resolve` vocabulary.
+const SUCCESSOR_GATE_RESOLUTION_V10: &str = "ALTER TABLE successor_admissions RENAME COLUMN papertiger_gate_closed_at TO papertiger_gate_resolved_at;";
+
 const PAIRED_RUNTIME_SCHEMA_V5: &str = r#"
 CREATE TABLE paired_cohorts (
   cohort_id TEXT PRIMARY KEY,
@@ -375,7 +379,7 @@ pub struct SuccessorAdmissionRecord {
     pub papertiger_plan_slug: String,
     pub papertiger_task_seq: i64,
     pub papertiger_gate_name: String,
-    pub papertiger_gate_closed_at: String,
+    pub papertiger_gate_resolved_at: String,
     pub admitted_at: String,
     pub admitted_by: String,
 }
@@ -897,6 +901,7 @@ BEGIN SELECT RAISE(ABORT, 'nomination requires a qualified terminal candidate');
     transaction.execute_batch(SUCCESSOR_SCHEMA_V6)?;
     transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V9)?;
     transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V10)?;
+    transaction.execute_batch(SUCCESSOR_GATE_RESOLUTION_V10)?;
     transaction.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
@@ -1004,6 +1009,7 @@ fn migrate(connection: &Connection, from: i64) -> Result<()> {
     if from == 9 {
         let transaction = begin_mutation(connection)?;
         transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V10)?;
+        transaction.execute_batch(SUCCESSOR_GATE_RESOLUTION_V10)?;
         transaction.execute(
             "UPDATE meta SET value=?1 WHERE key='schema_version'",
             params![SCHEMA_VERSION.to_string()],
@@ -1329,7 +1335,7 @@ pub(crate) fn admit_successor_campaign(
           successor_manifest_sha256, parent_runtime_generation,
           successor_runtime_generation, parent_recursion_depth, successor_recursion_depth,
           parent_budget_debit_json, papertiger_plan_slug, papertiger_task_seq,
-          papertiger_gate_name, papertiger_gate_closed_at, admitted_at, admitted_by)
+          papertiger_gate_name, papertiger_gate_resolved_at, admitted_at, admitted_by)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
                  ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
@@ -1350,7 +1356,7 @@ pub(crate) fn admit_successor_campaign(
             gate.plan_slug,
             gate.task_seq,
             gate.gate_name,
-            gate.closed_at,
+            gate.resolved_at,
             admitted_at,
             actor,
         ],
@@ -1409,7 +1415,7 @@ fn successor_admission_in(
                     successor_runtime_generation, parent_recursion_depth,
                     successor_recursion_depth, parent_budget_debit_json,
                     papertiger_plan_slug, papertiger_task_seq, papertiger_gate_name,
-                    papertiger_gate_closed_at, admitted_at, admitted_by
+                    papertiger_gate_resolved_at, admitted_at, admitted_by
              FROM successor_admissions WHERE child_campaign_id=?1",
             params![child_campaign_id],
             |row| {
@@ -1457,7 +1463,7 @@ fn successor_admission_in(
             papertiger_plan_slug: row.14,
             papertiger_task_seq: row.15,
             papertiger_gate_name: row.16,
-            papertiger_gate_closed_at: row.17,
+            papertiger_gate_resolved_at: row.17,
             admitted_at: row.18,
             admitted_by: row.19,
         })
@@ -1488,7 +1494,7 @@ fn successor_record_matches(
         && record.papertiger_plan_slug == gate.plan_slug
         && record.papertiger_task_seq == gate.task_seq
         && record.papertiger_gate_name == gate.gate_name
-        && record.papertiger_gate_closed_at == gate.closed_at)
+        && record.papertiger_gate_resolved_at == gate.resolved_at)
 }
 
 pub fn campaign(connection: &Connection, campaign_id: &str) -> Result<Option<CampaignRecord>> {
@@ -1914,7 +1920,7 @@ mod tests {
             gate_name: "parent-promotion-proof".to_owned(),
             evidence_locator: proof.evidence_locator().expect("proof locator"),
             evidence_sha256: proof_sha256,
-            closed_at: "2026-08-02T00:00:00Z".to_owned(),
+            resolved_at: "2026-08-02T00:00:00Z".to_owned(),
         };
         SuccessorFixture {
             parent,
@@ -2005,6 +2011,7 @@ mod tests {
                  DROP TRIGGER trial_cancellation_success_guard;
                  DROP TRIGGER paired_cancellation_success_guard;
                  DROP TABLE cancellation_requests;
+                 ALTER TABLE successor_admissions RENAME COLUMN papertiger_gate_resolved_at TO papertiger_gate_closed_at;
                  {v9_table}
                  PRAGMA foreign_keys=OFF;
                  INSERT INTO cancellation_requests (trial_id, actor, reason, requested_at)
@@ -2024,6 +2031,17 @@ mod tests {
         assert_eq!(schema_version(&connection).unwrap(), SCHEMA_VERSION);
         let migrated = cancellation_ddl(&connection);
         assert_eq!(migrated, cancellation_ddl(&fresh));
+        let successor_ddl = |connection: &Connection| -> String {
+            connection
+                .query_row(
+                    "SELECT sql FROM sqlite_schema WHERE type='table' AND name='successor_admissions'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("successor admission DDL")
+        };
+        assert_eq!(successor_ddl(&connection), successor_ddl(&fresh));
+        assert!(successor_ddl(&connection).contains("papertiger_gate_resolved_at"));
         assert!(migrated.iter().any(|sql| sql.contains("why TEXT NOT NULL")));
         assert!(migrated.iter().all(|sql| !sql.contains("reason")));
         let preserved: (String, String) = connection

@@ -67,7 +67,7 @@ pub struct VerifiedPromotionGate {
     evidence_sha256: String,
     promotion_proof_sha256: String,
     containment_policy_sha256: String,
-    closed_at: String,
+    resolved_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,12 +79,12 @@ pub(crate) struct VerifiedPapertigerGate {
     pub gate_name: String,
     pub evidence_locator: String,
     pub evidence_sha256: String,
-    pub closed_at: String,
+    pub resolved_at: String,
 }
 
 /// Re-derive the complete promotion evidence without consulting Papertiger.
 /// Once a redacted confirmation receipt protocol exists, operators can use
-/// this deterministic proof to close the independent planning gate and
+/// this deterministic proof to resolve the independent planning gate and
 /// `verify_promotion_gate` can recompute it read-only. V1 confirmation
 /// attestation currently fails closed before this function can return a proof.
 pub fn derive_promotion_proof(
@@ -197,7 +197,7 @@ pub fn verify_promotion_gate(
         evidence_sha256: gate.evidence_sha256,
         promotion_proof_sha256,
         containment_policy_sha256: policy_sha256,
-        closed_at: gate.closed_at,
+        resolved_at: gate.resolved_at,
     })
 }
 
@@ -259,7 +259,7 @@ pub(crate) fn verify_papertiger_gate(
         gate_name: gate.name.clone(),
         evidence_locator: binding.evidence_locator.clone(),
         evidence_sha256: binding.evidence_sha256.clone(),
-        closed_at: gate
+        resolved_at: gate
             .resolved_at
             .clone()
             .context("resolved Papertiger gate has no resolution timestamp")?,
