@@ -161,22 +161,32 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     ]);
     assert_eq!(first["total"], 67);
     assert_eq!(first["remaining"], 2);
-    assert_eq!(first["next_after_seq"], 65);
-    let snapshot = first["snapshot"].as_str().unwrap();
+    let cursor = first["next_cursor"].as_str().unwrap().to_owned();
+    assert!(cursor.starts_with("inventory-v1:65:"), "{cursor}");
+    assert_eq!(
+        first["continuation_command"],
+        format!(
+            "papertiger list --all-plans --status unfinished --limit 65 --after-cursor {cursor} --json"
+        )
+    );
     let next_args = [
         "list",
         "--all-plans",
         "--status",
         "unfinished",
-        "--after-seq",
-        "65",
-        "--snapshot",
-        snapshot,
+        "--after-cursor",
+        &cursor,
         "--json",
     ];
     let next = read(&next_args);
+    assert_eq!(next["schema"], "papertiger.task_inventory.v2");
     assert_eq!(next["remaining"], 0);
-    assert!(next["next_after_seq"].is_null());
+    assert!(next["next_cursor"].is_null());
+    assert!(next["continuation_command"].is_null());
+    let other_filters = invoke(&["list", "--all-plans", "--after-cursor", &cursor]);
+    assert!(
+        String::from_utf8_lossy(&other_filters.stderr).contains("different --status/--tag filters")
+    );
     assert_eq!(next["tasks"].as_array().unwrap().len(), 2);
     assert!(
         next["tasks"]
@@ -196,9 +206,31 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     let full = read(&["search", "discovery", "--limit", "2", "--json"]);
     let compact = read(&["search", "discovery", "--limit", "2", "--compact", "--json"]);
     assert_eq!(full["schema"], "papertiger.search.v2");
-    assert_eq!(compact["schema"], "papertiger.search_compact.v1");
+    assert_eq!(compact["schema"], "papertiger.search_compact.v2");
     assert_eq!(compact["total_matches"], full["total_matches"]);
     assert_eq!(compact["truncated"], true);
+    let total = compact["total_matches"].as_u64().unwrap();
+    assert_eq!(
+        compact["continuation_command"],
+        format!(
+            "papertiger search \"discovery\" --compact --limit {}",
+            total.min(200)
+        )
+    );
+    let default_compact = read(&["search", "discovery", "--compact"]);
+    assert_eq!(
+        default_compact["results"].as_array().unwrap().len() as u64,
+        total.min(5)
+    );
+    let widened = read(&["search", "discovery", "--compact", "--limit", "200"]);
+    assert!(widened["continuation_command"].is_null());
+    assert_eq!(
+        read(&["search", "discovery", "--json"])["results"]
+            .as_array()
+            .unwrap()
+            .len() as u64,
+        total.min(20)
+    );
     for (a, b) in full["results"]
         .as_array()
         .unwrap()
@@ -217,14 +249,15 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     assert_eq!(current["schema"], "papertiger.task_current.v3");
     assert!(current.get("recent_events").is_none());
     assert_eq!(current["history_command"], "papertiger log --task 1 --json");
-    assert_eq!(
-        read(&["list", "--all-plans", "--status", "unfinished", "--json"])["snapshot"],
-        snapshot
-    );
+    assert_eq!(read(&next_args)["tasks"], next["tasks"]);
     assert_success(&invoke(&["note", "authority changed", "--task", "1"]));
     let stale = invoke(&next_args);
     assert!(!stale.status.success());
-    assert!(String::from_utf8_lossy(&stale.stderr).contains("restart list --all-plans"));
+    assert!(
+        String::from_utf8_lossy(&stale.stderr).contains(
+            "inventory authority changed since this cursor; restart with `papertiger list --all-plans --status unfinished --limit 100 --json`"
+        )
+    );
     assert_success(&invoke(&["add", "discarded design", "--plan", "active"]));
     assert_success(&invoke(&[
         "reject",
@@ -257,7 +290,8 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     }));
     for args in [
         vec!["list", "--all-plans", "--limit", "0"],
-        vec!["list", "--all-plans", "--after-seq", "1"],
+        vec!["list", "--after-cursor", "inventory-v1:1:0:empty"],
+        vec!["list", "--all-plans", "--after-cursor", "event-v1:1:0"],
         vec!["list", "--all-plans", "--plan", "active"],
         vec!["list", "--all-plans", "--sort", "activity"],
     ] {
@@ -267,7 +301,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     for (args, schema) in [
         (
             vec!["search", "discovery", "--compact"],
-            "papertiger.search_compact.v1",
+            "papertiger.search_compact.v2",
         ),
         (
             vec!["show", "1", "--no-history"],
@@ -1166,7 +1200,7 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
             "1",
             "--project-root",
             root_text,
-            "--outcome",
+            "--classification",
             "all",
             "--json",
         ],
@@ -1283,13 +1317,13 @@ fn evidence_verification_json_is_summary_first_filtered_and_pageable() {
     );
     assert!(!first.status.success());
     let first: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
-    assert_eq!(first["schema"], "papertiger.evidence_verification.v2");
+    assert_eq!(first["schema"], "papertiger.evidence_verification.v3");
     assert_eq!(first["summary"]["binding_count"], 3);
     assert_eq!(first["summary"]["failed_count"], 2);
     assert_eq!(first["summary"]["unsupported_count"], 1);
     assert_eq!(first["summary"]["status_counts"]["missing"], 2);
     assert_eq!(first["summary"]["unsupported_scheme_counts"]["commit"], 1);
-    assert_eq!(first["projection"]["outcome"], "incomplete");
+    assert_eq!(first["projection"]["classification"], "incomplete");
     assert_eq!(first["projection"]["eligible_count"], 3);
     assert_eq!(first["projection"]["returned_count"], 1);
     assert_eq!(first["projection"]["remaining_count"], 2);
@@ -1323,7 +1357,7 @@ fn evidence_verification_json_is_summary_first_filtered_and_pageable() {
             "verify",
             "--project-root",
             root_text,
-            "--outcome",
+            "--classification",
             "unsupported",
             "--json",
         ],
@@ -1724,17 +1758,13 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     let root = command_help(&[]);
     assert!(root.contains("--project-root <DIR>"), "{root}");
     assert!(
-        root.contains(
-            "Receipt-bound project root used for authority selection or project inspection"
-        ),
+        root.contains("Receipt-bound project root that selects the authority"),
         "{root}"
     );
+    assert!(!root.contains("invalid with"), "{root}");
 
     let setup = command_help(&["setup-project"]);
-    assert!(
-        setup.contains("invalid with project integration"),
-        "{setup}"
-    );
+    assert!(!setup.contains("invalid with"), "{setup}");
     assert!(setup.contains("--skill-target"), "{setup}");
     assert!(setup.contains("auto|agents|claude|both|none"), "{setup}");
     assert!(
@@ -1750,7 +1780,7 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
 
     let plan = command_help(&["plan"]);
     for description in [
-        "Create a plan for durable work",
+        "Create a plan",
         "List every plan with its current status",
         "Edit plan orientation without replacing its task/event history",
         "Set plan status",
@@ -1765,7 +1795,7 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     for description in [
         "Add a named proof obligation",
         "Resolve an open gate with an evidence locator",
-        "Waive an open gate with durable rationale",
+        "Waive an open gate with a rationale",
         "Reopen a resolved or waived gate",
         "Remove an open gate",
         "List every gate on one task",
@@ -1780,7 +1810,7 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     for description in [
         "Add a named external blocker",
         "Resolve an open blocker with external evidence",
-        "Waive an open blocker with durable rationale",
+        "Waive an open blocker with a rationale",
         "Reopen a resolved or waived blocker",
         "Remove an open blocker",
         "List every blocker on one task",
@@ -1816,13 +1846,13 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     let task_add = command_help(&["add"]);
     assert!(
         task_add.contains("Concise outcome-oriented task title")
-            && task_add.contains("Parent task sequence")
+            && task_add.contains("Parent task number (N or #N)")
             && task_add.contains("Scheduling priority"),
         "{task_add}"
     );
     let gate_add = command_help(&["gate", "add"]);
     assert!(
-        gate_add.contains("Task sequence that owns the gate")
+        gate_add.contains("Task number that owns the gate")
             && gate_add.contains("Proof required to resolve the gate"),
         "{gate_add}"
     );
@@ -1832,12 +1862,45 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
             && commit_add.contains("Optional context explaining why this snapshot is useful"),
         "{commit_add}"
     );
-    let mise_project = command_help(&["mise", "project"]);
+    let mise_record = command_help(&["mise", "record"]);
     assert!(
-        mise_project.contains("Task sequence that owns the projection")
-            && mise_project.contains("Mise inspector pipeline from stdin"),
-        "{mise_project}"
+        mise_record.contains("Task number that owns the projection")
+            && mise_record.contains("Mise inspector pipeline from stdin"),
+        "{mise_record}"
     );
+    let show = command_help(&["show"]);
+    assert!(show.contains("Task number (N or #N)"), "{show}");
+    assert!(!show.contains("shell-portable"), "{show}");
+    let reject = command_help(&["reject"]);
+    assert!(
+        reject.contains("`reopen` can revisit it") && !reject.contains("re-litigation"),
+        "{reject}"
+    );
+    let export = command_help(&["export"]);
+    assert!(
+        export.contains("events and Mise projections as papertiger.dump.v10 JSON"),
+        "{export}"
+    );
+    let focus = command_help(&["focus"]);
+    assert!(focus.contains("--include-blocked"), "{focus}");
+    let reference_add = command_help(&["reference", "add"]);
+    assert!(
+        reference_add.contains("pull_request|issue|review|adr|input|other")
+            && reference_add.contains("Locator of the external item"),
+        "{reference_add}"
+    );
+    let inspect = command_help(&["history", "inspect"]);
+    assert!(inspect.contains("Stored event id"), "{inspect}");
+    for command in ["setup-user", "uninstall-user"] {
+        let help = command_help(&[command]);
+        assert!(
+            help.contains("Home directory") && help.contains("without writing"),
+            "{help}"
+        );
+    }
+    assert!(command_help(&["setup-user"]).contains("Replace divergent receipt-managed files"));
+    let evidence = command_help(&["evidence", "verify"]);
+    assert!(evidence.contains("--classification"), "{evidence}");
 }
 
 #[test]
@@ -2210,7 +2273,7 @@ fn long_text_help_names_utf8_files_and_stdin() {
     let add = String::from_utf8(add.stdout).unwrap();
     assert!(add.contains("--intent-file <PATH|->"), "{add}");
     assert!(
-        add.contains("Read durable orientation as UTF-8 from PATH, or stdin with '-'"),
+        add.contains("Read the intent as UTF-8 from PATH, or stdin with '-'"),
         "{add}"
     );
 

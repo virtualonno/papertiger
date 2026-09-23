@@ -19,9 +19,59 @@ pub struct InventoryResponse {
     pub tag: Option<String>,
     pub total: usize,
     pub remaining: usize,
-    pub snapshot: String,
-    pub next_after_seq: Option<i64>,
+    /// Opaque continuation bound to the filters and authority snapshot.
+    pub next_cursor: Option<String>,
+    pub continuation_command: Option<String>,
     pub tasks: Vec<InventoryItem>,
+}
+
+const INVENTORY_CURSOR_PREFIX: &str = "inventory-v1";
+
+fn filter_digest(status: Option<&str>, tag: Option<&str>) -> String {
+    let scope = serde_json::json!([status, tag]).to_string();
+    crate::sha256(scope.as_bytes())[..16].to_owned()
+}
+
+fn restart_command(status: Option<&str>, tag: Option<&str>, limit: usize) -> String {
+    let mut command = String::from("papertiger list --all-plans");
+    if let Some(status) = status {
+        command.push_str(&format!(" --status {status}"));
+    }
+    if let Some(tag) = tag {
+        command.push_str(&format!(" --tag {tag}"));
+    }
+    command.push_str(&format!(" --limit {limit} --json"));
+    command
+}
+
+/// Decode `inventory-v1:<seq>:<filter-digest>:<event-head>` for these filters.
+fn cursor_position(
+    cursor: &str,
+    status: Option<&str>,
+    tag: Option<&str>,
+    snapshot: &str,
+    restart: &str,
+) -> Result<i64> {
+    let mut parts = cursor.splitn(4, ':');
+    let (Some(INVENTORY_CURSOR_PREFIX), Some(seq), Some(filters), Some(cursor_snapshot)) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        bail!("--after-cursor is not an inventory cursor; restart with `{restart}`");
+    };
+    let seq = seq
+        .parse::<i64>()
+        .ok()
+        .filter(|seq| *seq > 0)
+        .ok_or_else(|| anyhow::anyhow!("--after-cursor is malformed; restart with `{restart}`"))?;
+    if filters != filter_digest(status, tag) {
+        bail!(
+            "--after-cursor belongs to different --status/--tag filters; repeat the filters that produced it or restart with `{restart}`"
+        );
+    }
+    if cursor_snapshot != snapshot {
+        bail!("inventory authority changed since this cursor; restart with `{restart}`");
+    }
+    Ok(seq)
 }
 
 pub fn plan_inventory(conn: &Connection, slug: Option<&str>) -> Result<Vec<Plan>> {
@@ -40,8 +90,7 @@ pub fn task_inventory(
     status: Option<&str>,
     tag: Option<&str>,
     limit: usize,
-    after_seq: Option<i64>,
-    snapshot: Option<&str>,
+    after_cursor: Option<&str>,
 ) -> Result<InventoryResponse> {
     if !(1..=500).contains(&limit) {
         bail!("inventory --limit must be between 1 and 500");
@@ -55,20 +104,13 @@ pub fn task_inventory(
             TASK_STATUSES.join("|")
         );
     }
-    if after_seq.is_some_and(|seq| seq < 0) {
-        bail!("--after-seq must be nonnegative; use the previous next_after_seq");
-    }
-    if after_seq.is_some() && snapshot.is_none() {
-        bail!("--after-seq requires --snapshot from the previous inventory page");
-    }
     let current = event_head(conn)?
         .map(|head| head.token)
         .unwrap_or_else(|| "empty".into());
-    if snapshot.is_some_and(|snapshot| snapshot != current) {
-        bail!(
-            "inventory authority changed; restart list --all-plans without --after-seq or --snapshot"
-        );
-    }
+    let restart = restart_command(status, tag, limit);
+    let after_seq = after_cursor
+        .map(|cursor| cursor_position(cursor, status, tag, &current, &restart))
+        .transpose()?;
     // Fetch only compact fields; task bodies and historical payloads never enter this projection.
     let predicate = "(?1 IS NULL OR t.status=?1 OR (?1='unfinished' AND t.status IN ('proposed','in_progress'))) AND (?2 IS NULL OR EXISTS (SELECT 1 FROM task_tags g WHERE g.task_id=t.task_id AND g.tag=?2))";
     let total: i64 = conn.query_row(
@@ -103,18 +145,24 @@ pub fn task_inventory(
         )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let remaining = usize::try_from(remaining_before)? - tasks.len();
+    let next_cursor = tasks.last().filter(|_| remaining > 0).map(|item| {
+        format!(
+            "{INVENTORY_CURSOR_PREFIX}:{}:{}:{current}",
+            item.task.seq,
+            filter_digest(status, tag)
+        )
+    });
+    let continuation_command = next_cursor
+        .as_ref()
+        .map(|cursor| restart.replacen(" --json", &format!(" --after-cursor {cursor} --json"), 1));
     Ok(InventoryResponse {
-        schema: "papertiger.task_inventory.v1",
+        schema: "papertiger.task_inventory.v2",
         status: status.map(str::to_owned),
         tag: tag.map(str::to_owned),
         total: usize::try_from(total)?,
         remaining,
-        snapshot: current,
-        next_after_seq: if remaining > 0 {
-            tasks.last().map(|item| item.task.seq)
-        } else {
-            None
-        },
+        next_cursor,
+        continuation_command,
         tasks,
     })
 }

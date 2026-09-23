@@ -104,7 +104,7 @@ pub fn record_mise_projection(
     let projection = parse_mise_planner_projection(bytes)?;
     if projection.schema != crate::MISE_PLANNER_PROJECTION_SCHEMA {
         bail!(
-            "Mise planner projection uses the retired id {}; regenerate it with the current `papertiger-mise projection inspect`, then run `papertiger mise record <task> <projection>`",
+            "Mise planner projection uses the retired id {}; regenerate it with the current `papertiger-mise projection export`, then run `papertiger mise record <task> <projection>`",
             projection.schema
         );
     }

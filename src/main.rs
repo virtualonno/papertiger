@@ -18,19 +18,19 @@ use text_input::{IntentArgs, NoteTextArgs, ResultArgs, WhyArgs, reject_multiple_
     about = "Local task planning for cross-session engineering work"
 )]
 struct Cli {
-    /// Planning database path (default: PAPERTIGER_DB, project receipt, or installed personal store); invalid with integration commands
+    /// Planning database path (default: PAPERTIGER_DB, project receipt, or installed personal store)
     #[arg(long, global = true)]
     db: Option<String>,
-    /// Receipt-bound project root used for authority selection or project inspection; evidence verify also uses it for file: locators
+    /// Receipt-bound project root that selects the authority; evidence verify also resolves file: locators beneath it
     #[arg(long = "project-root", global = true, value_name = "DIR")]
     authority_project_root: Option<std::path::PathBuf>,
-    /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator'); invalid with project integration commands
+    /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator')
     #[arg(long, global = true)]
     actor: Option<String>,
     /// Advisory pickup identity (default: PAPERTIGER_SESSION); never an exclusive lock or liveness signal
     #[arg(long, global = true)]
     session: Option<String>,
-    /// Emit JSON: versioned reads or exact committed mutation receipts.
+    /// Emit JSON: versioned reads or committed mutation receipts
     #[arg(long, global = true)]
     json: bool,
     /// Caller-reported event author model; unknown attribution remains absent.
@@ -49,7 +49,7 @@ enum Cmd {
     Personal(user_setup::Command),
     /// Print the bundled JSON Schema for local planner reads, recovery, and mutation receipts; never opens authority
     Schema,
-    /// Install a project-local native binary, receipt, ignore policy, and agent contract; does not accept --db or --actor
+    /// Install a project-local native binary, receipt, ignore policy, and agent contract
     #[command(after_help = "JSON schema: papertiger.project_install_result.v6")]
     SetupProject {
         /// Existing consuming project directory
@@ -99,7 +99,7 @@ enum Cmd {
         /// Work kind: work, probe, or decision
         #[arg(long, default_value = "work")]
         kind: String,
-        /// Parent task sequence (bare N is shell-portable; quoted #N also works)
+        /// Parent task number (N or #N)
         #[arg(long)]
         parent: Option<String>,
         /// Dependencies, comma-separated task refs
@@ -119,7 +119,7 @@ enum Cmd {
     },
     /// Show one task in full
     Show {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
         /// Current state without historical payloads, as JSON (implies --json); use log --task N --json for rationale/history
         #[arg(long)]
@@ -133,26 +133,23 @@ enum Cmd {
         /// Maximum inventory rows (1..500); requires --all-plans
         #[arg(long, requires = "all_plans")]
         limit: Option<usize>,
-        /// Continue after the previous next_after_seq
-        #[arg(long, requires_all = ["all_plans", "snapshot"])]
-        after_seq: Option<i64>,
-        /// Authority snapshot returned by the preceding page; changes require restart
+        /// Continue from the previous page's next_cursor (same filters; refused after any authority change)
         #[arg(long, requires = "all_plans")]
-        snapshot: Option<String>,
+        after_cursor: Option<String>,
         /// Plan slug; optional when exactly one plan is active
         #[arg(long)]
         plan: Option<String>,
         /// Filter by task status
         #[arg(long)]
         status: Option<String>,
-        /// Filter by exact tag
+        /// Filter by tag
         #[arg(long)]
         tag: Option<String>,
         /// Ordering: seq or activity
         #[arg(long, default_value = "seq")]
         sort: String,
     },
-    /// Search durable task context with deterministic field ranking
+    /// Search task titles, intents, results, tags and rationale with deterministic ranking
     Search {
         /// Literal words to find across title, intent, result, tags, and rationale
         query: String,
@@ -162,16 +159,16 @@ enum Cmd {
         /// Restrict results to one task status
         #[arg(long)]
         status: Option<String>,
-        /// Maximum ranked results to return
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
-        /// Structured identity, ranking and excerpt without full task bodies (implies --json)
+        /// Maximum ranked results (default 20; 5 with --compact)
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Identity, ranking and excerpt without task bodies, with a continuation command when truncated (implies --json)
         #[arg(long)]
         compact: bool,
     },
     /// Edit a task
     Edit {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
         /// Replacement title
         #[arg(long)]
@@ -212,41 +209,41 @@ enum Cmd {
     },
     /// Start or resume unfinished work; record advisory session pickup without locking the task
     Start {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
         #[command(flatten)]
         why: WhyArgs,
     },
     /// Complete a task after dependencies, blockers, gates, and children are closed
     Done {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
         #[command(flatten)]
         result: ResultArgs,
-        /// Who supplied the durable result: user, agent, or external
+        /// Who supplied the result: user, agent, or external
         #[arg(long, value_name = "user|agent|external")]
         result_source: Option<String>,
     },
     /// Reopen a finished task
     Reopen {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
         #[command(flatten)]
         why: WhyArgs,
     },
-    /// Retire a task (no longer worth doing)
+    /// Retire a task that is no longer worth doing, optionally into its replacement
     Retire {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
-        /// Durable same-plan task that replaces this work
+        /// Same-plan task that replaces this work
         #[arg(long, value_name = "TASK")]
         into: Option<String>,
         #[command(flatten)]
         why: WhyArgs,
     },
-    /// Reject a task/approach (records why, prevents re-litigation)
+    /// Reject a task or approach with its rationale; `reopen` can revisit it
     Reject {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
         #[command(flatten)]
         why: WhyArgs,
@@ -261,7 +258,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: BlockerCmd,
     },
-    /// Manage exact task reference locators without fetching external state
+    /// Manage task reference locators without fetching external state
     Reference {
         #[command(subcommand)]
         cmd: ReferenceCmd,
@@ -286,7 +283,7 @@ enum Cmd {
         limit: usize,
         /// Include proposed work that is currently blocked
         #[arg(long)]
-        all: bool,
+        include_blocked: bool,
     },
     /// Task tag management
     Tag {
@@ -306,13 +303,13 @@ enum Cmd {
         /// Who supplied the note meaning: user, agent, or external
         #[arg(long, value_name = "user|agent|external")]
         source: Option<String>,
-        /// Attach the note to this task sequence
+        /// Attach the note to this task number
         #[arg(long)]
         task: Option<String>,
     },
     /// Event history
     Log {
-        /// Restrict history to this task sequence
+        /// Restrict history to this task number
         #[arg(long)]
         task: Option<String>,
         /// Maximum events to return
@@ -337,7 +334,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EvidenceCmd,
     },
-    /// Dump plans/tasks/gates as JSON
+    /// Export plans, tasks, gates, blockers, events and Mise projections as papertiger.dump.v10 JSON
     Export {
         /// Export only this plan slug and its scoped history
         #[arg(long)]
@@ -379,11 +376,15 @@ enum Cmd {
 #[derive(Subcommand)]
 enum HistoryCmd {
     /// Read every original field and its digest, without inferring missing provenance
-    Inspect { event_id: i64 },
+    Inspect {
+        /// Stored event id, as shown by `log` or `audit`
+        event_id: i64,
+    },
     /// Preserve an invalid row verbatim in an audited, exportable quarantine event
     Quarantine {
+        /// Stored event id to quarantine
         event_id: i64,
-        /// Exact digest returned by history inspect; refuses a changed record
+        /// Digest returned by history inspect; refuses a changed record
         #[arg(long)]
         expect_sha256: String,
         /// Explain why this original history is untrusted
@@ -396,40 +397,54 @@ enum HistoryCmd {
 enum ReferenceCmd {
     /// Record an inward locator without importing external status or fetching bytes
     Add {
+        /// Task number (N or #N)
         task: String,
+        /// Locator of the external item, such as a URL or repository path
         locator: String,
-        #[arg(long)]
+        /// Reference kind
+        #[arg(long, value_name = "pull_request|issue|review|adr|input|other")]
         kind: String,
+        /// Optional lowercase SHA-256 digest binding the referenced bytes
         #[arg(long)]
         sha256: Option<String>,
+        /// Optional context for the reference
         #[arg(long)]
         note: Option<String>,
     },
-    /// Remove one exact reference with retained rationale
+    /// Remove one reference with retained rationale
     Remove {
+        /// Task number (N or #N)
         task: String,
+        /// Locator recorded on the task
         locator: String,
-        #[arg(long)]
+        /// Kind recorded with the locator
+        #[arg(long, value_name = "pull_request|issue|review|adr|input|other")]
         kind: String,
         #[command(flatten)]
         why: WhyArgs,
     },
     /// List inward references on one task
-    List { task: String },
-    /// Find tasks that name an exact locator
-    Find { locator: String },
+    List {
+        /// Task number (N or #N)
+        task: String,
+    },
+    /// Find tasks that name a locator
+    Find {
+        /// Locator to match exactly
+        locator: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum EvidenceCmd {
     /// Summarize every stored binding and page filtered verification details
     Verify {
-        /// Restrict verification to one task sequence
+        /// Restrict verification to one task number
         #[arg(long)]
         task: Option<String>,
         /// Detail classification to show; summary counts always cover the full task scope
         #[arg(long, value_enum, default_value = "incomplete")]
-        outcome: pt::EvidenceOutcomeFilter,
+        classification: pt::EvidenceClassificationFilter,
         /// Filter details by owning task lifecycle state
         #[arg(long, value_enum, default_value = "all")]
         task_state: pt::EvidenceTaskStateFilter,
@@ -446,7 +461,7 @@ enum EvidenceCmd {
 enum CommitCmd {
     /// Associate one full commit object ID with a local task
     Add {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
         /// Caller-resolved lowercase 40- or 64-hex commit object ID
         commit_oid: String,
@@ -459,7 +474,7 @@ enum CommitCmd {
     },
     /// Remove an incorrect association while retaining an evented correction
     Remove {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
         /// Previously recorded full commit object ID
         commit_oid: String,
@@ -471,7 +486,7 @@ enum CommitCmd {
     },
     /// List commit associations on one task
     List {
-        /// Task sequence (bare N is shell-portable; quoted #N also works)
+        /// Task number (N or #N)
         task: String,
     },
     /// Reverse lookup local tasks associated with one full commit object ID
@@ -487,18 +502,18 @@ enum CommitCmd {
 #[derive(Subcommand)]
 enum MiseCmd {
     /// Idempotently attach one verified projection document to its owning task
-    Project {
-        /// Task sequence that owns the projection
+    Record {
+        /// Task number that owns the projection
         task: String,
         /// Projection JSON path, or '-' to read a Mise inspector pipeline from stdin
         projection: String,
     },
     /// List every reverified Mise projection attached to one task
     List {
-        /// Task sequence that owns the projections
+        /// Task number that owns the projections
         task: String,
     },
-    /// Show one exact reverified projection by its SHA-256 identity
+    /// Show one reverified projection by its SHA-256 identity
     Show {
         /// Full lowercase SHA-256 projection identity
         projection_sha256: String,
@@ -507,7 +522,7 @@ enum MiseCmd {
 
 #[derive(Subcommand)]
 enum PlanCmd {
-    /// Create a plan for durable work
+    /// Create a plan
     Add {
         /// Stable local plan selector
         slug: String,
@@ -549,7 +564,7 @@ enum PlanCmd {
 enum GateCmd {
     /// Add a named proof obligation to a task
     Add {
-        /// Task sequence that owns the gate
+        /// Task number that owns the gate
         task: String,
         /// Stable gate name within the task
         name: String,
@@ -562,7 +577,7 @@ enum GateCmd {
     },
     /// Resolve an open gate with an evidence locator
     Resolve {
-        /// Task sequence that owns the gate
+        /// Task number that owns the gate
         task: String,
         /// Name of the open gate
         name: String,
@@ -576,9 +591,9 @@ enum GateCmd {
         #[arg(long)]
         note: Option<String>,
     },
-    /// Waive an open gate with durable rationale
+    /// Waive an open gate with a rationale
     Waive {
-        /// Task sequence that owns the gate
+        /// Task number that owns the gate
         task: String,
         /// Name of the open gate
         name: String,
@@ -587,7 +602,7 @@ enum GateCmd {
     },
     /// Reopen a resolved or waived gate
     Reopen {
-        /// Task sequence that owns the gate
+        /// Task number that owns the gate
         task: String,
         /// Name of the terminal gate
         name: String,
@@ -596,7 +611,7 @@ enum GateCmd {
     },
     /// Remove an open gate that no longer models required proof
     Remove {
-        /// Task sequence that owns the gate
+        /// Task number that owns the gate
         task: String,
         /// Name of the open gate
         name: String,
@@ -605,7 +620,7 @@ enum GateCmd {
     },
     /// List every gate on one task
     List {
-        /// Task sequence that owns the gates
+        /// Task number that owns the gates
         task: String,
     },
 }
@@ -614,7 +629,7 @@ enum GateCmd {
 enum BlockerCmd {
     /// Add a named external blocker to a task
     Add {
-        /// Task sequence that owns the blocker
+        /// Task number that owns the blocker
         task: String,
         /// Stable blocker name within the task
         name: String,
@@ -624,7 +639,7 @@ enum BlockerCmd {
     },
     /// Resolve an open blocker with external evidence
     Resolve {
-        /// Task sequence that owns the blocker
+        /// Task number that owns the blocker
         task: String,
         /// Name of the open blocker
         name: String,
@@ -638,9 +653,9 @@ enum BlockerCmd {
         #[arg(long)]
         note: Option<String>,
     },
-    /// Waive an open blocker with durable rationale
+    /// Waive an open blocker with a rationale
     Waive {
-        /// Task sequence that owns the blocker
+        /// Task number that owns the blocker
         task: String,
         /// Name of the open blocker
         name: String,
@@ -649,7 +664,7 @@ enum BlockerCmd {
     },
     /// Reopen a resolved or waived blocker
     Reopen {
-        /// Task sequence that owns the blocker
+        /// Task number that owns the blocker
         task: String,
         /// Name of the terminal blocker
         name: String,
@@ -658,7 +673,7 @@ enum BlockerCmd {
     },
     /// Remove an open blocker that no longer models reality
     Remove {
-        /// Task sequence that owns the blocker
+        /// Task number that owns the blocker
         task: String,
         /// Name of the open blocker
         name: String,
@@ -667,7 +682,7 @@ enum BlockerCmd {
     },
     /// List every blocker on one task
     List {
-        /// Task sequence that owns the blockers
+        /// Task number that owns the blockers
         task: String,
     },
 }
@@ -676,7 +691,7 @@ enum BlockerCmd {
 enum TagCmd {
     /// Add a searchable tag to a task
     Add {
-        /// Task sequence to tag
+        /// Task number to tag
         task: String,
         /// Tag value
         tag: String,
@@ -685,7 +700,7 @@ enum TagCmd {
     },
     /// Remove a tag from a task
     Remove {
-        /// Task sequence to untag
+        /// Task number to untag
         task: String,
         /// Existing tag value
         tag: String,
@@ -698,18 +713,18 @@ enum TagCmd {
 enum DepCmd {
     /// Make one task depend on another task
     Add {
-        /// Dependent task sequence
+        /// Dependent task number
         task: String,
-        /// Prerequisite task sequence
+        /// Prerequisite task number
         on: String,
         #[command(flatten)]
         why: WhyArgs,
     },
     /// Remove a dependency edge
     Remove {
-        /// Dependent task sequence
+        /// Dependent task number
         task: String,
-        /// Prerequisite task sequence
+        /// Prerequisite task number
         on: String,
         #[command(flatten)]
         why: WhyArgs,
@@ -1662,8 +1677,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::List {
             all_plans,
             limit,
-            after_seq,
-            snapshot,
+            after_cursor,
             plan,
             status,
             tag,
@@ -1675,8 +1689,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     status.as_deref(),
                     tag.as_deref(),
                     limit.unwrap_or(100),
-                    after_seq,
-                    snapshot.as_deref(),
+                    after_cursor.as_deref(),
                 )?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&response)?);
@@ -1692,11 +1705,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                         );
                     }
                     println!("{} total; {} remaining", response.total, response.remaining);
-                    if let Some(seq) = response.next_after_seq {
-                        println!(
-                            "continue with the same filters: list --all-plans --after-seq {seq} --snapshot {}",
-                            response.snapshot
-                        );
+                    if let Some(command) = &response.continuation_command {
+                        println!("continue with: {}", command.replacen(" --json", "", 1));
                     }
                 }
                 return Ok(());
@@ -1731,6 +1741,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             limit,
             compact,
         } => {
+            let limit = limit.unwrap_or(if compact { 5 } else { 20 });
             let response =
                 pt::search_tasks(&conn, &query, plan.as_deref(), status.as_deref(), limit)?;
             if json {
@@ -2132,7 +2143,11 @@ fn run_planner(cli: Cli) -> Result<()> {
                 mutation_output!("#{a} no longer depends on #{b}");
             }
         },
-        Cmd::Focus { plan, limit, all } => {
+        Cmd::Focus {
+            plan,
+            limit,
+            include_blocked,
+        } => {
             let selected_plan = match plan.as_deref() {
                 Some(slug) => Some(pt::resolve_plan(&conn, Some(slug))?),
                 None if json => pt::active_plan(&conn)?,
@@ -2145,7 +2160,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 );
                 return Ok(());
             };
-            let response = pt::focus(&conn, plan_id, limit, all, session.as_deref())?;
+            let response = pt::focus(&conn, plan_id, limit, include_blocked, session.as_deref())?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&response)?);
             } else if response.projection.entries.is_empty() {
@@ -2313,7 +2328,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             cmd:
                 EvidenceCmd::Verify {
                     task,
-                    outcome,
+                    classification,
                     task_state,
                     limit,
                     after_cursor,
@@ -2329,7 +2344,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             };
             let options = pt::EvidenceVerificationOptions {
                 task_seq,
-                outcome,
+                classification,
                 task_state,
                 limit,
                 after_cursor,
@@ -2352,8 +2367,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                     arguments.extend(["--task".to_owned(), task_seq.to_string()]);
                 }
                 arguments.extend([
-                    "--outcome".to_owned(),
-                    outcome.as_str().to_owned(),
+                    "--classification".to_owned(),
+                    classification.as_str().to_owned(),
                     "--task-state".to_owned(),
                     task_state.as_str().to_owned(),
                     "--limit".to_owned(),
@@ -2395,12 +2410,12 @@ fn run_planner(cli: Cli) -> Result<()> {
                     );
                 }
                 println!(
-                    "details: {} of {} eligible shown from index {}; {} remaining; outcome={}, task-state={}",
+                    "details: {} of {} eligible shown from index {}; {} remaining; classification={}, task-state={}",
                     report.projection.returned_count,
                     report.projection.eligible_count,
                     report.projection.page_start,
                     report.projection.remaining_count,
-                    report.projection.outcome.as_str(),
+                    report.projection.classification.as_str(),
                     report.projection.task_state.as_str()
                 );
                 for binding in &report.projection.bindings {
@@ -2434,7 +2449,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             }
             if !report.summary.verification_complete {
                 bail!(
-                    "evidence verification is incomplete across the full task scope; use --outcome failed or --outcome unsupported for bounded details, follow failed bindings' corrective argv, and do not count unsupported schemes as verified"
+                    "evidence verification is incomplete across the full task scope; use --classification failed or --classification unsupported for bounded details, follow failed bindings' corrective argv, and do not count unsupported schemes as verified"
                 );
             }
         }
@@ -2466,7 +2481,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             mutation_output!("imported {tasks} task(s), {deps} dependency edge(s)");
         }
         Cmd::Mise { cmd } => match cmd {
-            MiseCmd::Project { task, projection } => {
+            MiseCmd::Record { task, projection } => {
                 let task_seq = pt::parse_task_ref(&task)?;
                 let bytes = if projection == "-" {
                     let mut bytes = Vec::new();
@@ -2647,7 +2662,7 @@ mod command_access_tests {
         );
         assert!(
             !Cmd::Mise {
-                cmd: MiseCmd::Project {
+                cmd: MiseCmd::Record {
                     task: "1".into(),
                     projection: "projection.json".into(),
                 },

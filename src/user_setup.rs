@@ -18,18 +18,23 @@ pub(crate) enum Command {
     /// Install personal skills, native runtime and private fallback store; leaves projects untouched
     #[command(name = "setup-user")]
     Setup {
+        /// Home directory to install into (default: HOME, or USERPROFILE on Windows)
         #[arg(long)]
         home: Option<PathBuf>,
+        /// Report the complete action plan without writing
         #[arg(long)]
         dry_run: bool,
+        /// Replace divergent receipt-managed files after review
         #[arg(long)]
         replace_managed: bool,
     },
     /// Remove receipt-owned personal skills/runtime; retain planning history
     #[command(name = "uninstall-user")]
     Uninstall {
+        /// Home directory to uninstall from (default: HOME, or USERPROFILE on Windows)
         #[arg(long)]
         home: Option<PathBuf>,
+        /// Report the complete removal plan without writing
         #[arg(long)]
         dry_run: bool,
     },

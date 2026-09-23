@@ -322,6 +322,37 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
     let events_before = event_rows(&conn);
     drop(conn);
     downgrade_to_v12(&path);
+    // A projection recorded before 0.18 carries the retired id inside its
+    // hashed bytes; the immutable row can never be rewritten.
+    let mut legacy = mise_projection_fixture();
+    legacy.schema = pt::MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned();
+    let legacy_sha256 = legacy.projection_sha256().unwrap();
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.create_scalar_function(
+        "papertiger_write_requires_executable",
+        0,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        |_| Ok(1_i64),
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO task_mise_projections
+         (projection_sha256, task_id, campaign_id, manifest_sha256, candidate_id,
+          nomination_id, disposition, projection_json, recorded_by, recorded_at)
+         VALUES (?1, (SELECT task_id FROM tasks WHERE seq=?2), ?3, ?4, ?5, ?6, 'nominated', ?7,
+                 'pre-0.18', '2026-08-01T00:00:00Z')",
+        rusqlite::params![
+            legacy_sha256,
+            task,
+            legacy.campaign_id,
+            legacy.manifest_sha256,
+            legacy.candidate_id,
+            legacy.nomination_id,
+            serde_json::to_string(&legacy).unwrap(),
+        ],
+    )
+    .unwrap();
+    drop(raw);
 
     let refused = Command::new(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "status"])
@@ -361,6 +392,22 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
         .unwrap();
     assert_eq!(stale, 0);
     assert!(pt::write_guard_drift(&migrated).unwrap().is_empty());
+    let stored = pt::task_mise_projections(&migrated, task).unwrap();
+    assert_eq!(stored[0].projection_sha256, legacy_sha256);
+    assert_eq!(
+        stored[0].projection.schema,
+        pt::MISE_PLANNER_PROJECTION_SCHEMA_V1
+    );
+    assert!(pt::audit(&migrated).unwrap().is_empty());
+    let dump = pt::export(&migrated, None).unwrap();
+    assert_eq!(dump.mise_projections[0].projection_sha256, legacy_sha256);
+    let restored = db();
+    pt::import(&restored, "restore", &dump).unwrap();
+    assert!(
+        pt::mise_projection(&restored, &legacy_sha256)
+            .unwrap()
+            .is_some()
+    );
     pt::add_gate(&migrated, "test", task, "later", "test", "later proof").unwrap();
     drop(migrated);
 
@@ -1194,7 +1241,7 @@ fn evidence_verifier_classifies_unhashed_missing_escaping_and_unsupported_bindin
         &root,
         &pt::EvidenceVerificationOptions {
             task_seq: Some(task),
-            outcome: pt::EvidenceOutcomeFilter::All,
+            classification: pt::EvidenceClassificationFilter::All,
             ..Default::default()
         },
     )
@@ -1273,7 +1320,7 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
         },
     )
     .unwrap();
-    assert_eq!(first.schema, "papertiger.evidence_verification.v2");
+    assert_eq!(first.schema, "papertiger.evidence_verification.v3");
     assert_eq!(first.summary.binding_count, 24);
     assert_eq!(first.summary.verified_count, 8);
     assert_eq!(first.summary.failed_count, 8);
@@ -1311,7 +1358,7 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
         &conn,
         &root,
         &pt::EvidenceVerificationOptions {
-            outcome: pt::EvidenceOutcomeFilter::Failed,
+            classification: pt::EvidenceClassificationFilter::Failed,
             task_state: pt::EvidenceTaskStateFilter::Open,
             ..Default::default()
         },
@@ -1327,7 +1374,7 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
         &conn,
         &root,
         &pt::EvidenceVerificationOptions {
-            outcome: pt::EvidenceOutcomeFilter::Unsupported,
+            classification: pt::EvidenceClassificationFilter::Unsupported,
             task_state: pt::EvidenceTaskStateFilter::Terminal,
             ..Default::default()
         },
@@ -1349,7 +1396,7 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
         &conn,
         &root,
         &pt::EvidenceVerificationOptions {
-            outcome: pt::EvidenceOutcomeFilter::Failed,
+            classification: pt::EvidenceClassificationFilter::Failed,
             limit: 5,
             after_cursor: Some(cursor),
             ..Default::default()

@@ -17,7 +17,7 @@ const EVIDENCE_CURSOR_PREFIX: &str = "evidence-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
-pub enum EvidenceOutcomeFilter {
+pub enum EvidenceClassificationFilter {
     All,
     Incomplete,
     Verified,
@@ -25,7 +25,7 @@ pub enum EvidenceOutcomeFilter {
     Unsupported,
 }
 
-impl EvidenceOutcomeFilter {
+impl EvidenceClassificationFilter {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::All => "all",
@@ -58,7 +58,7 @@ impl EvidenceTaskStateFilter {
 #[derive(Debug, Clone)]
 pub struct EvidenceVerificationOptions {
     pub task_seq: Option<i64>,
-    pub outcome: EvidenceOutcomeFilter,
+    pub classification: EvidenceClassificationFilter,
     pub task_state: EvidenceTaskStateFilter,
     pub limit: usize,
     pub after_cursor: Option<String>,
@@ -68,7 +68,7 @@ impl Default for EvidenceVerificationOptions {
     fn default() -> Self {
         Self {
             task_seq: None,
-            outcome: EvidenceOutcomeFilter::Incomplete,
+            classification: EvidenceClassificationFilter::Incomplete,
             task_state: EvidenceTaskStateFilter::All,
             limit: DEFAULT_EVIDENCE_PAGE,
             after_cursor: None,
@@ -100,7 +100,7 @@ pub struct EvidenceVerificationSummary {
 pub struct EvidenceVerificationProjection {
     pub scope: String,
     pub ordering: String,
-    pub outcome: EvidenceOutcomeFilter,
+    pub classification: EvidenceClassificationFilter,
     pub task_state: EvidenceTaskStateFilter,
     pub eligible_count: usize,
     pub page_start: usize,
@@ -174,7 +174,7 @@ pub fn verify_evidence(
         .map(|seq| format!(" on task #{seq}"))
         .unwrap_or_default();
     Ok(EvidenceVerificationReport {
-        schema: "papertiger.evidence_verification.v2".into(),
+        schema: "papertiger.evidence_verification.v3".into(),
         project_root,
         task_seq: options.task_seq,
         summary: EvidenceVerificationSummary {
@@ -188,12 +188,12 @@ pub fn verify_evidence(
         },
         projection: EvidenceVerificationProjection {
             scope: format!(
-                "resolved gates and blockers{task_scope}; outcome={}; task_state={}",
-                options.outcome.as_str(),
+                "resolved gates and blockers{task_scope}; classification={}; task_state={}",
+                options.classification.as_str(),
                 options.task_state.as_str()
             ),
             ordering: "task_seq asc, entity asc, name asc".into(),
-            outcome: options.outcome,
+            classification: options.classification,
             task_state: options.task_state,
             eligible_count,
             page_start,
@@ -213,16 +213,18 @@ fn binding_matches(
     binding: &EvidenceBindingVerification,
     options: &EvidenceVerificationOptions,
 ) -> bool {
-    let outcome_matches = match options.outcome {
-        EvidenceOutcomeFilter::All => true,
-        EvidenceOutcomeFilter::Incomplete => {
+    let classification_matches = match options.classification {
+        EvidenceClassificationFilter::All => true,
+        EvidenceClassificationFilter::Incomplete => {
             binding.classification != EvidenceClassification::Verified
         }
-        EvidenceOutcomeFilter::Verified => {
+        EvidenceClassificationFilter::Verified => {
             binding.classification == EvidenceClassification::Verified
         }
-        EvidenceOutcomeFilter::Failed => binding.classification == EvidenceClassification::Failed,
-        EvidenceOutcomeFilter::Unsupported => {
+        EvidenceClassificationFilter::Failed => {
+            binding.classification == EvidenceClassification::Failed
+        }
+        EvidenceClassificationFilter::Unsupported => {
             binding.classification == EvidenceClassification::Unsupported
         }
     };
@@ -238,7 +240,7 @@ fn binding_matches(
             )
         }
     };
-    outcome_matches && task_state_matches
+    classification_matches && task_state_matches
 }
 
 fn evidence_cursor(
@@ -250,7 +252,7 @@ fn evidence_cursor(
     let bytes = serde_json::to_vec(&(
         project_root,
         options.task_seq,
-        options.outcome,
+        options.classification,
         options.task_state,
         filtered,
         page_start,

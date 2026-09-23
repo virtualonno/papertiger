@@ -101,8 +101,8 @@ text_args!(
     intent_file,
     "intent",
     true,
-    "Durable orientation text; blank clears it when editing",
-    "Read durable orientation as UTF-8 from PATH, or stdin with '-'",
+    "Intent: the outcome and why it matters; blank clears it when editing",
+    "Read the intent as UTF-8 from PATH, or stdin with '-'",
     optional
 );
 text_args!(
@@ -111,8 +111,8 @@ text_args!(
     result_file,
     "result",
     false,
-    "Durable measured or selected outcome",
-    "Read the durable outcome as UTF-8 from PATH, or stdin with '-'",
+    "Result: the measured or selected outcome",
+    "Read the result as UTF-8 from PATH, or stdin with '-'",
     optional
 );
 text_args!(
@@ -121,7 +121,7 @@ text_args!(
     why_file,
     "why",
     false,
-    "Standalone rationale for this mutation",
+    "Why: standalone rationale for this mutation",
     "Read the rationale as UTF-8 from PATH, or stdin with '-'",
     required
 );
@@ -158,11 +158,7 @@ pub fn reject_multiple_stdin(fields: &[(&str, bool)]) -> Result<()> {
 
 #[derive(Debug, Args)]
 pub struct NoteTextArgs {
-    #[arg(
-        value_name = "TEXT",
-        conflicts_with = "text_file",
-        help = "Durable note text"
-    )]
+    #[arg(value_name = "TEXT", conflicts_with = "text_file", help = "Note text")]
     pub text: Option<String>,
     #[arg(
         long,

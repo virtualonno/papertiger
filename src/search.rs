@@ -60,19 +60,35 @@ pub struct CompactSearchResponse<'a> {
     pub status: Option<&'a str>,
     pub total_matches: usize,
     pub truncated: bool,
+    /// Present when more matches exist: the same search with a larger limit.
+    pub continuation_command: Option<String>,
     pub results: Vec<CompactSearchHit<'a>>,
 }
 
 impl SearchResponse {
     pub fn compact(&self) -> CompactSearchResponse<'_> {
         CompactSearchResponse {
-            schema: "papertiger.search_compact.v1",
+            schema: "papertiger.search_compact.v2",
             query: &self.query,
             terms: &self.terms,
             plan: self.plan.as_ref().map(|plan| plan.slug.as_str()),
             status: self.status.as_deref(),
             total_matches: self.total_matches,
             truncated: self.truncated,
+            continuation_command: self.truncated.then(|| {
+                let mut command = format!("papertiger search {:?}", self.query);
+                if let Some(plan) = &self.plan {
+                    command.push_str(&format!(" --plan {}", plan.slug));
+                }
+                if let Some(status) = &self.status {
+                    command.push_str(&format!(" --status {status}"));
+                }
+                command.push_str(&format!(
+                    " --compact --limit {}",
+                    self.total_matches.min(MAX_SEARCH_RESULTS)
+                ));
+                command
+            }),
             results: self
                 .results
                 .iter()

@@ -20,7 +20,7 @@ mod evidence;
 pub use evidence::{CorrectiveCommand, EvidenceBindingVerification, EvidenceClassification};
 mod evidence_projection;
 pub use evidence_projection::{
-    DEFAULT_EVIDENCE_PAGE, EvidenceOutcomeFilter, EvidenceTaskStateFilter,
+    DEFAULT_EVIDENCE_PAGE, EvidenceClassificationFilter, EvidenceTaskStateFilter,
     EvidenceVerificationOptions, EvidenceVerificationProjection, EvidenceVerificationReport,
     EvidenceVerificationSummary, MAX_EVIDENCE_PAGE, verify_evidence,
 };
@@ -3212,7 +3212,11 @@ pub fn focus(
     });
     let eligible_count = entries.len();
     entries.truncate(limit);
-    let blocked = if include_blocked { " --all" } else { "" };
+    let blocked = if include_blocked {
+        " --include-blocked"
+    } else {
+        ""
+    };
     let continuation_command = format!(
         "papertiger focus --plan {} --limit {eligible_count}{blocked}{} --json",
         plan.slug,

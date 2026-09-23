@@ -1927,7 +1927,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_inventory.v1"
+          "const": "papertiger.task_inventory.v2"
         },
         "status": {
           "type": [
@@ -1949,12 +1949,15 @@
           "type": "integer",
           "minimum": 0
         },
-        "snapshot": {
-          "type": "string"
-        },
-        "next_after_seq": {
+        "next_cursor": {
           "type": [
-            "integer",
+            "string",
+            "null"
+          ]
+        },
+        "continuation_command": {
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -1984,8 +1987,8 @@
         "tag",
         "total",
         "remaining",
-        "snapshot",
-        "next_after_seq",
+        "next_cursor",
+        "continuation_command",
         "tasks"
       ],
       "additionalProperties": false
@@ -1994,7 +1997,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.search_compact.v1"
+          "const": "papertiger.search_compact.v2"
         },
         "query": {
           "type": "string"
@@ -2023,6 +2026,12 @@
         },
         "truncated": {
           "type": "boolean"
+        },
+        "continuation_command": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "results": {
           "type": "array",
@@ -2080,6 +2089,7 @@
         "status",
         "total_matches",
         "truncated",
+        "continuation_command",
         "results"
       ],
       "additionalProperties": false

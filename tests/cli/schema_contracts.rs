@@ -84,7 +84,7 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
         context["activity"]["created_event"]["reasoning_effort"],
         "high"
     );
-    let selection = run(&["focus", "--plan", "source", "--all", "--json"]);
+    let selection = run(&["focus", "--plan", "source", "--include-blocked", "--json"]);
     assert_eq!(selection["schema"], "papertiger.focus.v7");
     assert_eq!(
         selection["entries"][0]["pickup"]["session"],
