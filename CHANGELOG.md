@@ -6,6 +6,14 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-23
+
+Planner schema v13 and Mise schema v10 are unchanged; no `init` is needed.
+Verify the archive against its published `.sha256`, then upgrade a project by
+unpacking the archive over the project root or by running `setup-project` from
+the new release binary, and a personal installation with `setup-user`. Scripts
+that pass `--replace-managed` or check setup result schemas need updating.
+
 ### Added
 
 - `--project-root <root>` selects an existing `<root>/state/papertiger.sqlite`
@@ -701,7 +709,10 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/virtualonno/papertiger/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/virtualonno/papertiger/compare/v0.17.1...v0.18.0
+[0.17.1]: https://github.com/virtualonno/papertiger/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/virtualonno/papertiger/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/virtualonno/papertiger/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/virtualonno/papertiger/compare/v0.14.0...v0.15.0
