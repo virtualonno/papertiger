@@ -245,19 +245,17 @@ jobs:
           printf 'repository contract\n' > "$project/AGENTS.md"
           printf 'target/\n' > "$project/.gitignore"
           "$bundle/bin/papertiger" setup-project "$project" --json > "$verify/setup.json"
-          grep -Fq '"schema": "papertiger.project_install_result.v6"' "$verify/setup.json"
+          grep -Fq '"schema": "papertiger.project_install_result.v7"' "$verify/setup.json"
           test -f "$project/tools/papertiger/bin/papertiger"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise"
           test -f "$project/tools/papertiger/project-install.json"
-          grep -Fq '"schema": "papertiger.project_install.v2"' \
+          grep -Fq '"schema": "papertiger.project_install.v3"' \
               "$project/tools/papertiger/project-install.json"
           grep -Fq "\"papertiger_version\": \"${VERSION}\"" \
               "$project/tools/papertiger/project-install.json"
           grep -Fq '"authority_path": "state/papertiger.sqlite"' \
               "$project/tools/papertiger/project-install.json"
           grep -Fq '"agents"' "$project/tools/papertiger/project-install.json"
-          test ! -e "$project/scripts/papertiger"
-          test ! -e "$project/scripts/papertiger.cmd"
           cmp "$project/tools/papertiger/agent_integration.md" \
               "$bundle/agent_integration.md"
           test -f "$project/.agents/skills/papertiger/SKILL.md"
@@ -330,19 +328,17 @@ jobs:
           printf 'repository contract\n' > "$project/AGENTS.md"
           printf 'target/\n' > "$project/.gitignore"
           "$planner" setup-project "$project" --json > "$verify/setup.json"
-          grep -Fq '"schema": "papertiger.project_install_result.v6"' "$verify/setup.json"
+          grep -Fq '"schema": "papertiger.project_install_result.v7"' "$verify/setup.json"
           test -f "$project/tools/papertiger/bin/papertiger.exe"
           test ! -e "$project/tools/papertiger/bin/papertiger-mise.exe"
           test -f "$project/tools/papertiger/project-install.json"
-          grep -Fq '"schema": "papertiger.project_install.v2"' \
+          grep -Fq '"schema": "papertiger.project_install.v3"' \
               "$project/tools/papertiger/project-install.json"
           grep -Fq "\"papertiger_version\": \"${VERSION}\"" \
               "$project/tools/papertiger/project-install.json"
           grep -Fq '"authority_path": "state/papertiger.sqlite"' \
               "$project/tools/papertiger/project-install.json"
           grep -Fq '"agents"' "$project/tools/papertiger/project-install.json"
-          test ! -e "$project/scripts/papertiger"
-          test ! -e "$project/scripts/papertiger.cmd"
           cmp "$project/tools/papertiger/agent_integration.md" \
               "$bundle/agent_integration.md"
           test -f "$project/.agents/skills/papertiger/SKILL.md"

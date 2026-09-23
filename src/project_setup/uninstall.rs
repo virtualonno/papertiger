@@ -1,6 +1,5 @@
 //! Receipt-bound removal of project integration surfaces.
 
-use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -8,11 +7,11 @@ use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 
 use super::filesystem::validate_destination;
-use super::receipt::{InstallReceipt, load_install_receipt, managed_text_sha256};
+use super::receipt::{InstallReceipt, load_install_receipt};
 use super::runtime_receipt::{
     build_runtime_install_receipt, runtime_receipt_bytes, runtime_receipt_relative_path,
 };
-use super::{INSTALL_RECEIPT_PATH, normalized_path};
+use super::{AGENT_INTEGRATION_PATH, INSTALL_RECEIPT_PATH, normalized_path};
 
 #[derive(Debug)]
 pub(crate) struct UninstallProjectRequest<'a> {
@@ -65,13 +64,14 @@ struct RemovalTarget {
 
 #[derive(Debug)]
 enum ExpectedContent {
-    CanonicalText(String),
+    /// Release-owned text named by the receipt; any regular file is removed.
+    ReleaseText,
+    /// The host binary and its receipt must match the external release exactly.
     ExactBytes(Vec<u8>),
-    Receipt(Vec<u8>),
 }
 
-/// Remove only files whose ownership and current content are proven by the
-/// project-install receipt and the matching external release binary.
+/// Remove the release-owned files named by the project-install receipt, plus
+/// the host binary and its receipt when they match the external release.
 pub(crate) fn uninstall_project(
     request: UninstallProjectRequest<'_>,
 ) -> Result<UninstallProjectResult> {
@@ -114,43 +114,29 @@ pub(crate) fn uninstall_project(
         &runtime_relative,
     ))?);
 
-    let receipt_bytes = fs::read(&receipt_path)
-        .with_context(|| format!("read project-install receipt {}", receipt_path.display()))?;
-    let mut targets = Vec::with_capacity(receipt.managed_files.len() + 3);
-    let mut seen = HashSet::new();
-    for file in &receipt.managed_files {
-        if !seen.insert(file.path.clone()) {
-            return Err(anyhow!(
-                "project-install receipt repeats managed path {}; nothing was removed",
-                file.path
-            ));
-        }
-        targets.push(RemovalTarget {
-            relative_path: file.path.clone(),
-            expected: ExpectedContent::CanonicalText(file.sha256.clone()),
-        });
-    }
-    if !seen.insert(runtime_relative.clone()) {
-        return Err(anyhow!(
-            "project-install receipt incorrectly records runtime path {runtime_relative} as text; nothing was removed"
-        ));
-    }
+    let mut targets = std::iter::once(AGENT_INTEGRATION_PATH)
+        .chain(
+            receipt
+                .skill_targets
+                .iter()
+                .map(|target| target.managed_path()),
+        )
+        .map(|path| RemovalTarget {
+            relative_path: path.to_owned(),
+            expected: ExpectedContent::ReleaseText,
+        })
+        .collect::<Vec<_>>();
     targets.push(RemovalTarget {
         relative_path: runtime_relative,
         expected: ExpectedContent::ExactBytes(source_bytes),
     });
-    if !seen.insert(runtime_receipt_relative.clone()) {
-        return Err(anyhow!(
-            "project-install receipt incorrectly records runtime receipt path {runtime_receipt_relative} as text; nothing was removed"
-        ));
-    }
     targets.push(RemovalTarget {
         relative_path: runtime_receipt_relative,
-        expected: ExpectedContent::Receipt(expected_runtime_receipt_bytes),
+        expected: ExpectedContent::ExactBytes(expected_runtime_receipt_bytes),
     });
     targets.push(RemovalTarget {
         relative_path: INSTALL_RECEIPT_PATH.to_owned(),
-        expected: ExpectedContent::Receipt(receipt_bytes),
+        expected: ExpectedContent::ReleaseText,
     });
 
     let mut actions = Vec::with_capacity(targets.len());
@@ -178,7 +164,7 @@ pub(crate) fn uninstall_project(
             .collect::<Vec<_>>()
             .join(", ");
         return Err(anyhow!(
-            "uninstall-project refuses modified or non-regular receipt-owned files: {paths}. Restore the receipt-owned content with `papertiger setup-project <project-root>`, or preserve and remove those paths manually; nothing was removed"
+            "uninstall-project refuses a host binary or runtime-install receipt that differs from this release, or a non-regular file: {paths}. Restore them with this release's `papertiger setup-project <project-root>`, or preserve and remove those paths manually; nothing was removed"
         ));
     }
 
@@ -205,7 +191,7 @@ pub(crate) fn uninstall_project(
     let retained = retained_surfaces(&receipt);
     let next_actions = if blocked {
         vec![
-            "No files will be removed. Review every modified_refusal path; preserve repository-owned content or restore the receipt-owned release content before retrying."
+            "No files will be removed. Review every modified_refusal path; restore it with this release's setup-project, or preserve and remove it manually, before retrying."
                 .to_owned(),
         ]
     } else if request.dry_run {
@@ -298,18 +284,16 @@ fn inspect_target(path: &Path, expected: &ExpectedContent) -> Result<UninstallAc
         }
         Ok(_) => {}
     }
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    let matches = match expected {
-        ExpectedContent::CanonicalText(sha256) => managed_text_sha256(&bytes) == *sha256,
-        ExpectedContent::ExactBytes(expected) | ExpectedContent::Receipt(expected) => {
-            bytes == *expected
-        }
+    let ExpectedContent::ExactBytes(expected) = expected else {
+        return Ok(UninstallActionKind::Remove);
     };
-    Ok(if matches {
-        UninstallActionKind::Remove
-    } else {
-        UninstallActionKind::ModifiedRefusal
-    })
+    Ok(
+        if fs::read(path).with_context(|| format!("read {}", path.display()))? == *expected {
+            UninstallActionKind::Remove
+        } else {
+            UninstallActionKind::ModifiedRefusal
+        },
+    )
 }
 
 fn retained_surfaces(receipt: &InstallReceipt) -> Vec<String> {
@@ -351,7 +335,6 @@ mod tests {
             project_root: project,
             source_binary: Some(binary),
             dry_run: false,
-            replace_managed: false,
             authority_path: None,
             skill_target: Some(target),
         })
@@ -443,21 +426,21 @@ mod tests {
     }
 
     #[test]
-    fn modified_text_blocks_all_removal() {
+    fn modified_release_text_is_removed_with_the_integration() {
         let (project, binary) = fixture("modified-text");
         install(&project, &binary, SkillTargetRequest::Agents);
-        let contract = project.join("tools/papertiger/agent_integration.md");
+        let contract = project.join(AGENT_INTEGRATION_PATH);
         fs::write(&contract, "repository edit\n").unwrap();
 
         let preview = uninstall_project(request(&project, &binary, true)).unwrap();
-        assert_eq!(preview.operation, UninstallOperation::Blocked);
+        assert_eq!(preview.operation, UninstallOperation::Remove);
         assert!(preview.actions.iter().any(|action| {
-            action.path == "tools/papertiger/agent_integration.md"
-                && action.action == UninstallActionKind::ModifiedRefusal
+            action.path == AGENT_INTEGRATION_PATH && action.action == UninstallActionKind::Remove
         }));
-        assert!(uninstall_project(request(&project, &binary, false)).is_err());
-        assert!(project.join(INSTALL_RECEIPT_PATH).is_file());
-        assert!(project.join(".agents/skills/papertiger/SKILL.md").is_file());
+        uninstall_project(request(&project, &binary, false)).unwrap();
+        assert!(!contract.exists());
+        assert!(!project.join(".agents/skills/papertiger/SKILL.md").exists());
+        assert!(!project.join(INSTALL_RECEIPT_PATH).exists());
         cleanup(&project);
     }
 

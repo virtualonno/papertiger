@@ -21,7 +21,7 @@ struct Cli {
     /// Planning database path (default: PAPERTIGER_DB, project receipt, or installed personal store)
     #[arg(long, global = true)]
     db: Option<String>,
-    /// Receipt-bound project root that selects the authority; evidence verify also resolves file: locators beneath it
+    /// Project root whose receipt, release bundle, or existing state/papertiger.sqlite selects the authority; evidence verify also resolves file: locators beneath it
     #[arg(long = "project-root", global = true, value_name = "DIR")]
     authority_project_root: Option<std::path::PathBuf>,
     /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator')
@@ -50,16 +50,13 @@ enum Cmd {
     /// Print the bundled JSON Schema for local planner reads, recovery, and mutation receipts; never opens authority
     Schema,
     /// Install a project-local native binary, receipt, ignore policy, and agent contract
-    #[command(after_help = "JSON schema: papertiger.project_install_result.v6")]
+    #[command(after_help = "JSON schema: papertiger.project_install_result.v7")]
     SetupProject {
         /// Existing consuming project directory
         project_root: std::path::PathBuf,
         /// Report the complete action plan without writing
         #[arg(long)]
         dry_run: bool,
-        /// Replace divergent release-managed files after review
-        #[arg(long)]
-        replace_managed: bool,
         /// Project-relative canonical authority path (preserved by later upgrades)
         #[arg(long, value_name = "PATH")]
         authority_path: Option<std::path::PathBuf>,
@@ -67,7 +64,7 @@ enum Cmd {
         #[arg(long, value_enum, value_name = "auto|agents|claude|both|none")]
         skill_target: Option<project_setup::SkillTargetRequest>,
     },
-    /// Remove only receipt-owned project integration files; preserves authority and repository policy
+    /// Remove the receipt-named project integration files; preserves authority and repository policy
     UninstallProject {
         /// Existing consuming project directory
         project_root: std::path::PathBuf,
@@ -1107,11 +1104,7 @@ fn cli_main() -> Result<()> {
 
 fn run(cli: Cli) -> Result<()> {
     match &cli.cmd {
-        Cmd::Personal(user_setup::Command::Setup {
-            home,
-            dry_run,
-            replace_managed,
-        }) => {
+        Cmd::Personal(user_setup::Command::Setup { home, dry_run }) => {
             if cli.db.is_some()
                 || cli.authority_project_root.is_some()
                 || cli.actor.is_some()
@@ -1125,12 +1118,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             println!(
                 "{}",
-                serde_json::to_string_pretty(&user_setup::run(
-                    home.as_deref(),
-                    *dry_run,
-                    *replace_managed,
-                    false
-                )?)?
+                serde_json::to_string_pretty(&user_setup::run(home.as_deref(), *dry_run, false)?)?
             );
             return Ok(());
         }
@@ -1148,12 +1136,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             println!(
                 "{}",
-                serde_json::to_string_pretty(&user_setup::run(
-                    home.as_deref(),
-                    *dry_run,
-                    false,
-                    true
-                )?)?
+                serde_json::to_string_pretty(&user_setup::run(home.as_deref(), *dry_run, true)?)?
             );
             return Ok(());
         }
@@ -1238,7 +1221,6 @@ fn run_planner(cli: Cli) -> Result<()> {
     if let Cmd::SetupProject {
         project_root,
         dry_run,
-        replace_managed,
         authority_path,
         skill_target,
     } = &cli.cmd
@@ -1262,7 +1244,6 @@ fn run_planner(cli: Cli) -> Result<()> {
             project_root,
             source_binary: None,
             dry_run: *dry_run,
-            replace_managed: *replace_managed,
             authority_path: authority_path.as_deref(),
             skill_target: *skill_target,
         })?;
@@ -1344,7 +1325,7 @@ fn run_planner(cli: Cli) -> Result<()> {
     );
     if project_root.is_some() && db_override.is_some() && !evidence_verify {
         bail!(
-            "ordinary planner commands do not accept --project-root together with --db or PAPERTIGER_DB; remove the database override so the project-install receipt selects one canonical authority. `evidence verify` alone retains this combination so an explicitly selected database can verify file: locators beneath a supplied project root"
+            "ordinary planner commands do not accept --project-root together with --db or PAPERTIGER_DB; remove the database override so --project-root selects one canonical authority. `evidence verify` alone retains this combination so an explicitly selected database can verify file: locators beneath a supplied project root"
         );
     }
     let db_path = match (db_override, project_root.as_deref()) {

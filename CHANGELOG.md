@@ -6,6 +6,43 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Added
+
+- `--project-root <root>` selects an existing `<root>/state/papertiger.sqlite`
+  when the root has neither a project-install receipt nor a release bundle, so
+  a personal installation can reach a project's planning history without a
+  committed Papertiger integration. It still refuses when that file is absent,
+  and discovery without `--project-root` still uses only receipts and bundles.
+
+### Changed
+
+- Installed skills and the project reference are release files:
+  `setup-project` and `setup-user` overwrite them with the release version, and
+  `uninstall-project`/`uninstall-user` remove them, whether or not they were
+  edited. Keep project-specific guidance in `AGENTS.md` or `CLAUDE.md`, which
+  setup never touches. Binaries are still identity-checked: the personal
+  runtime refuses to run, and uninstall refuses to remove, a binary that
+  differs from its receipt.
+- Project receipts are `papertiger.project_install.v3` and personal receipts
+  `papertiger.user_install.v2`; neither records file hashes. The next
+  `setup-project` or `setup-user` rewrites a v2 project or v1 personal receipt.
+  An older receipt is refused: move it aside and rerun setup to reinstall.
+- `setup-project` reports `papertiger.project_install_result.v7` and
+  `setup-user` reports `papertiger.user_setup.v2`; update scripts that check
+  these schemas.
+- Mise refuses an unrecognized schema or protocol id by naming the id it
+  expects. `papertiger_mise::schema_ids` is no longer public.
+- Mise command messages consistently say "paired execution" (for example
+  `paired recover` on an unknown id), and refusals raised by the authority's
+  own integrity checks no longer end with a raw SQLite error code.
+
+### Removed
+
+- `--replace-managed` on `setup-project` and `setup-user`.
+- Cleanup of files from pre-receipt project installations and release
+  bundles with a `papertiger.release_manifest.v1` manifest; reinstall such a
+  project with `setup-project` from this release.
+
 ## [0.18.0] - 2026-09-23
 
 This release renames planner storage, commands, flags and JSON identifiers

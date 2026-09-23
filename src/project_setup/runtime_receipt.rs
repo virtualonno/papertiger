@@ -71,40 +71,25 @@ pub(super) fn runtime_receipt_bytes(receipt: &RuntimeInstallReceipt) -> Result<V
     Ok(bytes)
 }
 
-pub(super) fn preflight_runtime_receipt(
-    path: &Path,
-    desired: &[u8],
-    current_contract_owns_path: bool,
-    ownership_failure: Option<&str>,
-    dry_run: bool,
-    replace_managed: bool,
-) -> Result<(SetupActionKind, bool)> {
+/// The runtime receipt is release-owned host state: setup-project always
+/// rewrites it to describe the binary it installs.
+pub(super) fn preflight_runtime_receipt(path: &Path, desired: &[u8]) -> Result<SetupActionKind> {
     if !path.exists() {
-        return Ok((SetupActionKind::Create, false));
+        return Ok(SetupActionKind::Create);
     }
     if !path.is_file() {
         return Err(anyhow!(
-            "runtime-install receipt is not a file: {}",
+            "runtime-install receipt is not a file: {}; move it aside, then rerun `papertiger setup-project <project-root>`",
             path.display()
         ));
     }
     let existing = fs::read(path)
         .with_context(|| format!("read runtime-install receipt {}", path.display()))?;
-    if existing == desired {
-        return Ok((SetupActionKind::Unchanged, false));
-    }
-
-    if current_contract_owns_path || replace_managed {
-        return Ok((SetupActionKind::Replace, false));
-    }
-    if dry_run {
-        return Ok((SetupActionKind::ModifiedRefusal, true));
-    }
-    Err(anyhow!(
-        "setup-project could not prove ownership of the runtime-install receipt at {}: {}. Preserve or move unexpected content, or review and rerun with --replace-managed",
-        path.display(),
-        ownership_failure.unwrap_or("no prior runtime ownership proof was available")
-    ))
+    Ok(if existing == desired {
+        SetupActionKind::Unchanged
+    } else {
+        SetupActionKind::Replace
+    })
 }
 
 pub(super) fn write_runtime_receipt(
@@ -140,13 +125,6 @@ pub(super) fn write_runtime_receipt(
 }
 
 pub(super) fn load_runtime_install_receipt(path: &Path) -> Result<RuntimeInstallReceipt> {
-    load_runtime_install_receipt_for_version(path, env!("CARGO_PKG_VERSION"))
-}
-
-fn load_runtime_install_receipt_for_version(
-    path: &Path,
-    expected_version: &str,
-) -> Result<RuntimeInstallReceipt> {
     let bytes = fs::read(path).with_context(|| {
         format!(
             "read runtime-install receipt {}; repair the host-local installation with `papertiger setup-project <project-root>`",
@@ -159,7 +137,7 @@ fn load_runtime_install_receipt_for_version(
             path.display()
         )
     })?;
-    validate_runtime_install_receipt(&receipt, expected_version)?;
+    validate_runtime_install_receipt(&receipt, env!("CARGO_PKG_VERSION"))?;
     Ok(receipt)
 }
 
@@ -167,38 +145,8 @@ pub(super) fn verify_runtime_installation(
     root: &Path,
     receipt: &RuntimeInstallReceipt,
 ) -> Result<()> {
-    verify_runtime_installation_for_version(
-        root,
-        receipt,
-        env!("CARGO_PKG_VERSION"),
-        &current_host_binary_path(),
-    )
-}
-
-pub(super) fn prove_runtime_receipt_ownership(
-    root: &Path,
-    receipt_path: &Path,
-    prior_version: &str,
-) -> Result<()> {
-    let receipt = load_runtime_install_receipt_for_version(receipt_path, prior_version)
-        .context("load the prior runtime receipt")?;
-    verify_runtime_installation_for_version(
-        root,
-        &receipt,
-        prior_version,
-        &current_host_binary_path(),
-    )
-    .context("match the prior runtime receipt to the installed native binary")
-}
-
-fn verify_runtime_installation_for_version(
-    root: &Path,
-    receipt: &RuntimeInstallReceipt,
-    expected_version: &str,
-    expected_binary_path: &Path,
-) -> Result<()> {
-    validate_runtime_install_receipt(receipt, expected_version)?;
-    let expected_binary_path = normalized_path(expected_binary_path);
+    validate_runtime_install_receipt(receipt, env!("CARGO_PKG_VERSION"))?;
+    let expected_binary_path = normalized_path(&current_host_binary_path());
     if receipt.binary.path != expected_binary_path {
         return Err(anyhow!(
             "runtime-install receipt binary path must match this host installation: expected {expected_binary_path:?}, found {:?}; repair it with `papertiger setup-project <project-root>`",

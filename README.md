@@ -77,16 +77,18 @@ shared Agent Skills location; Claude reads its generated copy. Other harnesses m
 an explicit skill-directory setting. A synced skill does not install a native
 runtime in a remote/cloud environment: install there separately.
 
-A host-local `user-install.json` binds installed files to raw byte hashes and
-the tool version. Owned upgrades need no replacement flag. Conflicting unowned or modified
-files refuse; review them before using `--replace-managed`. The installed
-runtime refuses a missing or divergent receipt/file set. Run repair or upgrade
-from an external release, not the installed executable. Installation preflights
-all managed paths, but does not promise a crash-atomic multi-file transaction;
-an interrupted install must be repaired before the runtime can run.
+A host-local `user-install.json` lists the installed files and records the tool
+version and the runtime binary's SHA-256. The skills and reference belong to the
+release: setup writes them as shipped, so keep personal guidance elsewhere. The
+installed runtime refuses a missing receipt or a binary that differs from it.
+Run repair or upgrade from an external release, not the installed executable.
+Installation preflights all managed paths, but does not promise a crash-atomic
+multi-file transaction; an interrupted install must be repaired before the
+runtime can run.
 
-`uninstall-user --dry-run` previews removal. `uninstall-user` removes only
-receipt-owned matching runtime/skill files and retains the lifecycle receipt;
+`uninstall-user --dry-run` previews removal. `uninstall-user` removes the
+receipt-listed skill and reference files, and the runtime when it matches the
+receipt, then retains the lifecycle receipt;
 it never removes project installations or unrelated skills. Do not copy personal
 receipts between machines or move their home: install for the new home instead.
 
@@ -263,42 +265,23 @@ papertiger setup-project /path/to/project \
 
 Setup installs the native planner binary, the harness-neutral agent contract,
 and only the selected short skill envelope: `.agents/skills` for the open Agent
-Skills convention, `.claude/skills` for Claude, both, or neither. The tracked
-receipt binds the release, authority path, resolved skill targets, and hashes
-the managed text: the canonical contract and selected skill envelopes. It
-deliberately omits platform-specific binary bytes so clones stay portable.
-Instead, the ignored sibling
-`tools/papertiger/bin/papertiger[.exe].runtime-install.json` records the exact
-installed path, byte count, and SHA-256. `setup-project --dry-run --json`
+Skills convention, `.claude/skills` for Claude, both, or neither. These files
+belong to the release: setup writes them as shipped on every install, repair,
+or upgrade, and a deselected skill target's file is removed. Keep
+project-specific guidance outside them. The tracked receipt records the
+release, authority path, and resolved skill targets. It omits
+platform-specific binary bytes so clones stay portable. Instead, the ignored
+sibling `tools/papertiger/bin/papertiger[.exe].runtime-install.json` records the
+exact installed path, byte count, and SHA-256. `setup-project --dry-run --json`
 exposes that identity in `runtime_install` of its
-`papertiger.project_install_result.v6` result without an ad hoc hash command.
-Setup never edits or owns `AGENTS.md` or `CLAUDE.md`. The host receipt is written atomically
-as the final installation commit marker.
-Ordinary receipt discovery refuses a missing, malformed, or mismatched host
-receipt with the repair command. This identity is an observable local fact,
-not a claim that separate platform builds reproduce identical bytes. The
-tracked receipt itself and additive `.gitignore` policy also sit outside the
-text hash list. A normal upgrade automatically replaces only receipt-matching
-prior managed text and repairs missing files; modified managed text refuses
-with a corrective action, and receipt-retired paths are removed only when prior
-ownership is hash-proven.
-For a host receipt that must change, a current tracked receipt plus a valid
-prior runtime receipt that exactly matches the installed native binary proves
-ownership even when the release version or integration contract changes. A
-non-identical existing host receipt whose ownership is malformed, mismatched,
-legacy, or otherwise unproved is reported in the dry-run and requires reviewed
-`--replace-managed`; a missing host receipt is repaired without claiming an
-existing file.
-An older release also refuses to downgrade a newer receipt, even with
-`--replace-managed`; rerun setup with the recorded release or a newer one.
-A pre-receipt vendor manifest at `tools/papertiger/README.md` is accepted as a
-predecessor receipt only when its recorded binary, agent-contract, and Mise
-contract SHA-256 values match the files on disk. Setup can then replace the
-owned contract and retire that manifest plus the old direct binary and Mise
-copy without a replacement flag. A changed bundle, an unrecognized README, or
-a full source tree refuses; `--replace-managed` cannot authorize guessed
-retirement. The flag remains available for explicit recovery of a modified
-current managed path.
+`papertiger.project_install_result.v7` result without an ad hoc hash command.
+Setup never edits or owns `AGENTS.md` or `CLAUDE.md`. The host receipt is
+written atomically as the final installation commit marker. Ordinary receipt
+discovery refuses a missing, malformed, or mismatched host receipt with the
+repair command, which is `setup-project` from a verified release. This
+identity is an observable local fact, not a claim that separate platform
+builds reproduce identical bytes. A release refuses to downgrade a newer
+receipt; rerun setup with the recorded release or a newer one.
 
 Setup appends required `.gitignore` entries but does not initialize a database
 or edit the project's agent guidance. It installs no hooks, MCP server, global
@@ -319,11 +302,11 @@ papertiger uninstall-project /path/to/project --dry-run --json
 papertiger uninstall-project /path/to/project --json
 ```
 
-Uninstall requires a matching-version receipt and removes only receipt-owned
-contract and skill files, the native binary when its bytes equal the external
+Uninstall requires a matching-version receipt and removes the contract, the
+receipt's skill files, the native binary when its bytes equal the external
 release binary, its exact host receipt, and finally the tracked receipt. It
-refuses modified files, a differing binary or host receipt, and project-local
-self-deletion before writing. It deliberately retains the planner authority
+refuses a differing binary or host receipt and project-local self-deletion
+before writing. It deliberately retains the planner authority
 and SQLite sidecars, Mise authority and evidence store, repository guidance,
 unrelated skills, and the complete `.gitignore` policy. Removing or archiving
 retained authority is a separate data-lifecycle decision.
@@ -346,7 +329,7 @@ The binary walks upward from the current directory to find the nearest tracked
 `tools/papertiger/project-install.json`, verifies its version and the matching
 host-local runtime receipt and binary identity, then resolves its authority
 against that project root. This works from nested directories without a
-launcher, shell transition, or process bridge.
+launcher or shell wrapper.
 For an intentional command issued from a different repository, select the
 canonical installed project explicitly:
 
@@ -354,8 +337,11 @@ canonical installed project explicitly:
 papertiger --project-root /path/to/canonical-project status
 ```
 
-`--project-root` requires the exact root's receipt and version; it never walks
-upward into another project or falls back to a new default database. Choose
+`--project-root` selects the exact root's receipt-bound authority (checking
+its version); without a receipt, the release bundle's or an existing
+`state/papertiger.sqlite`. It never walks upward into another project. Without
+a receipt or bundle it selects only a database that already exists; `init`
+creates only the receipt- or bundle-selected authority. Choose
 that root by the initiative or outcome that owns the work, not by every
 repository containing edited files. Keep a cross-repository outcome in one
 authority and record external commits there with stable `--repo` labels.

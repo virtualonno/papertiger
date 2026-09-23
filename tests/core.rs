@@ -2560,7 +2560,7 @@ fn legacy_mise_projection_id_is_readable_history_but_not_recordable() {
             .unwrap_err()
             .to_string();
     assert!(
-        error.contains("retired id papertiger.mise-planner-projection.v1")
+        error.contains("papertiger.mise-planner-projection.v1 is readable but not recordable")
             && error.contains("papertiger mise record"),
         "{error}"
     );

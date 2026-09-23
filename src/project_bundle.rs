@@ -20,9 +20,6 @@ pub(crate) fn verify(root: &Path) -> Result<bool> {
     let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
     let header: serde_json::Value = serde_json::from_slice(&bytes)
         .context("invalid bundle manifest; restore tools/papertiger from a verified release")?;
-    if header["schema"] == "papertiger.release_manifest.v1" {
-        return Ok(false);
-    }
     let manifest: Manifest = serde_json::from_value(header)
         .context("incomplete bundle manifest; restore tools/papertiger from a verified release")?;
     let binary = format!("bin/papertiger{}", std::env::consts::EXE_SUFFIX);

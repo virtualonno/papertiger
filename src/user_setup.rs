@@ -1,5 +1,5 @@
 //! Personal installation owns tool files, never consuming projects or harness settings.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -24,11 +24,8 @@ pub(crate) enum Command {
         /// Report the complete action plan without writing
         #[arg(long)]
         dry_run: bool,
-        /// Replace divergent receipt-managed files after review
-        #[arg(long)]
-        replace_managed: bool,
     },
-    /// Remove receipt-owned personal skills/runtime; retain planning history
+    /// Remove the receipt-listed personal skills/runtime; retain planning history
     #[command(name = "uninstall-user")]
     Uninstall {
         /// Home directory to uninstall from (default: HOME, or USERPROFILE on Windows)
@@ -40,6 +37,11 @@ pub(crate) enum Command {
     },
 }
 
+const RECEIPT_SCHEMA: &str = "papertiger.user_install.v2";
+const PREVIOUS_RECEIPT_SCHEMA: &str = "papertiger.user_install.v1";
+
+/// Skills and the reference are release-owned and listed by path only; the
+/// runtime binary keeps its SHA-256 identity for the per-run gate.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Receipt {
@@ -47,7 +49,56 @@ struct Receipt {
     version: String,
     home: PathBuf,
     installed: bool,
+    files: BTreeSet<String>,
+    runtime_sha256: Option<String>,
+}
+
+/// A v1 receipt maps every path to a hash; setup-user rewrites it as v2.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviousReceipt {
+    schema: String,
+    version: String,
+    home: PathBuf,
+    installed: bool,
     files: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct ReceiptHeader {
+    schema: String,
+}
+
+fn parse_receipt(path: &Path, bytes: &[u8]) -> Result<Receipt> {
+    let invalid = || {
+        format!(
+            "invalid {}; restore its verified backup before setup-user",
+            path.display()
+        )
+    };
+    let header: ReceiptHeader = serde_json::from_slice(bytes).with_context(invalid)?;
+    match header.schema.as_str() {
+        RECEIPT_SCHEMA => serde_json::from_slice(bytes).with_context(invalid),
+        PREVIOUS_RECEIPT_SCHEMA => {
+            let previous: PreviousReceipt = serde_json::from_slice(bytes).with_context(invalid)?;
+            Ok(Receipt {
+                schema: previous.schema,
+                version: previous.version,
+                home: previous.home,
+                installed: previous.installed,
+                runtime_sha256: previous.files.get(&binary_path()).cloned(),
+                files: previous.files.into_keys().collect(),
+            })
+        }
+        other => bail!(
+            "unsupported personal receipt schema {other:?} at {}; move it aside and rerun setup-user from a verified external release",
+            path.display()
+        ),
+    }
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn personal_root() -> String {
@@ -129,12 +180,7 @@ fn publish(path: &Path, content: &[u8]) -> Result<()> {
     }
 }
 
-pub(crate) fn run(
-    home: Option<&Path>,
-    dry_run: bool,
-    replace: bool,
-    remove: bool,
-) -> Result<serde_json::Value> {
+pub(crate) fn run(home: Option<&Path>, dry_run: bool, remove: bool) -> Result<serde_json::Value> {
     let home = match home {
         Some(path) => path.to_path_buf(),
         None => std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
@@ -149,20 +195,16 @@ pub(crate) fn run(
     }
     let receipt_path = validate_path(&home, &format!("{}/user-install.json", personal_root()))?;
     let previous: Option<Receipt> = read_optional(&receipt_path)?
-        .map(|bytes| serde_json::from_slice(&bytes))
-        .transpose()
-        .context("invalid user-install.json; restore its verified backup before setup-user")?;
-    let schema = format!("{TOOL}.user_install.v1");
+        .map(|bytes| parse_receipt(&receipt_path, &bytes))
+        .transpose()?;
     if let Some(receipt) = &previous {
-        if receipt.schema != schema
-            || receipt.home != home
-            || (receipt.installed && receipt.files.len() != paths().len())
-            || (!receipt.installed && !receipt.files.is_empty())
-            || receipt.files.keys().any(|p| !paths().contains(p))
-            || receipt
-                .files
-                .values()
-                .any(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()))
+        let expected: BTreeSet<String> = paths().into_iter().collect();
+        if receipt.home != home
+            || (receipt.installed
+                && (receipt.files != expected
+                    || !receipt.runtime_sha256.as_deref().is_some_and(is_sha256)))
+            || (!receipt.installed
+                && (!receipt.files.is_empty() || receipt.runtime_sha256.is_some()))
         {
             bail!(
                 "personal receipt identity or paths are invalid; restore user-install.json for this home before setup-user"
@@ -225,24 +267,33 @@ pub(crate) fn run(
     for relative in paths() {
         let path = validate_path(&home, &relative)?;
         let existing = read_optional(&path)?;
-        let owned = previous.as_ref().and_then(|r| r.files.get(&relative));
-        let action = match (existing.as_ref(), wanted.get(&relative)) {
-            (Some(old), Some(new)) if old == new => "unchanged",
-            (Some(old), _) if owned.is_some_and(|hash| *hash == sha256(old)) => {
-                if remove {
-                    "remove"
-                } else {
-                    "replace"
+        let action = if remove {
+            let listed = previous
+                .as_ref()
+                .is_some_and(|receipt| receipt.files.contains(&relative));
+            match existing {
+                None => "absent",
+                Some(_) if !listed => "preserve",
+                Some(bytes)
+                    if relative == binary_path()
+                        && previous.as_ref().and_then(|r| r.runtime_sha256.as_deref())
+                            != Some(sha256(&bytes).as_str()) =>
+                {
+                    bail!(
+                        "personal runtime {} differs from its receipt; repair it with setup-user --home {:?} from a verified external release, then rerun uninstall-user",
+                        path.display(),
+                        home
+                    )
                 }
+                Some(_) => "remove",
             }
-            (Some(_), Some(_)) if replace => "replace",
-            (Some(_), _) => bail!(
-                "{} is unowned or modified; review it and use setup-user --home {:?} --replace-managed to replace selected files, or move it aside before uninstall-user",
-                path.display(),
-                home
-            ),
-            (None, Some(_)) => "create",
-            (None, None) => "absent",
+        } else {
+            match (existing.as_ref(), wanted.get(&relative)) {
+                (Some(old), Some(new)) if old == new => "unchanged",
+                (Some(_), Some(_)) => "replace",
+                (None, Some(_)) => "create",
+                (_, None) => unreachable!("setup-user wants every personal path"),
+            }
         };
         actions.push(serde_json::json!({"path":path,"action":action}));
     }
@@ -283,11 +334,12 @@ pub(crate) fn run(
             provision_authority(&home)?;
         }
         let receipt = Receipt {
-            schema,
+            schema: RECEIPT_SCHEMA.into(),
             version: env!("CARGO_PKG_VERSION").into(),
             home: home.clone(),
             installed: !remove,
-            files: wanted.iter().map(|(p, b)| (p.clone(), sha256(b))).collect(),
+            files: wanted.keys().cloned().collect(),
+            runtime_sha256: wanted.get(&binary_path()).map(|bytes| sha256(bytes)),
         };
         let bytes = serde_json::to_vec_pretty(&receipt)?;
         if read_optional(&receipt_path)?.as_deref() != Some(bytes.as_slice()) {
@@ -307,7 +359,7 @@ pub(crate) fn run(
         }
     }
     Ok(
-        serde_json::json!({"schema":format!("{TOOL}.user_setup.v1"),"home":home,"dry_run":dry_run,"operation":if remove {"remove"} else {"install"},"actions":actions,"authority":{"path":authority_path,"action":authority_action,"plan":"personal","preserved_on_uninstall":true},
+        serde_json::json!({"schema":format!("{TOOL}.user_setup.v2"),"home":home,"dry_run":dry_run,"operation":if remove {"remove"} else {"install"},"actions":actions,"authority":{"path":authority_path,"action":authority_action,"plan":"personal","preserved_on_uninstall":true},
         "next_actions": ["After installation, start a fresh agent session to refresh skill discovery. No agent-side copying or AGENTS.md edits are needed. Selection remains model-dependent.", "Personal data and the lifecycle receipt survive uninstall-user. Project installations and project guidance are untouched."]}),
     )
 }
@@ -460,28 +512,22 @@ pub(crate) fn verify_runtime() -> Result<()> {
     )?;
     let expected_root = receipt.home.join(personal_root());
     if !receipt.installed
-        || receipt.schema != format!("{TOOL}.user_install.v1")
+        || receipt.schema != RECEIPT_SCHEMA
         || receipt.version != env!("CARGO_PKG_VERSION")
         || fs::canonicalize(expected_root)? != fs::canonicalize(&root)?
-        || receipt.files.len() != paths().len()
-        || receipt.files.keys().any(|p| !paths().contains(p))
     {
         bail!(
             "personal installation identity differs; run {TOOL} setup-user from a verified external release"
         );
     }
-    for (relative, hash) in &receipt.files {
-        let file = validate_path(&receipt.home, relative)?;
-        if sha256(
-            &fs::read(&file)
-                .with_context(|| format!("missing {}; repair with setup-user", file.display()))?,
-        ) != *hash
-        {
-            bail!(
-                "personal file {} differs from its receipt; review it, then repair with setup-user --replace-managed",
-                file.display()
-            );
-        }
+    let runtime = validate_path(&receipt.home, &binary_path())?;
+    let bytes = fs::read(&runtime)
+        .with_context(|| format!("missing {}; repair with setup-user", runtime.display()))?;
+    if receipt.runtime_sha256.as_deref() != Some(sha256(&bytes).as_str()) {
+        bail!(
+            "personal runtime {} differs from its receipt; repair it with setup-user from a verified external release",
+            runtime.display()
+        );
     }
     Ok(())
 }

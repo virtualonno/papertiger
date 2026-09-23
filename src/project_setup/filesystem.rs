@@ -1,152 +1,12 @@
 //! Fail-closed destination preflight and staged filesystem application.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
 use std::fs;
 use std::path::{Component, Path};
 
 use anyhow::{Context, Result, anyhow};
 
-use super::receipt::managed_text_sha256;
-use super::{ManagedFile, SetupActionKind};
-use super::{PRE_RECEIPT_BINARY_PATH, PRE_RECEIPT_MANIFEST_PATH, PRE_RECEIPT_MISE_PATH};
-
-#[derive(Debug)]
-pub(super) enum PreReceiptInstall {
-    Unrecognized,
-    Verified {
-        owned_hashes: BTreeMap<String, String>,
-        retired_paths: Vec<String>,
-    },
-}
-
-pub(super) fn preflight_retired_file(
-    destination: &Path,
-    prior_sha256: &str,
-    dry_run: bool,
-) -> Result<Option<SetupActionKind>> {
-    if !destination.exists() {
-        return Ok(None);
-    }
-    if !destination.is_file() {
-        return Err(anyhow!(
-            "retired setup-project destination is not a file: {}",
-            destination.display()
-        ));
-    }
-    let existing = fs::read(destination)
-        .with_context(|| format!("read retired managed file {}", destination.display()))?;
-    if managed_text_sha256(&existing) == prior_sha256 {
-        return Ok(Some(SetupActionKind::RemoveRetired));
-    }
-    if dry_run {
-        return Ok(Some(SetupActionKind::ModifiedRefusal));
-    }
-    Err(anyhow!(
-        "setup-project refuses modified retired managed file {}; move or delete it deliberately, then rerun setup-project",
-        destination.display()
-    ))
-}
-
-pub(super) fn inspect_pre_receipt_install(root: &Path) -> Result<Option<PreReceiptInstall>> {
-    let manifest = root.join(PRE_RECEIPT_MANIFEST_PATH);
-    if !manifest.exists() {
-        return Ok(None);
-    }
-    if !manifest.is_file() {
-        return Err(anyhow!(
-            "pre-receipt Papertiger install manifest is not a file: {}",
-            manifest.display()
-        ));
-    }
-    let bytes = fs::read(&manifest)
-        .with_context(|| format!("read pre-receipt install manifest {}", manifest.display()))?;
-    let text = match std::str::from_utf8(&bytes) {
-        Ok(text)
-            if text.starts_with("# Vendored Papertiger")
-                && text.contains(
-                    "This directory vendors the project-generic Papertiger planning client",
-                )
-                && text.contains("Canonical planning database:")
-                && text.contains("tools/papertiger/papertiger.exe") =>
-        {
-            text
-        }
-        _ => return Ok(Some(PreReceiptInstall::Unrecognized)),
-    };
-
-    let entries = [
-        (
-            "Binary SHA-256",
-            PRE_RECEIPT_BINARY_PATH,
-            "pre-receipt Papertiger binary",
-            false,
-        ),
-        (
-            "Agent contract SHA-256",
-            "tools/papertiger/agent_integration.md",
-            "pre-receipt agent contract",
-            true,
-        ),
-        (
-            "Mise contract SHA-256",
-            PRE_RECEIPT_MISE_PATH,
-            "pre-receipt Mise contract",
-            true,
-        ),
-    ];
-    let mut owned_hashes = BTreeMap::new();
-    for (label, relative, description, canonical_text) in entries {
-        let recorded = manifest_digest(text, label)
-            .with_context(|| format!("validate {} in {}", label, manifest.display()))?;
-        let path = root.join(relative);
-        if !path.is_file() {
-            return Err(anyhow!(
-                "{} records {} but {} is missing; restore the recorded pre-receipt install or move {} and its old install files aside deliberately, then rerun setup-project",
-                manifest.display(),
-                description,
-                path.display(),
-                manifest.display()
-            ));
-        }
-        let bytes =
-            fs::read(&path).with_context(|| format!("read {} {}", description, path.display()))?;
-        let actual = if canonical_text {
-            managed_text_sha256(&bytes)
-        } else {
-            papertiger::sha256(&bytes)
-        };
-        if actual != recorded {
-            return Err(anyhow!(
-                "{} records {} SHA-256 {} but {} has {}; restore the recorded file or move the pre-receipt install aside deliberately, then rerun setup-project",
-                manifest.display(),
-                description,
-                recorded,
-                path.display(),
-                actual
-            ));
-        }
-        owned_hashes.insert(relative.to_owned(), recorded);
-    }
-
-    Ok(Some(PreReceiptInstall::Verified {
-        owned_hashes,
-        retired_paths: vec![
-            PRE_RECEIPT_MANIFEST_PATH.to_owned(),
-            PRE_RECEIPT_BINARY_PATH.to_owned(),
-            PRE_RECEIPT_MISE_PATH.to_owned(),
-        ],
-    }))
-}
-
-fn manifest_digest(text: &str, label: &str) -> Result<String> {
-    let prefix = format!("- {label}: `");
-    let value = text
-        .lines()
-        .find_map(|line| line.strip_prefix(&prefix)?.strip_suffix('`'))
-        .ok_or_else(|| anyhow!("missing exact {label} entry"))?;
-    papertiger::validate_sha256(value, label)?;
-    Ok(value.to_owned())
-}
+use super::{ManagedContentKind, ManagedFile, SetupActionKind};
 
 pub(super) fn validate_destination(root: &Path, relative: &Path) -> Result<()> {
     let mut current = root.to_path_buf();
@@ -185,53 +45,77 @@ pub(super) fn validate_destination(root: &Path, relative: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn preflight_managed_file(
-    destination: &Path,
-    file: &ManagedFile,
-    prior_sha256: Option<&str>,
-    install_owned_runtime: bool,
-    dry_run: bool,
-    replace_managed: bool,
-) -> Result<(SetupActionKind, bool)> {
+/// Read an existing destination that setup-project may create or replace.
+fn read_existing_file(destination: &Path) -> Result<Option<Vec<u8>>> {
     if !destination.exists() {
-        return Ok((SetupActionKind::Create, false));
+        return Ok(None);
     }
     if !destination.is_file() {
         return Err(anyhow!(
-            "setup-project destination is not a file: {}",
+            "setup-project destination is not a file: {}; move it aside, then rerun setup-project",
             destination.display()
         ));
     }
-    let existing = fs::read(destination)
-        .with_context(|| format!("read managed file {}", destination.display()))?;
-    let content_matches = if file.content_kind.is_receipt_text() {
-        managed_text_sha256(&existing) == managed_text_sha256(&file.content)
-    } else {
-        existing == file.content
+    fs::read(destination)
+        .map(Some)
+        .with_context(|| format!("read managed file {}", destination.display()))
+}
+
+/// Release-owned text is written unconditionally; the comparison only decides
+/// whether the write is a create, replace, or no-op.
+pub(super) fn preflight_managed_file(
+    destination: &Path,
+    file: &ManagedFile,
+) -> Result<SetupActionKind> {
+    let Some(existing) = read_existing_file(destination)? else {
+        return Ok(SetupActionKind::Create);
     };
-    if !content_matches {
-        let existing_sha256 = if file.content_kind.is_receipt_text() {
-            managed_text_sha256(&existing)
-        } else {
-            papertiger::sha256(&existing)
-        };
-        let prior_content_owned = prior_sha256 == Some(existing_sha256.as_str());
-        if prior_content_owned || install_owned_runtime || replace_managed {
-            return Ok((SetupActionKind::Replace, false));
-        }
-        if dry_run {
-            return Ok((SetupActionKind::ModifiedRefusal, true));
-        }
-        return Err(anyhow!(
-            "setup-project found modified or unowned managed file {}; preserve or move repository-owned content, or review and rerun with --replace-managed",
-            destination.display()
-        ));
+    if !content_matches(file.content_kind, &existing, &file.content) {
+        return Ok(SetupActionKind::Replace);
     }
     if file.executable && executable_bit_missing(destination)? {
-        Ok((SetupActionKind::MakeExecutable, false))
+        Ok(SetupActionKind::MakeExecutable)
     } else {
-        Ok((SetupActionKind::Unchanged, false))
+        Ok(SetupActionKind::Unchanged)
     }
+}
+
+pub(super) fn preflight_text_file(destination: &Path, expected: &[u8]) -> Result<SetupActionKind> {
+    Ok(match read_existing_file(destination)? {
+        None => SetupActionKind::Create,
+        Some(existing) if text_matches(&existing, expected) => SetupActionKind::Unchanged,
+        Some(_) => SetupActionKind::Replace,
+    })
+}
+
+pub(super) fn content_matches(kind: ManagedContentKind, existing: &[u8], expected: &[u8]) -> bool {
+    match kind {
+        ManagedContentKind::Text => text_matches(existing, expected),
+        ManagedContentKind::RuntimeBinary => existing == expected,
+    }
+}
+
+/// A CRLF checkout of release text is the same content as its LF source.
+pub(super) fn text_matches(existing: &[u8], expected: &[u8]) -> bool {
+    canonical_text(existing) == canonical_text(expected)
+}
+
+pub(super) fn canonical_text(content: &[u8]) -> Cow<'_, [u8]> {
+    if !content.windows(2).any(|pair| pair == b"\r\n") {
+        return Cow::Borrowed(content);
+    }
+    let mut canonical = Vec::with_capacity(content.len());
+    let mut index = 0;
+    while index < content.len() {
+        if content.get(index..index + 2) == Some(b"\r\n") {
+            canonical.push(b'\n');
+            index += 2;
+        } else {
+            canonical.push(content[index]);
+            index += 1;
+        }
+    }
+    Cow::Owned(canonical)
 }
 
 pub(super) fn write_new_file(path: &Path, content: &[u8]) -> Result<()> {

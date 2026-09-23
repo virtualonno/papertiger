@@ -59,9 +59,12 @@ upward from the current directory to find the nearest
 running binary, verifies the host-local runtime receipt and installed binary
 identity, and resolves its recorded authority against that project root.
 When an intentional command runs from another repository, pass the global
-`--project-root <canonical-project-root>` option. It requires a receipt at that
-exact root and selects the receipt-bound authority without changing the
-process working directory. `PAPERTIGER_DB` or an explicit global `--db`
+`--project-root <canonical-project-root>` option. At that exact root it selects
+the receipt-bound authority; without a receipt, the release bundle's or an
+existing `state/papertiger.sqlite`. It never walks upward or changes the process
+working directory. Without a receipt or bundle it selects only a database that
+already exists; `init` creates only the receipt- or bundle-selected authority. Discovery without
+`--project-root` uses only receipts and release bundles. `PAPERTIGER_DB` or an explicit global `--db`
 deliberately overrides receipt discovery. The installed personal executable falls back to its private
 store only when no project receipt is discovered. It needs no `--db` argument.
 Do not use a raw database override for ordinary
@@ -135,8 +138,8 @@ facts. Markdown carries doctrine and rationale, never duplicated live status.
 ## Start from live truth
 
 Invoke the project executable `<project-root>/tools/papertiger/bin/papertiger[.exe]`
-directly, not through `PATH`, a shell script, or Contextmink's process bridge;
-project and authority selection belong to that binary. In the examples below,
+directly, not through `PATH` or a shell wrapper; project and authority
+selection belong to that binary. In the examples below,
 `papertiger` means that executable.
 
 ```bash
@@ -409,28 +412,29 @@ migrates an authority:
   `.runtime-install.json` receipt (both ignored)
 - `tools/papertiger/agent_integration.md`
 - `tools/papertiger/project-install.json` (tracked version, authority path, and
-  managed-text hashes)
+  skill targets)
 - selected skill envelopes: `.agents/skills/papertiger/SKILL.md` and/or
   `.claude/skills/papertiger/SKILL.md`
 - additive Papertiger entries in `.gitignore`
 
-Upgrade by running the newly verified release binary, never the project-local
-one: preview with `setup-project <root> --dry-run --json`, then apply the
-command it reports. Receipt-matching upgrades and missing-file repair are
-automatic; later upgrades preserve the receipt's authority path and skill
-targets. `--replace-managed` is only for a reviewed recovery of a modified
-managed path; modified retired files and downgrades always refuse. On a first
-install, pass `--authority-path <project-relative path>` when the project does
-not use `state/papertiger.sqlite`, and `--skill-target agents|claude|both|none`
-to override detection from existing harness markers. `.gitignore` cannot untrack
-a path; if the host binary or authority is tracked, review it and use
-`git rm --cached -- <path>`. Start a fresh harness session after a skill changes.
+The binary, reference and skills belong to the release: setup writes them as
+shipped, so keep project-specific guidance elsewhere. Upgrade by running the
+newly verified release binary, never the project-local one: preview with
+`setup-project <root> --dry-run --json`, then apply the command it reports.
+Upgrades keep the receipt's authority path and skill targets, and a downgrade
+refuses. On a first install, pass `--authority-path <project-relative path>`
+when the project does not use `state/papertiger.sqlite`, and
+`--skill-target agents|claude|both|none` to override detection from existing
+harness markers. `.gitignore` cannot untrack a path; if the host binary or
+authority is tracked, review it and use `git rm --cached -- <path>`. Start a
+fresh harness session after a skill changes.
 
 `uninstall-project` is the inverse: run it from an external binary matching the
-receipt version, preview with `--dry-run`, and review all paths. It removes only
-receipt-owned content that still matches, refuses modified content, and leaves
-planner and Mise authorities, sidecars, Mise objects, repository guidance and
-the `.gitignore` policy in place; data disposal is a separate decision.
+receipt version and preview with `--dry-run`. It removes the reference, the
+receipt's skill files, and the receipt; it removes the host binary and its
+receipt only when they match that release, and refuses otherwise. Planner and
+Mise authorities, sidecars, Mise objects, repository guidance and the
+`.gitignore` policy stay in place; data disposal is a separate decision.
 
 ## Mise is an episodic external driver
 

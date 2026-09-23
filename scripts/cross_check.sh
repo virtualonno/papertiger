@@ -22,10 +22,6 @@ test "$planner_semver" = "${mise_version#papertiger-mise }"
 
 release_workflow="$root/.github/workflows/release-artifacts.yml"
 grep -Fq '"schema": "papertiger.project_uninstall.v2"' "$release_workflow"
-if grep -Fq 'papertiger.project_uninstall.v1' "$release_workflow"; then
-  echo "release workflow still asserts the retired project uninstall schema" >&2
-  exit 1
-fi
 
 bash scripts/validate_release_dispatch.sh \
   "$planner_semver" false refs/heads/codex/local-verification
@@ -127,23 +123,19 @@ mkdir -p "$project/.agents/skills/unrelated"
 printf 'unrelated skill\n' > "$project/.agents/skills/unrelated/SKILL.md"
 
 "$planner" setup-project "$project" --dry-run --json > "$fixture/setup-dry-run.json"
-grep -q '"schema": "papertiger.project_install_result.v6"' "$fixture/setup-dry-run.json"
+grep -q '"schema": "papertiger.project_install_result.v7"' "$fixture/setup-dry-run.json"
 grep -q '"agents"' "$fixture/setup-dry-run.json"
-test ! -e "$project/scripts/papertiger"
-test ! -e "$project/scripts/papertiger.cmd"
 
 "$planner" setup-project "$project" --json > "$fixture/setup.json"
 test -f "$project/tools/papertiger/bin/papertiger$exe"
 test ! -e "$project/tools/papertiger/bin/papertiger-mise$exe"
 test -f "$project/tools/papertiger/project-install.json"
-grep -Fq '"schema": "papertiger.project_install.v2"' \
+grep -Fq '"schema": "papertiger.project_install.v3"' \
     "$project/tools/papertiger/project-install.json"
 grep -Fq "\"papertiger_version\": \"$planner_semver\"" \
     "$project/tools/papertiger/project-install.json"
 grep -Fq '"authority_path": "state/papertiger.sqlite"' \
     "$project/tools/papertiger/project-install.json"
-test ! -e "$project/scripts/papertiger"
-test ! -e "$project/scripts/papertiger.cmd"
 cmp "$project/tools/papertiger/agent_integration.md" \
     "$root/agent_integration.md"
 test -f "$project/.agents/skills/papertiger/SKILL.md"
