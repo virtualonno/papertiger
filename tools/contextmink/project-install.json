@@ -1,19 +1,19 @@
 {
   "schema": "contextmink.project_install.v2",
-  "contextmink_version": "0.14.1",
+  "contextmink_version": "0.15.0",
   "skill_target": "both",
   "managed_files": [
     {
       "path": "scripts/contextmink",
-      "sha256": "00970632d75692edb004a6aa90e7e81a15d87c21d165b682e93cf3ab5b58e963"
+      "sha256": "e7c63b06cedc2dded93d779f5cc04acb04c7c200add8c65048e2eafdc11e62e9"
     },
     {
       "path": "tools/contextmink/agent_integration.md",
-      "sha256": "fdeabb4ba6a9186fc2e8371d1f43de3c7c8bfa80c28cdb77d81cf802295c0701"
+      "sha256": "9e02c3cf3ee413c9d092cffbf4fbe91245956e4406cfde3822a7f4b852724b3c"
     },
     {
       "path": ".agents/skills/contextmink/SKILL.md",
-      "sha256": "4d608c5c0f30f12d8deed3cff4f3fc19047f6dbac212ee5dd4f2d79222a47860"
+      "sha256": "6f1047a08ad2cf0ddb903bc7f496ce5f57d86a3681b9742acfd7e52b4db9cf47"
     },
     {
       "path": ".agents/skills/contextmink/agents/openai.yaml",
@@ -21,7 +21,7 @@
     },
     {
       "path": ".claude/skills/contextmink/SKILL.md",
-      "sha256": "4d608c5c0f30f12d8deed3cff4f3fc19047f6dbac212ee5dd4f2d79222a47860"
+      "sha256": "6f1047a08ad2cf0ddb903bc7f496ce5f57d86a3681b9742acfd7e52b4db9cf47"
     },
     {
       "path": ".agents/skills/contextmink-bridge/SKILL.md",

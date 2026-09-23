@@ -1,124 +1,63 @@
 # Contextmink integration reference
 
-This is the detailed, release-managed integration reference behind the
-Contextmink skill. Optional `setup-user` installs a native runtime and binds
-its absolute path in the personal skill; run it from the consuming project.
-Windows installation also supplies the bridge executable and its separate skill.
-No project files or guidance edits are required. Use `setup-project` only for
-explicit repository adoption. Optional local policy belongs in `.contextmink.toml`
-or existing project guidance; it is not a prerequisite for ordinary retrieval.
+Detail behind the Contextmink skill. Flags and defaults: `contextmink <command> --help`.
 
-## Bounded Output
+## Invocation
 
-Use contextmink when a file/text/JSON/SQLite/command-output read may produce
-more output than the transcript should carry.
+- Run the native executable directly from any shell: a personal install's bound
+  path, or `tools/contextmink/bin/contextmink[.exe]` from the project root.
+  Run from the consuming project so its `.contextmink.toml` applies.
+- PowerShell: `& <path-to-contextmink.exe> ...` (the call operator is required
+  when the path is quoted).
+- `scripts/contextmink` exists only in `setup-project` or source-vendored
+  installs; it is a Bash launcher, not a requirement.
+- Git Bash rewrites native arguments that start with `/` (JSON Pointers,
+  patterns, path fragments) into Windows paths. Contextmink refuses such
+  arguments before doing work; prefix the command with `MSYS_NO_PATHCONV=1`.
 
-- Establish the repository's intended workspace root before using repo-local
-  entrypoints. The relative command forms below assume that root; from a nested
-  working directory, use an absolute/root-resolved launcher path or return to
-  the workspace root first.
-- Personal skills name the native executable; use that binding directly. For
-  an explicit project installation, choose invocation by shell: use `scripts/contextmink ...`
-  from Bash-hosted sessions such as macOS, Linux, Git Bash, or WSL;
-  use `& tools\contextmink\bin\contextmink.exe ...` directly from Windows
-  PowerShell for contextmink commands; use
-  `& tools\contextmink\bin\contextmink-bridge.exe --script scripts/contextmink ...`
-  when a PowerShell-hosted Windows session needs the Bash launcher.
-- When the target file is unknown, start with `dirs` to orient in the tree,
-  then use `files` or `grep` for candidate discovery. This orientation is optional
-  when a subtree is already known: `dirs --depth` limits displayed levels, not
-  enumeration cost. Avoid inventorying an entire artifact store for one file.
-  Narrow file discovery
-  with repeated `--path-contains` values and `--ext` before raising display
-  limits. Prefer
-  `files --ext json` (or `--ext jsonl`)
-  (comma-separated lists work: `--ext rs,toml`) across Windows-to-Bash
-  boundaries because wildcard globs can expand before contextmink receives
-  them.
-- Once the file is known but the relevant region is not, use `outline` then
-  `slice`, not dump windows. `outline <file>` maps declaration lines with line numbers
-  (`--contains TEXT` filters rows; `--lang`, `--prefix <text>`, or
-  `--pattern <regex>` cover unrecognized extensions), then
-  `slice --range START:END` prints the region. Use `slice` when a file window
-  may be broad or needs bounded follow-up; keep direct exact small reads direct.
-  Keep its default caps (120-line window,
-  220-line ceiling); narrow an oversized read with `outline` or
-  `grep --context` instead of raising `--max-lines`.
-  Built-in outline matching is a disclosed navigation heuristic over
-  comment/string-masked text; use explicit prefix or regex matching when the
-  desired anchor is not a declaration shape.
-  A capped line window exposes `remaining_range`; use that range to retrieve
-  omitted lines without raising the ceiling. Character clipping is separate.
-- Use `grep --pattern-file <file>` for shell-fragile regex; use `grep-terms`
-  for literal tokens or phrases (AND by default; pass `--any` for OR). Load
-  phrases with `--term-file` and cap with `--limit` /
-  `--max-sample-lines`. Bound inspected content deterministically with
-  `--max-content-files` or `--max-content-bytes`. Narrow
-  either with `--glob` / `--ext`, add `-i` for
-  case-insensitive matching, and `--context N` when the surrounding lines
-  would otherwise need a follow-up `slice`.
-  `--limit` counts files, `--lines-per-file` bounds matches within each file,
-  and `--max-sample-lines` bounds all displayed matches and context. When output
-  is capped, `output_cap_arguments` identifies the exhausted display controls.
-- Use `slice --tail N` for the end of logs, `json-find`, `json-select` (with
-  `--where FIELD=VALUE` / `--where-contains FIELD=TEXT` row filters;
-  `--keys` first when the row shape is unknown), `sqlite-schema`, and
-  `sqlite --sql-file` for bounded reads instead of opening whole large
-  files, reports, or databases. JSON object keys must be unique, every
-  non-empty physical JSONL line is one value, and `--max-document-bytes`
-  bounds a materialized JSON document or one streamed JSONL record.
-  `sqlite` binds JSON/JSONL worklists as
-  named parameters (`--jsonl-param w=file.jsonl` with `json_each(:w)`) and
-  registers `hexint(x)` for joining `0x...` hex strings against integer
-  columns.
-- Prefer a domain command's native compact/projection/limit flags first. Use
-  `capture -- <command> ...` only when output size is uncertain and no
-  native bound exists; read `child_exit_code`, `child_exit_zero`, and
-  `exit_expected` in the receipt. Direct capture recognizes files whose first
-  line begins `#!`; use
-  `capture --script -- <script> ...` for a no-shebang Bash script. Truncated
-  captures keep both the head and the tail of each separately bounded stream;
-  they do not invent stdout/stderr chronology.
-  Capture is not an archive: retain producer output in files on the first run
-  when full bytes may matter. After a cap, inspect existing artifacts; rerun only
-  when replay is safe and authorized. The Windows `executable` observation names
-  the spawned image, which may be an interpreter, not later descendant images.
-- Configured excludes keep broad scans quiet. Pass an explicit file or
-  subdirectory when an excluded tree is the target. Use `--with-excluded` to
-  include files matched by contextmink exclude globs, and `--with-git-ignored`
-  only for files hidden by Git or `.ignore` rules. Broad scans cross nested Git
-  repository roots by default, including tracked submodules and Git-ignored
-  sibling repositories, and disclose the exact `nested_repos_entered_total`
-  plus a bounded `nested_repos_entered_sample`. Pass `--skip-nested-repos` to
-  stay inside each explicit root; pass a nested repository explicitly when it
-  is the target.
-- Read the `contextmink.receipt.v2` envelope structurally. `scope_complete:
-  false` means totals cover only a bounded subset; `output_truncated: true`
-  means the scope was inspected but payload was omitted or shortened. Inspect
-  `caps[]` for the `boundary`, `dimension`, and `limit`, and use `result.unit`,
-  `result.shown`, `result.total`, and `result.total_is_lower_bound` together.
-  Use `--fail-if-truncated` when complete displayed output is required or
-  `--require-complete-scope` when bounded evidence is unacceptable. Candidate
-  enumeration totals stay exact, while grep match totals become lower bounds
-  under content-file, content-byte, matching-file, or oversized-file scope
-  caps. A no-match grep with
-  `no_match_scope: "scanned_subset"` or a `json-select` with `all_null_fields`
-  entries needs a narrower or corrected query, not a conclusion.
-  JSON fields use literal keys or JSON Pointers (`/result/total`, not dotted
-  shorthand). Pass `json-find` match paths directly to `json-select --at`;
-  combine `--at /result --keys` to discover a nested object. JSONL pointers
-  begin with the zero-based non-empty record index, such as `/12/result`.
-  For objects keyed by record ID, `json-select --at /OBJECT --entries --fields
-  FIELD` projects children with exact keys and reusable pointers. Without
-  `--entries`, an object remains one row. Missing and null fields are distinct.
-  Budget batched calls together: per-command caps do not bound their combined
-  tool response.
-- Direct commands are fine when output is already known to be small or
-  structurally bounded: `git status --short`, `git diff --stat`, a focused
-  test command, a domain tool that emits compact records, or one exact file
-  region already known to fit a slice window (about 120 lines). Above that,
-  the read is reconnaissance — go through `outline`/`grep`/`slice`. Knowing
-  the range you chose does not make the output small; choosing a large range
-  is the failure the caps exist to catch.
-- Keep domain-specific parsing, validation, indexing, diagnostics, and
-  synchronization in project-native tools.
+## Receipts
+
+Every retrieval command and `capture` ends with a `contextmink.receipt.v2`
+envelope (the JSON object itself with `--json`).
+
+- `complete` is `scope_complete && !output_truncated`.
+- `scope_complete: false`: only a subset was inspected. Totals with
+  `result.total_is_lower_bound: true` are lower bounds, and a no-match proves
+  nothing (`no_match_scope: "scanned_subset"`).
+- `output_truncated: true`: the scope was inspected but payload was omitted or
+  shortened.
+- `caps[]` rows give `boundary` (`scope` or `output`), `dimension`, `limit`.
+- `output_cap_arguments` names the display flags whose caps were exhausted;
+  raise only those, after narrowing the query. `--max-*` flags bound scope.
+- `remaining_range` on a capped `slice` is the `--range` that continues the
+  omitted lines; character clipping is a separate cap.
+- `json-select` `all_null_fields` lists fields null in every scanned row; a
+  missing field and a null field differ.
+- `--require-complete-scope` and `--fail-if-truncated` (after the subcommand)
+  turn an incomplete receipt into a nonzero exit after it is printed.
+
+## Capture
+
+`capture -- PROGRAM ARGS` runs a non-interactive command once and keeps the
+head and tail of each stream within its display caps. Read `child_exit_code`,
+`child_exit_zero`, and `exit_expected` (see `--expect-exit`). Capture is not an
+archive: redirect producer output to a file on the first run when full bytes
+may matter, and never rerun a mutation just to recover clipped output.
+
+## Scope
+
+- Configured excludes and Git ignore rules quiet broad scans. An explicit file
+  or subdirectory inside a configured-exclude tree is honored; `--with-excluded`
+  lifts exclude globs and `--with-git-ignored` lifts Git ignore rules.
+- Broad scans cross nested Git repositories (including submodules and
+  Git-ignored sibling checkouts) and report `nested_repos_entered_total` plus a
+  bounded sample. `--skip-nested-repos` stays inside each explicit root; pass a
+  nested repository explicitly when it is the target.
+
+## When to read directly
+
+Direct reads are fine when output is known to be small and structurally
+bounded: `git status --short`, a focused test, a domain tool's compact query,
+or one known file region under about 120 lines. Above that, use `outline`,
+`grep`, and `slice`: choosing a large range does not make its output small.
+Domain parsing, validation, and indexing stay in project-native tools.
