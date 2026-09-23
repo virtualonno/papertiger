@@ -11,8 +11,8 @@ use crate::manifest::{CampaignManifest, GitObjectFormat, Sha256Digest, SourceBin
 use crate::path_identity::portable_absolute;
 use crate::store::{AdmissionOutcome, CampaignAdmission, admit_campaign};
 
-pub const FIXTURE_BUNDLE_SCHEMA_V1: &str = "papertiger-mise.fixture-bundle.v1";
-pub const CAMPAIGN_PREFLIGHT_SCHEMA_V1: &str = "papertiger-mise.campaign-preflight.v1";
+pub const FIXTURE_BUNDLE_SCHEMA_V2: &str = "papertiger-mise.fixture_bundle.v2";
+pub const CAMPAIGN_PREFLIGHT_SCHEMA_V2: &str = "papertiger-mise.campaign_preflight.v2";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CampaignPreflightDefect {
@@ -93,11 +93,13 @@ pub struct FixtureBundleEntry {
 
 impl FixtureBundleDescriptor {
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        if self.schema != FIXTURE_BUNDLE_SCHEMA_V1 {
-            bail!(
-                "unsupported fixture bundle schema '{}' (expected '{FIXTURE_BUNDLE_SCHEMA_V1}')",
-                self.schema
-            );
+        if self.schema != FIXTURE_BUNDLE_SCHEMA_V2 {
+            return Err(crate::schema_ids::schema_refusal(
+                "fixture bundle",
+                &self.schema,
+                FIXTURE_BUNDLE_SCHEMA_V2,
+                "regenerate it with `papertiger-mise campaign fixture-bundle`",
+            ));
         }
         let mut canonical = self.clone();
         canonical
@@ -145,7 +147,7 @@ pub fn inspect_source_binding(repository: impl AsRef<Path>) -> Result<SourceBind
     let repository_locator = portable_absolute(&repository)?;
     let common_locator = portable_absolute(&common_dir)?;
     let repository_identity_sha256 = sha256(
-        format!("papertiger-mise.git-repository.v1\n{repository_locator}\n{common_locator}\n")
+        format!("papertiger-mise.git_repository.v2\n{repository_locator}\n{common_locator}\n")
             .as_bytes(),
     );
     Ok(SourceBinding {
@@ -197,7 +199,7 @@ fn inspect_campaign_preflight(requested_manifest_path: &Path) -> CampaignPreflig
         "fix every reported defect, commit the source and control repositories, then rerun `papertiger-mise campaign preflight \"{requested_locator}\"`"
     );
     let mut report = CampaignPreflightReport {
-        schema: CAMPAIGN_PREFLIGHT_SCHEMA_V1.to_owned(),
+        schema: CAMPAIGN_PREFLIGHT_SCHEMA_V2.to_owned(),
         manifest_locator: requested_locator,
         campaign_id: None,
         manifest_sha256: None,
@@ -701,7 +703,7 @@ fn verify_v1_mutation_scope(repository: &Path, manifest: &CampaignManifest) -> R
         let line = listing.trim();
         if line.is_empty() {
             bail!(
-                "mutation_scope.allowlist path '{path}' is absent from source.base_tree; Mise v1 cannot create it because candidate patches reject new-file and mode records. Preseed the tracked path before campaign admission or select an existing file/directory"
+                "mutation_scope.allowlist path '{path}' is absent from source.base_tree; legacy git_patch.v1 material cannot create it because its patches reject new-file and mode records. Preseed the tracked path before campaign admission or select an existing file/directory"
             );
         }
         let mode = line
@@ -710,7 +712,7 @@ fn verify_v1_mutation_scope(repository: &Path, manifest: &CampaignManifest) -> R
             .context("Git tree listing omitted the allowlist path mode")?;
         if !matches!(mode, "040000" | "100644" | "100755") {
             bail!(
-                "mutation_scope.allowlist path '{path}' has unsupported Git mode {mode}; Mise v1 requires a pre-existing regular file or directory"
+                "mutation_scope.allowlist path '{path}' has unsupported Git mode {mode}; legacy git_patch.v1 material requires a pre-existing regular file or directory"
             );
         }
     }
@@ -864,7 +866,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        CAMPAIGN_PREFLIGHT_SCHEMA_V1, FIXTURE_BUNDLE_SCHEMA_V1, FixtureBundleDescriptor,
+        CAMPAIGN_PREFLIGHT_SCHEMA_V2, FIXTURE_BUNDLE_SCHEMA_V2, FixtureBundleDescriptor,
         FixtureBundleEntry, admit_verified_campaign, inspect_source_binding, is_opaque_locator,
         portable_absolute, preflight_campaign_admission, validate_local_fixture_locator,
         verify_campaign_admission,
@@ -926,7 +928,7 @@ mod tests {
     fn preflight_reports_independent_defects_without_creating_authority_state() {
         let fixture = AdmissionFixture::new();
         let ready = preflight_campaign_admission(&fixture.manifest_path);
-        assert_eq!(ready.schema, CAMPAIGN_PREFLIGHT_SCHEMA_V1);
+        assert_eq!(ready.schema, CAMPAIGN_PREFLIGHT_SCHEMA_V2);
         assert!(ready.ready, "{:#?}", ready.defects);
         assert!(ready.manifest_sha256.is_some());
         assert!(!fixture._temporary.path().join("state").exists());
@@ -985,9 +987,9 @@ mod tests {
         let error = verify_campaign_admission(&fixture.manifest_path)
             .expect_err("missing v1 mutation path must refuse admission");
         assert!(
-            error
-                .to_string()
-                .contains("Mise v1 cannot create it because candidate patches reject new-file"),
+            error.to_string().contains(
+                "legacy git_patch.v1 material cannot create it because its patches reject new-file"
+            ),
             "{error:#}"
         );
         assert!(error.to_string().contains("Preseed the tracked path"));
@@ -1063,7 +1065,7 @@ mod tests {
             if paired {
                 configure_paired_manifest(&mut manifest);
             }
-            manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V2.to_owned();
+            manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V4.to_owned();
             for objective in &mut manifest.objectives {
                 objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
             }
@@ -1242,7 +1244,7 @@ mod tests {
 
     fn configure_paired_manifest(manifest: &mut CampaignManifest) {
         manifest.objectives = crate::statistics::tests::objectives();
-        manifest.evaluator.protocol = crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V1.to_owned();
+        manifest.evaluator.protocol = crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V2.to_owned();
         let mut paired = crate::statistics::tests::plan();
         paired.calibration_fixtures.no_op.locator =
             manifest.calibration.no_op.fixture_locator.clone();
@@ -1401,7 +1403,7 @@ mod tests {
             }));
         }
         let bundle = FixtureBundleDescriptor {
-            schema: FIXTURE_BUNDLE_SCHEMA_V1.to_owned(),
+            schema: FIXTURE_BUNDLE_SCHEMA_V2.to_owned(),
             fixtures,
         };
         let bundle_bytes = bundle.canonical_bytes().expect("canonical bundle");

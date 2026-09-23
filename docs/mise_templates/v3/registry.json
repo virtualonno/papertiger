@@ -1,8 +1,8 @@
 {
-  "schema": "papertiger.improvement-paradigm-registry.v1",
+  "schema": "papertiger-mise.improvement_paradigm_registry.v2",
   "templates": [
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "capability_effectiveness",
       "version": 3,
       "discovery_questions": [
@@ -48,7 +48,7 @@
       ]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "compatibility_portability",
       "version": 3,
       "discovery_questions": [
@@ -94,7 +94,7 @@
       ]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "correctness_quality",
       "version": 3,
       "discovery_questions": [
@@ -140,7 +140,7 @@
       ]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "maintainability_changeability",
       "version": 3,
       "discovery_questions": [
@@ -186,7 +186,7 @@
       ]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "operator_usability",
       "version": 3,
       "discovery_questions": [
@@ -232,7 +232,7 @@
       ]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "performance_resource_efficiency",
       "version": 3,
       "discovery_questions": [
@@ -278,7 +278,7 @@
       ]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "reliability_recovery",
       "version": 3,
       "discovery_questions": [
@@ -324,7 +324,7 @@
       ]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "security_trust_boundary",
       "version": 3,
       "discovery_questions": [

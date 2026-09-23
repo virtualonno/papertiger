@@ -16,17 +16,18 @@ cannot:
   template.
 
 The generic registry uses schema
-`papertiger.improvement-paradigm-registry.v1` at
+`papertiger-mise.improvement_paradigm_registry.v2` at
 `docs/mise_templates/v3/registry.json`. The content-addressed v1 and v2
-registries retain their original bytes for historical template verification,
-while new briefs bind the digest reported by
+registries keep their earlier template content under the current schema
+identifiers (their digests changed at the 0.18.0 schema-id cutover), while new
+briefs bind the digest reported by
 `papertiger-mise improvement paradigms`. `papertiger-mise improvement verify-registry <file>`
 refuses missing canonical paradigms or project command, path,
 numeric-threshold, and verdict leakage. Project facts remain in a separately
 versioned project brief; the registry supplies question and objective shapes,
 never campaign authority.
 
-A brief uses `papertiger.project-improvement-brief.v2` and remains
+A brief uses `papertiger-mise.project_improvement_brief.v3` and remains
 `planning_input_only`. Derive it read-first from the consuming project's live
 source, tests, docs, task authority, runtime evidence, known failures,
 invariants, candidate surfaces, fixtures, environment, and resource costs.
@@ -73,13 +74,13 @@ Validate it with `papertiger-mise improvement
 verify-brief <file>`; validation reads no planning or Mise authority.
 
 Compilation requires a separate
-`papertiger.project-improvement-brief-approval.v1` whose SHA-256 names the exact
+`papertiger-mise.project_improvement_brief_approval.v2` whose SHA-256 names the exact
 brief bytes. The public example intentionally has no approval file.
 `papertiger-mise improvement compile --brief <file> --approval <file> --output
 <new-file>` refuses an existing output, dirty or abbreviated source identity,
 unavailable fixtures, and environment requirements that are not live and
 located. Success writes only a
-`papertiger.compiled-improvement-draft.v2` with `authority=non_admitted_draft`,
+`papertiger-mise.compiled_improvement_draft.v3` with `authority=non_admitted_draft`,
 a proposed task graph, exact objective portfolio, fixtures, environment,
 mutation scope, budgets, and stop rules. It never opens a database or admits a
 campaign; admission remains a separate explicit Mise command.

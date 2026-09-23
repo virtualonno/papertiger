@@ -501,7 +501,7 @@ fn fake_materialization(
         .trim()
         .to_owned();
     let receipt = MaterializationReceipt {
-        schema: "papertiger-mise.materialization.v1".to_owned(),
+        schema: "papertiger-mise.materialization.v3".to_owned(),
         campaign_id: candidate.proposal.campaign_id.clone(),
         candidate_id: candidate.candidate_id.clone(),
         base_commit: manifest.source.base_commit,
@@ -2342,7 +2342,7 @@ fn absence_reconciliation_rolls_back_budget_when_trial_transition_fails() {
     )
     .expect("absence evidence");
     let proof = AbsenceProof {
-        verifier: "papertiger-mise.workspace-supervisor.v1".to_owned(),
+        verifier: "papertiger-mise.workspace_supervisor.v2".to_owned(),
         observed_at: now(),
         supervisor_identity: intent.supervisor_identity,
         process_birth_identity: None,
@@ -2896,7 +2896,7 @@ fn complete_fixture_trial(
         });
     }
     let receipt = TrialReceipt {
-        schema: "papertiger-mise.trial-receipt.v1".to_owned(),
+        schema: "papertiger-mise.trial_receipt.v2".to_owned(),
         environment_sha256: None,
         judge_build: None,
         trial_id: trial_id.to_owned(),
@@ -2938,10 +2938,10 @@ fn complete_fixture_trial(
     .expect("complete trial");
 }
 
-fn trusted_policy(signing_key: &SigningKey) -> crate::attestation::TrustedContainmentPolicy {
-    crate::attestation::TrustedContainmentPolicy {
-        schema: crate::attestation::TRUSTED_CONTAINMENT_POLICY_SCHEMA_V2.to_owned(),
-        protocol: crate::attestation::SEALED_ATTESTATION_PROTOCOL_V2.to_owned(),
+fn containment_policy(signing_key: &SigningKey) -> crate::attestation::ContainmentPolicy {
+    crate::attestation::ContainmentPolicy {
+        schema: crate::attestation::CONTAINMENT_POLICY_SCHEMA_V3.to_owned(),
+        protocol: crate::attestation::SEALED_ATTESTATION_PROTOCOL_V3.to_owned(),
         issuer_identity: "independent-fixture-issuer".to_owned(),
         public_key_ed25519: bytes_hex(&signing_key.verifying_key().to_bytes()),
         executor_sha256: "4".repeat(64),
@@ -2955,7 +2955,7 @@ fn sign_trial_attestation(
     manifest: &CampaignManifest,
     trial_id: &str,
     signing_key: &SigningKey,
-    policy: &crate::attestation::TrustedContainmentPolicy,
+    policy: &crate::attestation::ContainmentPolicy,
 ) -> Result<bool> {
     let durable = trial(connection, trial_id)
         .expect("trial query")
@@ -3002,7 +3002,7 @@ fn sign_trial_attestation(
                 )
         });
     let payload = crate::attestation::SealedAttestationPayload {
-        schema: crate::attestation::SEALED_ATTESTATION_SCHEMA_V2.to_owned(),
+        schema: crate::attestation::SEALED_ATTESTATION_SCHEMA_V3.to_owned(),
         campaign_id: durable.campaign_id.clone(),
         manifest_sha256,
         candidate_id: durable.candidate_id.clone(),
@@ -3036,7 +3036,7 @@ fn sign_trial_attestation(
         fixture_sha256,
         executor_sha256: policy.executor_sha256.clone(),
         profile_sha256: policy.profile_sha256.clone(),
-        trusted_policy_sha256: policy.sha256().expect("policy digest"),
+        containment_policy_sha256: policy.sha256().expect("policy digest"),
         issuer_identity: policy.issuer_identity.clone(),
         invocation_sha256,
         execution_limits_sha256,
@@ -3299,7 +3299,7 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
     );
 
     let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
-    let policy = trusted_policy(&signing_key);
+    let policy = containment_policy(&signing_key);
     assert!(
         crate::promotion::derive_promotion_proof(
             &mise_path,

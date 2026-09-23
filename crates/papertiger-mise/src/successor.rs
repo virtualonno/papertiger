@@ -16,8 +16,8 @@ use crate::promotion::{PromotionGateBinding, VerifiedPapertigerGate, verify_pape
 use crate::state::EvidenceGrade;
 use crate::store::AdmissionOutcome;
 
-pub const PARENT_PROMOTION_PROOF_SCHEMA_V1: &str = "papertiger-mise.parent-promotion-proof.v1";
-pub const PARENT_PROMOTION_PROOF_SCHEMA_V2: &str = "papertiger-mise.parent-promotion-proof.v2";
+pub const PARENT_PROMOTION_PROOF_SCHEMA_V2: &str = "papertiger-mise.parent_promotion_proof.v2";
+pub const PARENT_PROMOTION_PROOF_SCHEMA_V3: &str = "papertiger-mise.parent_promotion_proof.v3";
 pub const SUCCESSOR_ADMISSION_SCOPE_V1: &str = "development_successor_admission_only";
 
 /// Operator-reviewable proof that one exact nomination may become the parent
@@ -81,10 +81,10 @@ impl ParentPromotionProof {
     fn validate(&self) -> Result<()> {
         if !matches!(
             self.schema.as_str(),
-            PARENT_PROMOTION_PROOF_SCHEMA_V1 | PARENT_PROMOTION_PROOF_SCHEMA_V2
+            PARENT_PROMOTION_PROOF_SCHEMA_V2 | PARENT_PROMOTION_PROOF_SCHEMA_V3
         ) {
             bail!(
-                "unsupported parent promotion proof schema '{}' (expected '{PARENT_PROMOTION_PROOF_SCHEMA_V1}' or '{PARENT_PROMOTION_PROOF_SCHEMA_V2}')",
+                "unsupported parent promotion proof schema '{}' (expected '{PARENT_PROMOTION_PROOF_SCHEMA_V2}' or '{PARENT_PROMOTION_PROOF_SCHEMA_V3}')",
                 self.schema
             );
         }
@@ -112,14 +112,14 @@ impl ParentPromotionProof {
             validate_sha256(digest, field)?;
         }
         match self.schema.as_str() {
-            PARENT_PROMOTION_PROOF_SCHEMA_V1 => {
+            PARENT_PROMOTION_PROOF_SCHEMA_V2 => {
                 if !self.promoted_judge_build_trial_receipts.is_empty()
                     || self.promoted_judge_executable_sha256.is_some()
                 {
                     bail!("historical v1 parent proof cannot claim a judge build receipt");
                 }
             }
-            PARENT_PROMOTION_PROOF_SCHEMA_V2 => {
+            PARENT_PROMOTION_PROOF_SCHEMA_V3 => {
                 if self.promoted_judge_build_trial_receipts.is_empty() {
                     bail!("v2 parent proof requires at least one judge-build trial receipt");
                 }
@@ -317,7 +317,7 @@ pub fn derive_parent_promotion_proof(
     relied_upon_paired_cohort_ids.sort();
     promoted_judge_build_trial_receipts.sort();
     let proof = ParentPromotionProof {
-        schema: PARENT_PROMOTION_PROOF_SCHEMA_V2.to_owned(),
+        schema: PARENT_PROMOTION_PROOF_SCHEMA_V3.to_owned(),
         scope: SUCCESSOR_ADMISSION_SCOPE_V1.to_owned(),
         parent_campaign_id: verified.nomination.campaign_id,
         parent_manifest_sha256: verified.manifest_sha256,
@@ -551,7 +551,7 @@ mod tests {
 
     fn proof_with_grade(grade: EvidenceGrade) -> ParentPromotionProof {
         ParentPromotionProof {
-            schema: PARENT_PROMOTION_PROOF_SCHEMA_V1.to_owned(),
+            schema: PARENT_PROMOTION_PROOF_SCHEMA_V2.to_owned(),
             scope: SUCCESSOR_ADMISSION_SCOPE_V1.to_owned(),
             parent_campaign_id: "parent-campaign".to_owned(),
             parent_manifest_sha256: "1".repeat(64),

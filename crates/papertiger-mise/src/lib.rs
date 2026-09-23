@@ -27,6 +27,7 @@ mod path_identity;
 pub mod planner_projection;
 mod process_identity;
 pub mod promotion;
+pub mod schema_ids;
 pub mod state;
 pub mod statistics;
 pub mod store;
@@ -34,22 +35,22 @@ pub mod successor;
 mod validation;
 
 pub use attestation::{
-    SEALED_ATTESTATION_PROTOCOL_V2, SEALED_ATTESTATION_SCHEMA_V2, SealedAttestationPayload,
-    SignedSealedAttestation, TRUSTED_CONTAINMENT_POLICY_SCHEMA_V2, TrustedContainmentPolicy,
+    CONTAINMENT_POLICY_SCHEMA_V3, ContainmentPolicy, SEALED_ATTESTATION_PROTOCOL_V3,
+    SEALED_ATTESTATION_SCHEMA_V3, SealedAttestationPayload, SignedSealedAttestation,
     record_sealed_attestation,
 };
 
 pub use adapter::{
     DomainBlockMeasurement, DomainObjectiveMeasurement, DomainObservationResult, DomainParticipant,
     DomainSessionEvidence, DomainTrialMeasurement, DomainTrialResult,
-    PAIRED_ADAPTER_BINDING_SCHEMA_V1, PAIRED_TRIAL_REQUEST_SCHEMA_V2, PairedAdapterBinding,
+    PAIRED_ADAPTER_BINDING_SCHEMA_V2, PAIRED_TRIAL_REQUEST_SCHEMA_V3, PairedAdapterBinding,
     PairedAdapterCohort, PairedExecutionParticipant, PairedExecutionParticipants,
     PairedParticipantRole, PairedTrialObjective, PairedTrialRequest, VerifiedAdapterResult,
     execute_paired_adapter, execute_paired_adapter_cohort,
 };
 pub use admission::{
-    CAMPAIGN_PREFLIGHT_SCHEMA_V1, CampaignPreflightDefect, CampaignPreflightReport,
-    FIXTURE_BUNDLE_SCHEMA_V1, FixtureBundleDescriptor, FixtureBundleEntry,
+    CAMPAIGN_PREFLIGHT_SCHEMA_V2, CampaignPreflightDefect, CampaignPreflightReport,
+    FIXTURE_BUNDLE_SCHEMA_V2, FixtureBundleDescriptor, FixtureBundleEntry,
     VerifiedCampaignAdmission, admit_verified_campaign, inspect_source_binding,
     preflight_campaign_admission, verify_campaign_admission,
 };
@@ -60,7 +61,7 @@ pub use budget::{
 };
 pub use candidate::{
     BoundCandidate, CandidateDisposition, CandidateMaterial, CandidateMaterialFormat,
-    CandidateProposal, GIT_CHANGE_SET_MEDIA_TYPE, GIT_CHANGE_SET_PROTOCOL_V1, GitChange,
+    CandidateProposal, GIT_CHANGE_SET_MEDIA_TYPE, GIT_CHANGE_SET_PROTOCOL_V2, GitChange,
     GitChangeOperation, GitChangeSet, GitChangeSetScope, GitFileContent, GitFileIdentity,
     GitFileMode, Hypothesis, bind_candidate,
 };
@@ -69,13 +70,13 @@ pub use classification::{
 };
 pub use digest::{sha256, validate_sha256};
 pub use domain_shadow::{
-    DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V1, DOMAIN_SHADOW_RECEIPT_SCHEMA_V1,
+    DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2, DOMAIN_SHADOW_RECEIPT_SCHEMA_V2,
     DomainShadowAdapterBinding, DomainShadowOutcome, DomainShadowReceipt, DomainShadowRecord,
     DomainShadowResult, DomainShadowState, domain_shadow, record_domain_shadow,
 };
 pub use executor::{
-    ExecutionCapabilities, HOST_EXECUTION_STATUS_SCHEMA_V1, HostExecutionStatus,
-    PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1, host_execution_status,
+    ExecutionCapabilities, HOST_EXECUTION_STATUS_SCHEMA_V2, HostExecutionStatus,
+    PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2, host_execution_status,
 };
 pub use git_materialization::{build_git_change_set_material, git_worktree_add_without_hooks};
 pub use lifecycle::{
@@ -90,13 +91,13 @@ pub use lifecycle::{
 };
 pub use object::{PreservedObject, object_locator, preserve_object, read_object, verify_object};
 pub use paired_evidence::{
-    HISTORICAL_SHADOW_RECEIPT_SCHEMA_V1, HistoricalBlockBinding, HistoricalShadowReceipt,
+    HISTORICAL_SHADOW_RECEIPT_SCHEMA_V2, HistoricalBlockBinding, HistoricalShadowReceipt,
     HistoricalShadowRecord, ObservedRunOrder, PairedEvidenceOutcome, historical_shadow,
     record_historical_shadow,
 };
 pub use paired_runtime::{
-    DerivePairedNominationSpec, PAIRED_COHORT_RECEIPT_SCHEMA_V1,
-    PAIRED_EXECUTION_RECEIPT_SCHEMA_V1, PAIRED_NOMINATION_RECEIPT_SCHEMA_V1,
+    DerivePairedNominationSpec, PAIRED_COHORT_RECEIPT_SCHEMA_V2,
+    PAIRED_EXECUTION_RECEIPT_SCHEMA_V2, PAIRED_NOMINATION_RECEIPT_SCHEMA_V2,
     PairedCohortAdjudication, PairedCohortReceipt, PairedCohortRecord, PairedExecutionOutcome,
     PairedExecutionRecord, PairedPreparationOutcome, PreparePairedCohortSpec,
     VerifiedPairedCohortEvidence, adjudicate_paired_cohort, derive_paired_nomination,
@@ -117,8 +118,8 @@ pub use state::{
     PairedExecutionStatus, TrialStatus,
 };
 pub use statistics::{
-    ExactPValue, MedianOrderStatistics, NoOpCalibrationResult, PAIRED_ANALYSIS_SCHEMA_V1,
-    PAIRED_ANALYSIS_SCHEMA_V2, PAIRED_MEASUREMENT_PROTOCOL_V1, PairedAnalysisMethod,
+    ExactPValue, MedianOrderStatistics, NoOpCalibrationResult, PAIRED_ANALYSIS_SCHEMA_V2,
+    PAIRED_ANALYSIS_SCHEMA_V3, PAIRED_MEASUREMENT_PROTOCOL_V2, PairedAnalysisMethod,
     PairedAnalysisPlan, PairedAnalysisSlotRecord, PairedBlockDesign, PairedBlockObservation,
     PairedCalibrationFixtureBindings, PairedCandidateContext, PairedClassification, PairedCohort,
     PairedDisposition, PairedFixtureBinding, PairedHypothesisKind, PairedHypothesisResult,
@@ -134,7 +135,7 @@ pub use store::{
     open_for_init, successor_admission,
 };
 pub use successor::{
-    PARENT_PROMOTION_PROOF_SCHEMA_V1, PARENT_PROMOTION_PROOF_SCHEMA_V2, ParentPromotionProof,
+    PARENT_PROMOTION_PROOF_SCHEMA_V2, PARENT_PROMOTION_PROOF_SCHEMA_V3, ParentPromotionProof,
     PreservedParentPromotionProof, SUCCESSOR_ADMISSION_SCOPE_V1, VerifiedParentPromotionGate,
     VerifiedSuccessorAdmission, admit_verified_successor, derive_parent_promotion_proof,
     preserve_parent_promotion_proof, verify_parent_promotion_gate, verify_successor_admission,

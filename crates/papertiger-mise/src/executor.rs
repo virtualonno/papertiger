@@ -56,9 +56,9 @@ pub struct ExecutionCapabilities {
     pub aggregate_memory_limit: bool,
 }
 
-pub const PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1: &str =
-    "papertiger-mise.portable-local-supervision.v1";
-pub const HOST_EXECUTION_STATUS_SCHEMA_V1: &str = "papertiger-mise.host-execution-status.v1";
+pub const PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2: &str =
+    "papertiger-mise.portable_local_supervision.v2";
+pub const HOST_EXECUTION_STATUS_SCHEMA_V2: &str = "papertiger-mise.host_execution_status.v2";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,8 +75,8 @@ pub struct HostExecutionStatus {
 #[cfg(windows)]
 pub fn host_execution_status() -> Result<HostExecutionStatus> {
     Ok(HostExecutionStatus {
-        schema: HOST_EXECUTION_STATUS_SCHEMA_V1.to_owned(),
-        portable_contract: PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1.to_owned(),
+        schema: HOST_EXECUTION_STATUS_SCHEMA_V2.to_owned(),
+        portable_contract: PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2.to_owned(),
         portable_local_supervision: true,
         adversarial_isolation: false,
         cold_recovery_birth_identity: true,
@@ -88,8 +88,8 @@ pub fn host_execution_status() -> Result<HostExecutionStatus> {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn host_execution_status() -> Result<HostExecutionStatus> {
     Ok(HostExecutionStatus {
-        schema: HOST_EXECUTION_STATUS_SCHEMA_V1.to_owned(),
-        portable_contract: PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1.to_owned(),
+        schema: HOST_EXECUTION_STATUS_SCHEMA_V2.to_owned(),
+        portable_contract: PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2.to_owned(),
         portable_local_supervision: true,
         adversarial_isolation: false,
         cold_recovery_birth_identity: true,
@@ -519,7 +519,7 @@ impl ProcessFamilySupervisor {
         let tree = Self {
             job,
             capabilities: ExecutionCapabilities {
-                portable_contract: Some(PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1.to_owned()),
+                portable_contract: Some(PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2.to_owned()),
                 platform: "windows".to_owned(),
                 process_family: "windows_job_post_spawn.v1".to_owned(),
                 aggregate_process_limit: false,
@@ -605,7 +605,7 @@ impl ProcessFamilySupervisor {
         Ok(Self {
             process_group: None,
             capabilities: ExecutionCapabilities {
-                portable_contract: Some(PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1.to_owned()),
+                portable_contract: Some(PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2.to_owned()),
                 platform: std::env::consts::OS.to_owned(),
                 process_family: "posix_process_group_at_spawn.v1".to_owned(),
                 aggregate_process_limit: false,
@@ -693,7 +693,7 @@ mod tests {
     use std::time::Instant;
 
     use super::{
-        HOST_EXECUTION_STATUS_SCHEMA_V1, PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1,
+        HOST_EXECUTION_STATUS_SCHEMA_V2, PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2,
         SupervisedExecutionOutcome, SupervisionHooks, execute_bounded, execute_supervised,
         host_execution_status,
     };
@@ -705,10 +705,10 @@ mod tests {
     #[test]
     fn host_status_exposes_one_portable_contract_and_only_diagnostic_native_details() {
         let status = host_execution_status().expect("supported test host");
-        assert_eq!(status.schema, HOST_EXECUTION_STATUS_SCHEMA_V1);
+        assert_eq!(status.schema, HOST_EXECUTION_STATUS_SCHEMA_V2);
         assert_eq!(
             status.portable_contract,
-            PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1
+            PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2
         );
         assert!(status.portable_local_supervision);
         assert!(!status.adversarial_isolation);

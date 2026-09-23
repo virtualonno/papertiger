@@ -17,9 +17,9 @@ use crate::path_identity::portable_absolute;
 use crate::store::{begin_mutation, now};
 use crate::validation::{validate_actor, validate_bounded_token as validate_token};
 
-pub const DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V1: &str =
-    "papertiger-mise.domain-shadow-adapter-binding.v1";
-pub const DOMAIN_SHADOW_RECEIPT_SCHEMA_V1: &str = "papertiger-mise.domain-shadow-receipt.v1";
+pub const DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2: &str =
+    "papertiger-mise.domain_shadow_adapter_binding.v2";
+pub const DOMAIN_SHADOW_RECEIPT_SCHEMA_V2: &str = "papertiger-mise.domain_shadow_receipt.v2";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -118,10 +118,13 @@ impl DomainShadowAdapterBinding {
     }
 
     fn validate_contract(&self) -> Result<()> {
-        if self.schema != DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V1 {
-            bail!(
-                "domain-shadow adapter binding schema must be '{DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V1}'"
-            );
+        if self.schema != DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2 {
+            return Err(crate::schema_ids::schema_refusal(
+                "domain-shadow adapter binding",
+                &self.schema,
+                DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2,
+                "reissue the binding file with schema papertiger-mise.domain_shadow_adapter_binding.v2",
+            ));
         }
         validate_absolute_syntax("domain-shadow adapter executable", &self.executable_locator)?;
         validate_sha256(
@@ -172,7 +175,7 @@ pub fn record_domain_shadow(
     let request = preserve_object(object_root, &executed.request_bytes)?;
     let result = preserve_object(object_root, &executed.output_bytes)?;
     let receipt = DomainShadowReceipt {
-        schema: DOMAIN_SHADOW_RECEIPT_SCHEMA_V1.to_owned(),
+        schema: DOMAIN_SHADOW_RECEIPT_SCHEMA_V2.to_owned(),
         scope: "domain_shadow".to_owned(),
         decision_eligible: false,
         adjudication: "prohibited".to_owned(),
@@ -230,6 +233,25 @@ pub fn record_domain_shadow(
     Ok((DomainShadowOutcome::Recorded, record))
 }
 
+/// Decode a durable binding. Evidence recorded before the 0.18.0 schema-id
+/// cutover is frozen and refused rather than reopened under current readers.
+fn stored_domain_shadow_binding(binding_json: &str) -> Result<DomainShadowAdapterBinding> {
+    let binding: DomainShadowAdapterBinding = serde_json::from_str(binding_json)?;
+    if serde_json::to_vec(&binding)? != binding_json.as_bytes() {
+        bail!("domain-shadow durable binding is not canonical JSON");
+    }
+    if binding.schema != DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2 {
+        return Err(crate::schema_ids::schema_refusal(
+            "domain-shadow binding",
+            &binding.schema,
+            DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2,
+            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+        ));
+    }
+    binding.validate_contract()?;
+    Ok(binding)
+}
+
 pub fn domain_shadow(
     connection: &Connection,
     object_root: &Path,
@@ -283,11 +305,7 @@ pub fn domain_shadow(
     {
         bail!("domain-shadow durable identity failed closed");
     }
-    let binding: DomainShadowAdapterBinding = serde_json::from_str(&binding_json)?;
-    if serde_json::to_vec(&binding)? != binding_json.as_bytes() {
-        bail!("domain-shadow durable binding is not canonical JSON");
-    }
-    binding.validate_contract()?;
+    let binding = stored_domain_shadow_binding(&binding_json)?;
     let request = artifact(connection, &request_sha256)?;
     let result_object = artifact(connection, &result_sha256)?;
     let receipt_object = artifact(connection, &receipt_sha256)?;
@@ -298,6 +316,14 @@ pub fn domain_shadow(
         read_verified_json(object_root, &result_object, "domain-shadow result")?;
     let (receipt, receipt_bytes): (DomainShadowReceipt, Vec<u8>) =
         read_verified_json(object_root, &receipt_object, "domain-shadow receipt")?;
+    if receipt.schema != DOMAIN_SHADOW_RECEIPT_SCHEMA_V2 {
+        return Err(crate::schema_ids::schema_refusal(
+            "domain-shadow receipt",
+            &receipt.schema,
+            DOMAIN_SHADOW_RECEIPT_SCHEMA_V2,
+            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+        ));
+    }
     validate_domain_shadow_result(&binding, &result, &sha256(&request_bytes))?;
     if receipt.request != request
         || receipt.result != result_object
@@ -503,7 +529,7 @@ mod tests {
     fn result_requires_exactly_unchanged_hashed_state() {
         let state = json!({"database": {"bytes": 7}, "program": {"epoch": 3}});
         let binding = DomainShadowAdapterBinding {
-            schema: DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V1.to_owned(),
+            schema: DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2.to_owned(),
             executable_locator: std::env::current_exe()
                 .expect("test executable")
                 .to_string_lossy()
@@ -585,7 +611,7 @@ mod tests {
             hash_plain_file(Path::new(&executable), "fixture executable").expect("fixture hash"),
         );
         let request = json!({
-            "schema": "papertiger-mise.domain-shadow-fixture-request.v1",
+            "schema": "papertiger-mise.domain_shadow_fixture_request.v2",
             "target": "fixture"
         });
         let request_sha256 = Sha256Digest(sha256(
@@ -598,7 +624,7 @@ mod tests {
         });
         let state_identity = digest(&state);
         let result = DomainShadowResult {
-            schema: "papertiger-mise.domain-shadow-fixture-result.v1".to_owned(),
+            schema: "papertiger-mise.domain_shadow_fixture_result.v2".to_owned(),
             observation_id: "deterministic-domain-shadow".to_owned(),
             request_sha256,
             adapter_executable_sha256: executable_sha256.clone(),
@@ -624,7 +650,7 @@ mod tests {
             .expect("fixture result UTF-8"),
         );
         let binding = DomainShadowAdapterBinding {
-            schema: DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V1.to_owned(),
+            schema: DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2.to_owned(),
             executable_locator: executable.clone(),
             executable_sha256,
             argv: vec![executable],
@@ -657,5 +683,16 @@ mod tests {
             .expect("reopen domain shadow after adapter removal")
             .expect("domain shadow record");
         assert_eq!(reopened, record);
+
+        let retired = String::from_utf8(serde_json::to_vec(&binding).expect("binding JSON"))
+            .expect("binding UTF-8")
+            .replace(
+                DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2,
+                "papertiger-mise.domain-shadow-adapter-binding.v1",
+            );
+        let error = stored_domain_shadow_binding(&retired)
+            .expect_err("pre-0.18 domain-shadow evidence is frozen")
+            .to_string();
+        assert!(error.contains("papertiger-mise 0.17.x"), "{error}");
     }
 }

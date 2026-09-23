@@ -68,20 +68,20 @@ New development successor proofs require parent candidate trials with a frozen
 runtime-owned output root. The frozen evaluator reports the exact build argv
 and executable locator; the supervisor requires those values to match the
 manifest, confines the output to that fresh root, accepts only a plain regular
-file within its byte ceiling, and preserves the executable in CAS. The v3 trial
-receipt binds that object to the promoted source tree, exact evaluator
-environment, toolchain executable and version, and build recipe. A v2 parent
-proof names every relied-upon candidate build-trial receipt and requires the
-successor judge SHA-256 to equal their one parent-produced executable identity.
+file within its byte ceiling, and preserves the executable in CAS. The
+`papertiger-mise.trial_receipt.v5` receipt binds that object to the promoted
+source tree, exact evaluator environment, toolchain executable and version, and
+build recipe. A `papertiger-mise.parent_promotion_proof.v3` proof names every
+relied-upon candidate build-trial receipt and requires the successor judge
+SHA-256 to equal their one parent-produced executable identity.
 
 This is a build receipt, not sealed compiler attestation or a universal
 reproducible-build proof. It relies on the already-frozen evaluator to attest
 that it executed the declared argv, and on the operator-trusted host, compiler,
 filesystem, and CAS boundary. The supervisor proves that the exact retained
 bytes appeared in an empty trial-owned output root; it does not trace every
-compiler syscall. Historical admitted v1 parent proofs remain reopenable, but
-they do not authorize another new descendant without a build-bound parent
-campaign.
+compiler syscall. The earlier `parent_promotion_proof.v2` shape without a
+build binding is not accepted for a new descendant.
 
 ## Campaign identity and naming
 
@@ -140,8 +140,8 @@ belong only in hard constraints. This prevents a development campaign from
 qualifying on feature presence, command success, or another self-certifying
 yes/no proxy.
 
-New campaign admission requires `papertiger-mise.campaign.v2`. Every objective
-includes a `papertiger-mise.measurement-contract.v1`: measured subject and
+New campaign admission requires `papertiger-mise.campaign.v4`. Every objective
+includes a `papertiger-mise.measurement_contract.v2`: measured subject and
 process role, executable name, product behavior versus development or
 infrastructure cost, phase, metric meaning and unit, complete workload and
 cardinality, host and environment class, aggregation, sampling, cache state,
@@ -178,12 +178,32 @@ declaring `compiler`, `build`, or a compiler executable cannot satisfy an
 indexer-runtime contract. Relabeling all evidence dishonestly is outside this
 local trust boundary.
 
-Historical campaign v1 manifests and their receipts remain readable with their
-original bytes and no inferred provenance. They cannot be newly admitted or
-upgraded in place. The provenance cutover changes JSON protocols, not the Mise
-SQLite schema. Brief v2 and compiled draft v2 preserve the same typed contracts;
-historical brief v1 input is refused with the command's required replacement
-fields rather than silently converted.
+The brief (`papertiger-mise.project_improvement_brief.v3`) and compiled draft
+(`papertiger-mise.compiled_improvement_draft.v3`) preserve the same typed
+contracts; an earlier brief is refused with the command's required
+replacement fields rather than silently converted.
+
+### Schema identifiers
+
+Every Mise-owned schema, protocol, and domain-separation identifier has the
+form `papertiger-mise.<snake_case_name>.v<N>`. Release 0.18.0 renamed all of
+them and advanced every version, so no current identifier equals a retired one.
+Readers refuse a retired identifier and name its replacement. An
+operator-authored input — campaign manifest, containment policy, adapter
+binding, fixture bundle, brief, approval, paradigm registry, or evaluator
+output — must be re-authored under the current identifier. A campaign or
+shadow observation recorded before 0.18.0 stays frozen: every stored-manifest
+and shadow-evidence reader refuses it, so reopen it with a 0.17.x binary or
+admit a new campaign. Nothing converts retired evidence in place.
+
+The runtime still implements the shapes that preceded measurement provenance
+under renamed identifiers: `papertiger-mise.campaign.v3` (legacy Git-patch
+material), deterministic evaluator request and output v2, trial receipts v2–v4,
+materialization v3, candidate identity v2, paired analysis v2, paired trial
+request v3, and parent promotion proof v2. Admission accepts only
+`papertiger-mise.campaign.v4`, and no pre-0.18.0 authority holds these renamed
+identifiers, so today those shapes are reachable only from the crate's own tests
+until they are removed.
 
 A targeted structural campaign may use an exact target-module measurement as
 its primary objective, but it must retain the repository-wide largest-module
@@ -238,8 +258,9 @@ superiority, or safety outside the named objectives, population, hardware,
 fixtures, and environment profile.
 
 The current crate exposes the exact classifier and atomically reserves each
-research slot against its realized schedule. Historical paired-analysis v1
-plans remain readable but are not executable. Paired-analysis v2 freezes an
+research slot against its realized schedule. The earlier
+`papertiger-mise.paired_analysis.v2` shape is not executable.
+`papertiger-mise.paired_analysis.v3` freezes an
 exact trial adapter executable, argv, working directory, environment, protocol,
 and bounds. Before launch, the durable runner derives the complete AB/BA
 schedule, writes every measurement-free request to CAS, reserves all trials,
@@ -370,7 +391,7 @@ On shells whose native pipeline does not preserve large JSON arguments, use
 existing output.
 
 Generic improvement guidance is separately content-addressed by
-`papertiger.improvement-paradigm-registry.v1`. Templates contain discovery
+`papertiger-mise.improvement_paradigm_registry.v2`. Templates contain discovery
 questions, objective-role shapes, countermetrics, controls, fixture guidance,
 candidate-scope guidance, invalid-proxy warnings, and symbolic stop defaults.
 They contain no project paths, commands, thresholds, or verdicts. A later
@@ -473,7 +494,7 @@ They reduce leaked descendants but do not alter campaign admission,
 classification, nomination eligibility, or promotion authority. A hostile
 POSIX child can leave its group, and the current Windows assignment occurs just
 after spawn. Receipts retain the backend and platform as diagnostics alongside
-the common `papertiger-mise.portable-local-supervision.v1` contract. The
+the common `papertiger-mise.portable_local_supervision.v2` contract. The
 `papertiger-mise execution-status` command reports the same separation: local
 supervision is available, adversarial isolation is not.
 
@@ -498,21 +519,22 @@ proof as isolation evidence.
 Admission canonicalizes objective keys lexicographically. A deterministic
 evaluator must emit exactly one observation for every admitted objective in that
 canonical order, and its successful stdout must be the compact exact Rust-typed
-serialization of `papertiger-mise.deterministic-evaluator-output.v2`. Field
+serialization of `papertiger-mise.deterministic_evaluator_output.v3`. Field
 order is therefore part of the byte contract; arbitrary valid or sorted JSON is
 not canonical. The
 objective-order refusal prints both the expected and observed sequences; adapter
 authors should treat the admitted manifest returned by `campaign show`, not the
 authoring file's display order, as the executable contract.
 
-Campaign v2 uses deterministic request v2, output v2, and environment-bound
-trial receipt v4, or paired request v3 with provenance-bearing measurements.
-Historical campaign v1 keeps its original protocol versions. The
-`deterministic_evaluator` and `paired_fixture_adapter` examples exercise the
-current contract with explicitly synthetic data. The structural
-`debt_campaign_evaluator` and `lifecycle_campaign_evaluator` sources retain
-their historical v1 protocol for earlier experiments; author a v2 collector
-with explicit measurement scope before starting a new structural campaign.
+`papertiger-mise.campaign.v4` uses deterministic evaluator request and output
+v3 with environment-bound `papertiger-mise.trial_receipt.v5`, or
+`papertiger-mise.paired_trial_request.v4` with provenance-bearing measurements.
+The `deterministic_evaluator` and `paired_fixture_adapter` examples exercise
+the current contract with explicitly synthetic data. The structural
+`debt_campaign_evaluator` and `lifecycle_campaign_evaluator` sources still emit
+the pre-provenance output v2 shape, which no admissible campaign accepts; author
+a v3 collector with explicit measurement scope before starting a new structural
+campaign.
 
 The evaluator request binds both result-tree IDs and the runtime-verified
 baseline worktree locator. Successor-safe evaluators measure the candidate and
@@ -527,7 +549,8 @@ workspace, Mise library, CLI, and evaluator tests remain explicit gates; the
 serial requirement is not left to the host test runner's default concurrency.
 
 Adversarial isolation is a separate, platform-neutral attested-worker
-contract. Attestation v2 binds outcomes rather than host mechanisms: an
+contract. The `papertiger-mise.sealed_attestation.v3` attestation binds
+outcomes rather than host mechanisms: an
 isolated workspace, denied network, read-only evaluator inputs, exact nonzero
 process and memory ceilings, cleanup after controller loss, hidden-fixture
 secrecy, and verdict-only disclosure where required. An OCI container, VM, or
@@ -601,9 +624,9 @@ other than the frozen base plus the retained records. The public constructor
 derives this material from two exact full Git trees; the record command accepts
 only its canonical bytes.
 
-Previously admitted `git_patch.v1` campaigns and receipts remain readable and
-reverifiable. There is deliberately no public patch-recording compatibility
-alias: new operator writes use `candidate build-material` and `--material`.
+Legacy `git_patch.v1` material belongs only to the retained
+`papertiger-mise.campaign.v3` shape described under Schema identifiers. There is
+deliberately no public patch-recording compatibility alias: new operator writes use `candidate build-material` and `--material`.
 Legacy admission still refuses an allowlist entry absent from its base tree,
 while a typed Git change-set campaign may admit a new path. This contract does
 not pretend every domain is Git. A future Ghidramink operation packet requires
@@ -697,7 +720,7 @@ nor automatic hypothesis generation.
 `campaign inspect <id>` discovers recorded candidates, trials, paired cohorts,
 and reservations in one read-only SQLite snapshot. Choose `--section
 candidates|trials|cohorts|reservations`; `--limit` accepts 1–100 (default 20).
-`papertiger-mise.campaign-inspection.v1` reports complete entity counts and
+`papertiger-mise.campaign_inspection.v2` reports complete entity counts and
 recorded budgets alongside the selected page, exact inspection argument vectors,
 and continuation arguments that retain the project and database selection.
 Pagination is live identity ordering: restart it after concurrent changes.
@@ -718,7 +741,7 @@ root regardless of the agent's caller directory. The consumer owns
 read-only. `init` is the only authority creation or migration step.
 
 For a custom `--db`, `status` requires `--objects <object-root>` because the
-database has no stored CAS-root binding. Project-status v2 names the selected
+database has no stored CAS-root binding. `papertiger-mise.project_status.v3` names the selected
 paths and labels the object check `directory_presence_only`; a present directory
 is not verified evidence or a claim that it belongs to that database. Use the
 existing object, candidate, cohort, and nomination inspection commands to
@@ -779,10 +802,10 @@ the frozen path, so nested direct compiler invocations resolve the same tool.
 Compiler subprocesses never need an ambient writable temporary directory. Rust
 and judge-build roots use one bounded, domain-separated 128-bit path identity
 derived from the exact campaign and trial IDs; receipts retain the full IDs,
-while caller-chosen label length cannot exhaust a host path limit. Environment-
-bound v2 receipts remain readable; a trial that also preserves a judge build
-uses v3 and binds both the exact environment and build receipt. Nomination
-reopening rederives either admitted form. This removes shared mutable build
+while caller-chosen label length cannot exhaust a host path limit. The
+`papertiger-mise.trial_receipt.v5` receipt binds the exact environment and,
+when the manifest admits a judge build, its build receipt. Nomination
+reopening rederives both. This removes shared mutable build
 caches, temporary paths, and ambient linker lookup from the decision path.
 It does not claim OS-enforced network denial: under
 `WorkspaceOnly`, candidate code and build scripts remain capable of using the
@@ -795,8 +818,8 @@ bytes. The evaluator writes only the relative output below
 `PAPERTIGER_MISE_JUDGE_BUILD_ROOT` and includes the exact `judge_build` echo in
 its canonical result. Trial artifact reservations must cover the evaluator
 output, receipt overhead, and frozen executable ceiling. Nomination reopening
-rechecks both the v3 receipt and the executable object before a v2 successor
-proof can be derived.
+rechecks both the trial receipt and the executable object before a
+`papertiger-mise.parent_promotion_proof.v3` successor proof can be derived.
 
 The command-line surface intentionally exposes only operator boundaries.
 `--papertiger-db` names the independent planning database that holds a closed

@@ -1,8 +1,8 @@
 {
-  "schema": "papertiger.improvement-paradigm-registry.v1",
+  "schema": "papertiger-mise.improvement_paradigm_registry.v2",
   "templates": [
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "capability_effectiveness",
       "version": 1,
       "discovery_questions": ["Which intended domain outcomes remain incomplete", "What independent evidence establishes useful completion"],
@@ -16,7 +16,7 @@
       "stop_policy_defaults": ["Stop on any hard constraint failure", "Stop when the finite candidate budget is exhausted"]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "compatibility_portability",
       "version": 1,
       "discovery_questions": ["Which declared environments or contracts are unsupported", "What unsafe compatibility must remain refused"],
@@ -30,7 +30,7 @@
       "stop_policy_defaults": ["Stop on false compatibility", "Stop on canonical contract weakening"]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "correctness_quality",
       "version": 1,
       "discovery_questions": ["Which externally meaningful results are wrong or underspecified", "What oracle can distinguish stronger correctness"],
@@ -44,7 +44,7 @@
       "stop_policy_defaults": ["Stop on any false acceptance", "Stop on evaluator integrity failure"]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "maintainability_changeability",
       "version": 1,
       "discovery_questions": ["Which change cost is caused by duplicated or entangled decisions", "Which behavior and refusal contracts must remain equivalent"],
@@ -58,7 +58,7 @@
       "stop_policy_defaults": ["Stop on behavior drift", "Stop on test or evidence weakening"]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "operator_usability",
       "version": 1,
       "discovery_questions": ["Where do operators spend avoidable interaction or recovery effort", "What terminal evidence must remain unchanged"],
@@ -72,7 +72,7 @@
       "stop_policy_defaults": ["Stop on hidden errors", "Stop on terminal evidence regression"]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "performance_resource_efficiency",
       "version": 1,
       "discovery_questions": ["Which resource limits block useful work", "What workload and quality must remain fixed"],
@@ -86,7 +86,7 @@
       "stop_policy_defaults": ["Stop on correctness regression", "Stop when measurement noise exceeds the declared bound"]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "reliability_recovery",
       "version": 1,
       "discovery_questions": ["Which faults cause unsafe success or unrecoverable work", "What exact recovery proves restored operation"],
@@ -100,7 +100,7 @@
       "stop_policy_defaults": ["Stop on false ready state", "Stop on infrastructure failure before scoring"]
     },
     {
-      "schema": "papertiger.improvement-paradigm-template.v1",
+      "schema": "papertiger-mise.improvement_paradigm_template.v2",
       "key": "security_trust_boundary",
       "version": 1,
       "discovery_questions": ["Which authority crossing can accept unauthenticated or overbroad state", "What independent boundary evidence is available"],

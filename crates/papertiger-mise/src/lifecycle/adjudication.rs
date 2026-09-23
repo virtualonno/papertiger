@@ -101,7 +101,7 @@ pub fn adjudicate_deterministic_candidate(
             |row| row.get(0),
         )?;
         let receipt = json!({
-            "schema": "papertiger-mise.nomination.v1",
+            "schema": "papertiger-mise.nomination.v2",
             "campaign_id": current.campaign_id,
             "manifest_sha256": manifest_sha256,
             "candidate_id": candidate_id,
@@ -218,7 +218,7 @@ fn derive_deterministic_candidate_result(
         .map(|trial| trial.evidence_sha256.clone())
         .collect::<Vec<_>>();
     let result = json!({
-        "schema": "papertiger-mise.candidate-result.v1",
+        "schema": "papertiger-mise.candidate_result.v2",
         "classification": classification,
         "candidate_trial_ids": trial_ids,
         "calibration_trial_ids": calibration_trial_ids,
@@ -250,7 +250,7 @@ pub fn verify_nomination_integrity(
     }
     let campaign_record = crate::store::campaign(connection, &nomination.campaign_id)?
         .context("nomination campaign disappeared")?;
-    let manifest: CampaignManifest = serde_json::from_str(&campaign_record.manifest_json)?;
+    let manifest = CampaignManifest::from_stored_json(&campaign_record.manifest_json)?;
     if sha256(&manifest.historical_canonical_bytes()?) != campaign_record.manifest_sha256 {
         bail!("admitted manifest identity does not recompute from canonical content");
     }
@@ -264,7 +264,7 @@ pub fn verify_nomination_integrity(
     verify_candidate_evidence(connection, object_root, &durable_candidate, &manifest)?;
     let receipt: Value = serde_json::from_str(&nomination.receipt_json)?;
     if receipt.get("schema").and_then(Value::as_str)
-        == Some(crate::paired_runtime::PAIRED_NOMINATION_RECEIPT_SCHEMA_V1)
+        == Some(crate::paired_runtime::PAIRED_NOMINATION_RECEIPT_SCHEMA_V2)
     {
         return crate::paired_runtime::verify_paired_nomination_evidence(
             connection,
@@ -299,7 +299,7 @@ pub fn verify_nomination_integrity(
         }
         verify_completed_trial_evidence(connection, object_root, trial_id, &manifest)?;
     }
-    if receipt.get("schema").and_then(Value::as_str) != Some("papertiger-mise.nomination.v1")
+    if receipt.get("schema").and_then(Value::as_str) != Some("papertiger-mise.nomination.v2")
         || receipt.get("campaign_id").and_then(Value::as_str)
             != Some(nomination.campaign_id.as_str())
         || receipt.get("manifest_sha256").and_then(Value::as_str)
@@ -340,7 +340,7 @@ pub fn verify_candidate_integrity(
         .with_context(|| format!("unknown durable candidate '{candidate_id}'"))?;
     let campaign_record = crate::store::campaign(connection, &candidate.campaign_id)?
         .context("candidate campaign disappeared")?;
-    let manifest: CampaignManifest = serde_json::from_str(&campaign_record.manifest_json)?;
+    let manifest = CampaignManifest::from_stored_json(&campaign_record.manifest_json)?;
     if sha256(&manifest.historical_canonical_bytes()?) != campaign_record.manifest_sha256 {
         bail!("admitted manifest identity does not recompute from canonical content");
     }
@@ -410,7 +410,7 @@ pub(super) fn verify_completed_trial_evidence(
         .outcome
         .as_ref()
         .context("successful trial has no outcome")?;
-    if outcome.get("schema").and_then(Value::as_str) != Some("papertiger-mise.trial-outcome.v1") {
+    if outcome.get("schema").and_then(Value::as_str) != Some("papertiger-mise.trial_outcome.v2") {
         bail!("successful trial outcome has an unsupported schema");
     }
     let object: PreservedObject = serde_json::from_value(

@@ -4,11 +4,13 @@ use std::collections::BTreeSet;
 
 use papertiger::{sha256, validate_sha256};
 
-pub const PARADIGM_REGISTRY_SCHEMA_V1: &str = "papertiger.improvement-paradigm-registry.v1";
-pub const PARADIGM_TEMPLATE_SCHEMA_V1: &str = "papertiger.improvement-paradigm-template.v1";
-pub const PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V2: &str = "papertiger.project-improvement-brief.v2";
-pub const BRIEF_APPROVAL_SCHEMA_V1: &str = "papertiger.project-improvement-brief-approval.v1";
-pub const COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V2: &str = "papertiger.compiled-improvement-draft.v2";
+pub const PARADIGM_REGISTRY_SCHEMA_V2: &str = "papertiger-mise.improvement_paradigm_registry.v2";
+pub const PARADIGM_TEMPLATE_SCHEMA_V2: &str = "papertiger-mise.improvement_paradigm_template.v2";
+pub const PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V3: &str =
+    "papertiger-mise.project_improvement_brief.v3";
+pub const BRIEF_APPROVAL_SCHEMA_V2: &str = "papertiger-mise.project_improvement_brief_approval.v2";
+pub const COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V3: &str =
+    "papertiger-mise.compiled_improvement_draft.v3";
 
 const CURRENT_REGISTRY: &str = include_str!("../../../docs/mise_templates/v3/registry.json");
 const HISTORICAL_REGISTRY_V2: &str = include_str!("../../../docs/mise_templates/v2/registry.json");
@@ -295,11 +297,13 @@ fn paradigm_registry_for_digest(digest: &str) -> Result<ParadigmRegistry> {
 pub fn validate_paradigm_registry(bytes: &[u8]) -> Result<ParadigmRegistry> {
     let registry: ParadigmRegistry =
         serde_json::from_slice(bytes).context("parse improvement-paradigm registry JSON")?;
-    if registry.schema != PARADIGM_REGISTRY_SCHEMA_V1 {
-        bail!(
-            "paradigm registry schema must be {PARADIGM_REGISTRY_SCHEMA_V1}, found '{}'",
-            registry.schema
-        );
+    if registry.schema != PARADIGM_REGISTRY_SCHEMA_V2 {
+        return Err(crate::schema_ids::schema_refusal(
+            "paradigm registry",
+            &registry.schema,
+            PARADIGM_REGISTRY_SCHEMA_V2,
+            "reissue the registry with schema papertiger-mise.improvement_paradigm_registry.v2",
+        ));
     }
     let mut keys = BTreeSet::new();
     for template in &registry.templates {
@@ -324,10 +328,13 @@ pub fn paradigm_registry_sha256(bytes: &[u8]) -> String {
 pub fn validate_project_improvement_brief(bytes: &[u8]) -> Result<ProjectImprovementBrief> {
     let header: serde_json::Value =
         serde_json::from_slice(bytes).context("parse project improvement brief JSON")?;
-    if header["schema"] != PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V2 {
-        bail!(
-            "project improvement brief requires {PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V2} with typed objectives[].measurement and resource_costs; retain historical v1 bytes and author a new brief"
-        );
+    if header["schema"] != PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V3 {
+        return Err(crate::schema_ids::schema_refusal(
+            "project improvement brief",
+            header["schema"].as_str().unwrap_or_default(),
+            PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V3,
+            "author a new brief with schema papertiger-mise.project_improvement_brief.v3, typed objectives[].measurement, and resource_costs; retain historical bytes unchanged",
+        ));
     }
     let brief: ProjectImprovementBrief =
         serde_json::from_slice(bytes).context("parse project improvement brief JSON")?;
@@ -601,8 +608,16 @@ pub fn compile_project_improvement_brief(
     let brief = validate_project_improvement_brief(brief_bytes)?;
     let approval: BriefApproval =
         serde_json::from_slice(approval_bytes).context("parse brief approval JSON")?;
-    if approval.schema != BRIEF_APPROVAL_SCHEMA_V1 || approval.decision != "compile_draft" {
-        bail!("brief approval must authorize compile_draft under {BRIEF_APPROVAL_SCHEMA_V1}");
+    if approval.schema != BRIEF_APPROVAL_SCHEMA_V2 {
+        return Err(crate::schema_ids::schema_refusal(
+            "brief approval",
+            &approval.schema,
+            BRIEF_APPROVAL_SCHEMA_V2,
+            "reissue the approval with schema papertiger-mise.project_improvement_brief_approval.v2",
+        ));
+    }
+    if approval.decision != "compile_draft" {
+        bail!("brief approval must authorize compile_draft under {BRIEF_APPROVAL_SCHEMA_V2}");
     }
     let brief_sha256 = sha256(brief_bytes);
     if approval.brief_sha256 != brief_sha256 {
@@ -674,7 +689,7 @@ pub fn compile_project_improvement_brief(
         },
     ];
     Ok(CompiledImprovementDraft {
-        schema: COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V2.to_owned(),
+        schema: COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V3.to_owned(),
         authority: "non_admitted_draft".to_owned(),
         brief_sha256,
         approval_sha256: sha256(approval_bytes),
@@ -728,11 +743,13 @@ fn reject_unresolved_placeholders(value: &serde_json::Value, path: &str) -> Resu
 }
 
 fn validate_template(template: &ParadigmTemplate) -> Result<()> {
-    if template.schema != PARADIGM_TEMPLATE_SCHEMA_V1 {
-        bail!(
-            "template '{}' schema must be {PARADIGM_TEMPLATE_SCHEMA_V1}",
-            template.key
-        );
+    if template.schema != PARADIGM_TEMPLATE_SCHEMA_V2 {
+        return Err(crate::schema_ids::schema_refusal(
+            &format!("paradigm template '{}'", template.key),
+            &template.schema,
+            PARADIGM_TEMPLATE_SCHEMA_V2,
+            "reissue the registry with template schema papertiger-mise.improvement_paradigm_template.v2",
+        ));
     }
     if template.version == 0 {
         bail!("template '{}' version must be positive", template.key);
@@ -932,7 +949,7 @@ mod tests {
             "../../../docs/mise_profiles/example-project.runtime-readiness.brief.json"
         );
         let approval = BriefApproval {
-            schema: BRIEF_APPROVAL_SCHEMA_V1.to_owned(),
+            schema: BRIEF_APPROVAL_SCHEMA_V2.to_owned(),
             brief_sha256: sha256(brief_bytes),
             approved_by: "operator".to_owned(),
             approved_at: "2026-08-03T00:00:00Z".to_owned(),
@@ -973,7 +990,7 @@ mod tests {
     fn compile_error(brief: ProjectImprovementBrief) -> String {
         let brief_bytes = serde_json::to_vec(&brief).expect("brief JSON");
         let approval = BriefApproval {
-            schema: BRIEF_APPROVAL_SCHEMA_V1.to_owned(),
+            schema: BRIEF_APPROVAL_SCHEMA_V2.to_owned(),
             brief_sha256: sha256(&brief_bytes),
             approved_by: "operator".to_owned(),
             approved_at: "2026-08-04T00:00:00Z".to_owned(),
@@ -1083,7 +1100,7 @@ mod tests {
         let brief = compilable_brief();
         let brief_bytes = serde_json::to_vec(&brief).expect("brief JSON");
         let approval = BriefApproval {
-            schema: BRIEF_APPROVAL_SCHEMA_V1.to_owned(),
+            schema: BRIEF_APPROVAL_SCHEMA_V2.to_owned(),
             brief_sha256: sha256(&brief_bytes),
             approved_by: "operator".to_owned(),
             approved_at: "2026-08-03T00:00:00Z".to_owned(),
@@ -1096,7 +1113,7 @@ mod tests {
         .expect("compile draft");
         assert_eq!(draft.authority, "non_admitted_draft");
         assert!(draft.campaign.admission_requires_explicit_command);
-        assert_eq!(draft.schema, COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V2);
+        assert_eq!(draft.schema, COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V3);
         assert_eq!(
             draft.campaign.resource_costs,
             brief.opportunity.resource_costs

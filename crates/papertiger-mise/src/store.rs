@@ -43,7 +43,7 @@ CREATE TRIGGER budget_reservation_uses_no_delete BEFORE DELETE ON budget_reserva
 BEGIN SELECT RAISE(ABORT, 'budget reservation use is immutable'); END;
 "#;
 
-const PAIRED_ANALYSIS_SCHEMA_V2: &str = r#"
+const PAIRED_ANALYSIS_SCHEMA_V3: &str = r#"
 CREATE TABLE paired_analysis_slots (
   campaign_id TEXT NOT NULL REFERENCES campaigns(campaign_id),
   slot INTEGER NOT NULL CHECK (slot > 0),
@@ -890,7 +890,7 @@ WHEN NOT EXISTS (
 BEGIN SELECT RAISE(ABORT, 'nomination requires a qualified terminal candidate'); END;
 "#,
     )?;
-    transaction.execute_batch(PAIRED_ANALYSIS_SCHEMA_V2)?;
+    transaction.execute_batch(PAIRED_ANALYSIS_SCHEMA_V3)?;
     transaction.execute_batch(PAIRED_EVIDENCE_SCHEMA_V3)?;
     transaction.execute_batch(DOMAIN_SHADOW_SCHEMA_V4)?;
     transaction.execute_batch(PAIRED_RUNTIME_SCHEMA_V5)?;
@@ -920,7 +920,7 @@ fn migrate(connection: &Connection, from: i64) -> Result<()> {
     }
     if from == 1 {
         let transaction = begin_mutation(connection)?;
-        transaction.execute_batch(PAIRED_ANALYSIS_SCHEMA_V2)?;
+        transaction.execute_batch(PAIRED_ANALYSIS_SCHEMA_V3)?;
         transaction.execute(
             "UPDATE meta SET value=?1 WHERE key='schema_version'",
             params![2_i64.to_string()],
@@ -1044,8 +1044,7 @@ fn validate_campaign_admission(
     validate_nonblank("campaign_id", &admission.campaign_id)?;
     validate_nonblank("manifest_schema", &admission.manifest_schema)?;
     validate_sha256(&admission.manifest_sha256, "campaign manifest SHA-256")?;
-    let manifest: CampaignManifest = serde_json::from_str(&admission.manifest_json)
-        .context("campaign admission manifest_json must be a typed Mise campaign manifest")?;
+    let manifest = CampaignManifest::from_stored_json(&admission.manifest_json)?;
     manifest.validate()?;
     if manifest.campaign_id != admission.campaign_id
         || manifest.schema != admission.manifest_schema
@@ -1551,7 +1550,7 @@ pub fn authority_status(connection: &Connection, recent_limit: usize) -> Result<
         |row| row.get(0),
     )?;
     Ok(AuthorityStatus {
-        schema: "papertiger-mise.authority-status.v1",
+        schema: "papertiger-mise.authority_status.v2",
         schema_version: SCHEMA_VERSION,
         campaign_count,
         recent_campaigns_truncated: campaign_count > i64::try_from(recent_campaigns.len())?,
@@ -1863,7 +1862,7 @@ mod tests {
         });
         child.validate().expect("child manifest");
         let proof = crate::successor::ParentPromotionProof {
-            schema: crate::successor::PARENT_PROMOTION_PROOF_SCHEMA_V1.to_owned(),
+            schema: crate::successor::PARENT_PROMOTION_PROOF_SCHEMA_V2.to_owned(),
             scope: crate::successor::SUCCESSOR_ADMISSION_SCOPE_V1.to_owned(),
             parent_campaign_id: parent.campaign_id.clone(),
             parent_manifest_sha256: parent.sha256().expect("parent digest"),
@@ -2537,7 +2536,7 @@ mod tests {
         admit_campaign(&connection, "agent", &second).expect("second campaign");
 
         let status = authority_status(&connection, 1).expect("status");
-        assert_eq!(status.schema, "papertiger-mise.authority-status.v1");
+        assert_eq!(status.schema, "papertiger-mise.authority_status.v2");
         assert_eq!(status.schema_version, SCHEMA_VERSION);
         assert_eq!(status.campaign_count, 2);
         assert_eq!(status.recent_campaigns.len(), 1);

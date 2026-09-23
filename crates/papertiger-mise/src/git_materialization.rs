@@ -408,7 +408,7 @@ fn reject_copy_or_rename_content(
         }
         if let Some(source) = new_content.insert(new.sha256.clone(), change.path.clone()) {
             bail!(
-                "Git changes '{source}' and '{}' introduce duplicate content; copies are outside the v1 material contract",
+                "Git changes '{source}' and '{}' introduce duplicate content; copies are outside the git_change_set material contract",
                 change.path
             );
         }
@@ -552,9 +552,9 @@ pub(crate) fn verify_materialization_receipt(
     let bytes = read_object(object_root, &object)?;
     let receipt: MaterializationReceipt = serde_json::from_slice(&bytes)?;
     let expected_schema = if manifest.candidate_material.is_some() {
-        "papertiger-mise.materialization.v2"
+        "papertiger-mise.materialization.v4"
     } else {
-        "papertiger-mise.materialization.v1"
+        "papertiger-mise.materialization.v3"
     };
     if serde_json::to_vec(&receipt)? != bytes
         || receipt.schema != expected_schema
@@ -1388,7 +1388,7 @@ mod tests {
                 portable_absolute(&self.workspace).unwrap();
             manifest.candidate_material = Some(CandidateMaterialContract {
                 kind: "git_change_set".to_owned(),
-                protocol: crate::candidate::GIT_CHANGE_SET_PROTOCOL_V1.to_owned(),
+                protocol: crate::candidate::GIT_CHANGE_SET_PROTOCOL_V2.to_owned(),
                 media_type: crate::candidate::GIT_CHANGE_SET_MEDIA_TYPE.to_owned(),
             });
             manifest

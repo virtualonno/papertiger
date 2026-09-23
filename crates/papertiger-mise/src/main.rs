@@ -11,13 +11,13 @@ use papertiger_mise::cancellation::{
 use papertiger_mise::improvement;
 use papertiger_mise::manifest::{CampaignManifest, Sha256Digest};
 use papertiger_mise::{
-    AuthorityInitOutcome, CandidateProposal, DerivePairedNominationSpec,
-    DomainShadowAdapterBinding, FIXTURE_BUNDLE_SCHEMA_V1, FixtureBundleDescriptor,
+    AuthorityInitOutcome, CandidateProposal, ContainmentPolicy, DerivePairedNominationSpec,
+    DomainShadowAdapterBinding, FIXTURE_BUNDLE_SCHEMA_V2, FixtureBundleDescriptor,
     FixtureBundleEntry, PairedAdapterBinding, PreparePairedCohortSpec, PreservedObject,
-    PromotionGateBinding, SupervisedTrialSpec, TrustedContainmentPolicy,
-    abandon_materialization_attempt, abandon_owned_trial, adjudicate_deterministic_candidate,
-    adjudicate_paired_cohort, admit_verified_campaign, admit_verified_successor, authority_status,
-    bind_candidate, budget_balances, build_git_change_set_material, campaign, candidate,
+    PromotionGateBinding, SupervisedTrialSpec, abandon_materialization_attempt,
+    abandon_owned_trial, adjudicate_deterministic_candidate, adjudicate_paired_cohort,
+    admit_verified_campaign, admit_verified_successor, authority_status, bind_candidate,
+    budget_balances, build_git_change_set_material, campaign, candidate,
     derive_candidate_planner_projection, derive_nomination_planner_projection,
     derive_paired_nomination, derive_promotion_proof, domain_shadow, execute_next_paired_execution,
     execute_workspace_trial, historical_shadow, host_execution_status, init_at,
@@ -618,7 +618,7 @@ enum PromotionCommand {
         nomination: String,
         #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
-        /// Operator-owned canonical containment policy JSON.
+        /// Operator-owned canonical containment policy JSON (papertiger-mise.containment_policy.v3).
         #[arg(long)]
         containment_policy: PathBuf,
     },
@@ -644,7 +644,7 @@ enum PromotionCommand {
         sha256: String,
         #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
-        /// Operator-owned canonical containment policy JSON; it must
+        /// Operator-owned canonical containment policy JSON (papertiger-mise.containment_policy.v3); it must
         /// not come from the candidate repository.
         #[arg(long)]
         containment_policy: PathBuf,
@@ -861,7 +861,7 @@ fn run(cli: Cli) -> Result<()> {
                 )
             });
             let status = ProjectStatus {
-                schema: "papertiger-mise.project-status.v2",
+                schema: "papertiger-mise.project_status.v3",
                 version: env!("CARGO_PKG_VERSION"),
                 project_root: project_root_identity,
                 database: database_identity,
@@ -1002,7 +1002,7 @@ fn run(cli: Cli) -> Result<()> {
                 })
                 .collect::<Result<Vec<_>>>()?;
             let descriptor = FixtureBundleDescriptor {
-                schema: FIXTURE_BUNDLE_SCHEMA_V1.to_owned(),
+                schema: FIXTURE_BUNDLE_SCHEMA_V2.to_owned(),
                 fixtures,
             };
             let canonical = descriptor.canonical_bytes()?;
@@ -1487,11 +1487,11 @@ fn run(cli: Cli) -> Result<()> {
             objects,
             containment_policy,
         }) => {
-            let trusted_policy = read_trusted_policy(&containment_policy)?;
+            let containment_policy = read_containment_policy(&containment_policy)?;
             let proof = verify_promotion_gate(
                 &cli.db,
                 &objects,
-                &trusted_policy,
+                &containment_policy,
                 &papertiger_db,
                 &nomination,
                 &PromotionGateBinding {
@@ -1568,8 +1568,9 @@ fn run(cli: Cli) -> Result<()> {
             objects,
             containment_policy,
         }) => {
-            let trusted_policy = read_trusted_policy(&containment_policy)?;
-            let proof = derive_promotion_proof(&cli.db, &objects, &trusted_policy, &nomination)?;
+            let containment_policy = read_containment_policy(&containment_policy)?;
+            let proof =
+                derive_promotion_proof(&cli.db, &objects, &containment_policy, &nomination)?;
             let proof_sha256 = proof.sha256()?;
             let evidence_locator = proof.evidence_locator()?;
             println!(
@@ -1696,14 +1697,16 @@ fn existing_or_verified_successor(
     Ok(verify_campaign_admission(manifest_path)?.manifest().clone())
 }
 
-fn read_trusted_policy(path: &std::path::Path) -> Result<TrustedContainmentPolicy> {
+fn read_containment_policy(path: &std::path::Path) -> Result<ContainmentPolicy> {
     let bytes = std::fs::read(path)
-        .with_context(|| format!("read trusted containment policy {}", path.display()))?;
-    let trusted_policy: TrustedContainmentPolicy = serde_json::from_slice(&bytes)?;
-    if trusted_policy.canonical_bytes()? != bytes {
-        bail!("trusted containment policy must use canonical compact JSON");
+        .with_context(|| format!("read containment policy {}", path.display()))?;
+    let containment_policy: ContainmentPolicy = serde_json::from_slice(&bytes)?;
+    if containment_policy.canonical_bytes()? != bytes {
+        bail!(
+            "containment policy must use canonical compact JSON; reissue it as the exact compact serde_json bytes of papertiger-mise.containment_policy.v3 with no trailing newline"
+        );
     }
-    Ok(trusted_policy)
+    Ok(containment_policy)
 }
 
 fn parse_amount(value: &str) -> Result<(BudgetResource, u64)> {

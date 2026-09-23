@@ -550,11 +550,11 @@ impl Fixture {
             ContainmentGrade::Sealed => crate::manifest::HoldoutTierKind::Confirmation,
         };
         manifest.objectives = statistic_fixtures::objectives();
-        manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V2.to_owned();
+        manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V4.to_owned();
         for objective in &mut manifest.objectives {
             objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
         }
-        manifest.evaluator.protocol = crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V1.to_owned();
+        manifest.evaluator.protocol = crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V2.to_owned();
         manifest.calibration.no_op.minimum_repetitions = 16;
         manifest.calibration.known_bad.minimum_repetitions = 16;
         let evidence_tier = manifest
@@ -790,7 +790,7 @@ impl Fixture {
             let birth_identity = format!("fixture-birth-{}", run.execution_id);
             let capabilities = ExecutionCapabilities {
                 portable_contract: Some(
-                    crate::executor::PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1.to_owned(),
+                    crate::executor::PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2.to_owned(),
                 ),
                 platform: std::env::consts::OS.to_owned(),
                 process_family: "fixture-diagnostic".to_owned(),
@@ -905,7 +905,7 @@ fn seed_candidate(
         .to_owned();
     let worktree_locator = canonical_or_pending_absolute(worktree).expect("worktree locator");
     let receipt = crate::lifecycle::MaterializationReceipt {
-        schema: "papertiger-mise.materialization.v1".to_owned(),
+        schema: "papertiger-mise.materialization.v3".to_owned(),
         campaign_id: manifest.campaign_id.clone(),
         candidate_id: candidate.candidate_id.clone(),
         base_commit: manifest.source.base_commit.clone(),

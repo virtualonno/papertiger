@@ -35,9 +35,9 @@ use crate::statistics::{
 use crate::store::{begin_mutation, campaign, now, record_event_in_mutation};
 use crate::validation::validate_bounded_token as validate_token;
 
-pub const PAIRED_EXECUTION_RECEIPT_SCHEMA_V1: &str = "papertiger-mise.paired-execution-receipt.v1";
-pub const PAIRED_COHORT_RECEIPT_SCHEMA_V1: &str = "papertiger-mise.paired-cohort-receipt.v1";
-pub const PAIRED_NOMINATION_RECEIPT_SCHEMA_V1: &str = "papertiger-mise.paired-nomination.v1";
+pub const PAIRED_EXECUTION_RECEIPT_SCHEMA_V2: &str = "papertiger-mise.paired_execution_receipt.v2";
+pub const PAIRED_COHORT_RECEIPT_SCHEMA_V2: &str = "papertiger-mise.paired_cohort_receipt.v2";
+pub const PAIRED_NOMINATION_RECEIPT_SCHEMA_V2: &str = "papertiger-mise.paired_nomination.v2";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -716,7 +716,7 @@ pub fn adjudicate_paired_cohort(
     };
     let result_object = preserve_object(object_root, &serde_json::to_vec(&replayed.adjudication)?)?;
     let receipt = PairedCohortReceipt {
-        schema: PAIRED_COHORT_RECEIPT_SCHEMA_V1.to_owned(),
+        schema: PAIRED_COHORT_RECEIPT_SCHEMA_V2.to_owned(),
         cohort_id: cohort_id.to_owned(),
         campaign_id: durable.record.campaign_id.clone(),
         candidate_id: durable.record.candidate_id.clone(),
@@ -848,7 +848,7 @@ pub fn verify_paired_cohort_integrity(
     )?;
     let (receipt, _): (PairedCohortReceipt, Vec<u8>) =
         read_verified_json(object_root, &receipt_object, "paired cohort receipt")?;
-    if receipt.schema != PAIRED_COHORT_RECEIPT_SCHEMA_V1
+    if receipt.schema != PAIRED_COHORT_RECEIPT_SCHEMA_V2
         || receipt.cohort_id != durable.record.cohort_id
         || receipt.campaign_id != durable.record.campaign_id
         || receipt.candidate_id != durable.record.candidate_id
@@ -941,7 +941,7 @@ pub fn derive_paired_nomination(
         .manifest_sha256;
     let created_at = now();
     let receipt = PairedNominationReceipt {
-        schema: PAIRED_NOMINATION_RECEIPT_SCHEMA_V1.to_owned(),
+        schema: PAIRED_NOMINATION_RECEIPT_SCHEMA_V2.to_owned(),
         campaign_id: research.cohort.campaign_id.clone(),
         manifest_sha256,
         candidate_id: research.cohort.candidate_id.clone(),
@@ -1079,7 +1079,7 @@ fn paired_candidate_result(
     research: &VerifiedPairedCohortEvidence,
 ) -> Result<Value> {
     Ok(json!({
-        "schema": "papertiger-mise.paired-candidate-result.v1",
+        "schema": "papertiger-mise.paired_candidate_result.v2",
         "classification": research.adjudication,
         "evidence_grade": evidence_grade,
         "cohorts": [
@@ -1108,7 +1108,7 @@ pub(crate) fn verify_paired_nomination_evidence(
     candidate_result: &Value,
 ) -> Result<VerifiedNominationEvidence> {
     let receipt: PairedNominationReceipt = serde_json::from_str(&nomination.receipt_json)?;
-    if receipt.schema != PAIRED_NOMINATION_RECEIPT_SCHEMA_V1
+    if receipt.schema != PAIRED_NOMINATION_RECEIPT_SCHEMA_V2
         || receipt.campaign_id != nomination.campaign_id
         || receipt.manifest_sha256 != manifest_sha256
         || receipt.candidate_id != nomination.candidate_id
@@ -1427,7 +1427,7 @@ fn terminal_cohort_failure(
         })
         .collect::<Vec<_>>();
     let receipt_value = json!({
-        "schema": "papertiger-mise.paired-cohort-failure-receipt.v1",
+        "schema": "papertiger-mise.paired_cohort_failure_receipt.v2",
         "cohort_id": cohort.cohort_id,
         "campaign_id": cohort.campaign_id,
         "candidate_id": cohort.candidate_id,
@@ -1497,7 +1497,7 @@ fn complete_paired_execution(
         bail!("preserved paired domain receipt differs from its derived digest");
     }
     let receipt = PairedExecutionReceipt {
-        schema: PAIRED_EXECUTION_RECEIPT_SCHEMA_V1.to_owned(),
+        schema: PAIRED_EXECUTION_RECEIPT_SCHEMA_V2.to_owned(),
         cohort_id: cohort.cohort_id.clone(),
         execution_id: run.execution_id.clone(),
         request: evidence.request.clone(),
@@ -1581,7 +1581,7 @@ fn terminal_run_failure(
     let stdout_object = preserve_object(object_root, stdout)?;
     let stderr_object = preserve_object(object_root, stderr)?;
     let receipt = PairedFailureReceipt {
-        schema: "papertiger-mise.paired-execution-failure-receipt.v1".to_owned(),
+        schema: "papertiger-mise.paired_execution_failure_receipt.v2".to_owned(),
         cohort_id: cohort.cohort_id.clone(),
         execution_id: run.execution_id.clone(),
         failure_code: failure_code.to_owned(),
@@ -1864,8 +1864,7 @@ fn candidate_materialization_by_patch(
 fn load_manifest(connection: &Connection, campaign_id: &str) -> Result<CampaignManifest> {
     let record = campaign(connection, campaign_id)?
         .with_context(|| format!("unknown campaign '{campaign_id}'"))?;
-    let manifest: CampaignManifest = serde_json::from_str(&record.manifest_json)
-        .context("durable campaign manifest is not typed JSON")?;
+    let manifest = CampaignManifest::from_stored_json(&record.manifest_json)?;
     manifest.validate()?;
     Ok(manifest)
 }

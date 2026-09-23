@@ -10,8 +10,8 @@ use papertiger_mise::{
 };
 use serde::Deserialize;
 
-const REQUEST_SCHEMA: &str = "papertiger-mise.deterministic-evaluator-request.v1";
-const OUTPUT_SCHEMA: &str = "papertiger-mise.deterministic-evaluator-output.v1";
+const REQUEST_SCHEMA: &str = "papertiger-mise.deterministic_evaluator_request.v2";
+const OUTPUT_SCHEMA: &str = "papertiger-mise.deterministic_evaluator_output.v2";
 const EVALUATOR_LOCATOR: &str = "crates/papertiger-mise/examples/debt_campaign_evaluator.rs";
 
 // These markers are concrete copies of boundary decisions currently repeated

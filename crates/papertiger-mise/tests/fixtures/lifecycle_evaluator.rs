@@ -5,7 +5,7 @@ use std::time::Duration;
 const CONTRACT: &[u8] = include_bytes!("lifecycle_evaluator.rs");
 const MODE: &str = "PAPERTIGER_MISE_LIFECYCLE_FIXTURE_MODE";
 const DESCENDANT: &str = "PAPERTIGER_MISE_LIFECYCLE_FIXTURE_DESCENDANT";
-const OUTPUT: &str = "{\"schema\":\"papertiger-mise.deterministic-evaluator-output.v1\",\"observations\":[{\"objective\":\"latency-ms\",\"baseline\":10.0,\"candidate\":8.0},{\"objective\":\"tests-pass\",\"baseline\":1.0,\"candidate\":1.0}],\"reason_code\":null}";
+const OUTPUT: &str = "{\"schema\":\"papertiger-mise.deterministic_evaluator_output.v2\",\"observations\":[{\"objective\":\"latency-ms\",\"baseline\":10.0,\"candidate\":8.0},{\"objective\":\"tests-pass\",\"baseline\":1.0,\"candidate\":1.0}],\"reason_code\":null}";
 
 fn main() {
     if std::env::var_os(DESCENDANT).is_some() {
@@ -41,7 +41,7 @@ fn run() -> Result<(), String> {
     std::io::stdin()
         .read_to_end(&mut request)
         .map_err(|error| error.to_string())?;
-    if !request.starts_with(b"{\"schema\":\"papertiger-mise.deterministic-evaluator-request.v1\"") {
+    if !request.starts_with(b"{\"schema\":\"papertiger-mise.deterministic_evaluator_request.v2\"") {
         return Err("stdin is not a deterministic evaluator request".to_owned());
     }
     match mode.as_str() {

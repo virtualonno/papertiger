@@ -87,7 +87,7 @@ fn campaign_preflight_failure_reports_json_without_creating_a_database() {
     );
     let report: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("preflight stdout is one JSON report");
-    assert_eq!(report["schema"], "papertiger-mise.campaign-preflight.v1");
+    assert_eq!(report["schema"], "papertiger-mise.campaign_preflight.v2");
     assert_eq!(report["ready"], false);
     assert_eq!(report["defects"][0]["check"], "manifest.path");
     assert!(

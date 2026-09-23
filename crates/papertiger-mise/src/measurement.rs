@@ -9,8 +9,8 @@ use crate::digest::{sha256, validate_sha256};
 use crate::improvement::ObjectiveRole;
 use crate::validation::validate_nonblank;
 
-pub const MEASUREMENT_CONTRACT_SCHEMA_V1: &str = "papertiger-mise.measurement-contract.v1";
-pub const MEASUREMENT_SAMPLE_SCHEMA_V1: &str = "papertiger-mise.measurement-sample.v1";
+pub const MEASUREMENT_CONTRACT_SCHEMA_V2: &str = "papertiger-mise.measurement_contract.v2";
+pub const MEASUREMENT_SAMPLE_SCHEMA_V2: &str = "papertiger-mise.measurement_sample.v2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -135,8 +135,8 @@ pub struct MeasurementContract {
 
 impl MeasurementContract {
     pub fn validate(&self, unit: &str, role: ObjectiveRole) -> Result<()> {
-        if self.schema != MEASUREMENT_CONTRACT_SCHEMA_V1 {
-            bail!("measurement.schema must be {MEASUREMENT_CONTRACT_SCHEMA_V1}");
+        if self.schema != MEASUREMENT_CONTRACT_SCHEMA_V2 {
+            bail!("measurement.schema must be {MEASUREMENT_CONTRACT_SCHEMA_V2}");
         }
         for (name, value) in [
             ("subject", self.subject.as_str()),
@@ -282,8 +282,8 @@ pub struct ObservationProvenance {
 
 impl MeasurementSample {
     pub fn validate(&self, contract: &MeasurementContract) -> Result<()> {
-        if self.schema != MEASUREMENT_SAMPLE_SCHEMA_V1 {
-            bail!("measurement sample requires schema={MEASUREMENT_SAMPLE_SCHEMA_V1}");
+        if self.schema != MEASUREMENT_SAMPLE_SCHEMA_V2 {
+            bail!("measurement sample requires schema={MEASUREMENT_SAMPLE_SCHEMA_V2}");
         }
         if &self.observed != contract {
             bail!(
@@ -431,7 +431,7 @@ pub(crate) mod tests {
 
     pub(crate) fn contract(unit: &str) -> MeasurementContract {
         MeasurementContract {
-            schema: MEASUREMENT_CONTRACT_SCHEMA_V1.to_owned(),
+            schema: MEASUREMENT_CONTRACT_SCHEMA_V2.to_owned(),
             subject: "synthetic measurement contract fixture".to_owned(),
             process_role: ProcessRole::TestHarness,
             executable_name: "fixture-evaluator".to_owned(),
@@ -461,7 +461,7 @@ pub(crate) mod tests {
 
     pub(crate) fn sample(contract: &MeasurementContract, value: i64) -> MeasurementSample {
         MeasurementSample {
-            schema: MEASUREMENT_SAMPLE_SCHEMA_V1.to_owned(),
+            schema: MEASUREMENT_SAMPLE_SCHEMA_V2.to_owned(),
             observed: contract.clone(),
             process: MeasuredProcess {
                 pid: 7,

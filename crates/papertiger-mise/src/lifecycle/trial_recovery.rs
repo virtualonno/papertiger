@@ -123,14 +123,14 @@ pub fn abandon_owned_trial(
     connection: &Connection,
     actor: &str,
     trial_id: &str,
-    reason: &str,
+    why: &str,
 ) -> Result<SettlementOutcome> {
     validate_nonblank("actor", actor)?;
     validate_nonblank("trial_id", trial_id)?;
-    validate_nonblank("reason", reason)?;
+    validate_nonblank("trial abandonment rationale (--why)", why)?;
     let outcome_json = json!({
-        "schema": "papertiger-mise.trial-abandonment.v1",
-        "reason": reason,
+        "schema": "papertiger-mise.trial_abandonment.v2",
+        "why": why,
         "reservation_charged": true,
         "process_absence_claimed": false,
     });
@@ -191,7 +191,7 @@ pub fn abandon_owned_trial(
         "trial",
         trial_id,
         "abandoned-before-launch",
-        Some(reason),
+        Some(why),
         Some(&outcome_json),
     )?;
     transaction.commit()?;
@@ -266,7 +266,7 @@ pub fn recover_workspace_trial(
         );
     }
     let evidence = ProcessAbsenceEvidence {
-        schema: "papertiger-mise.process-absence-evidence.v1",
+        schema: "papertiger-mise.process_absence_evidence.v2",
         pid,
         expected_process_birth_identity: expected_birth,
         observation: &observation,
@@ -274,7 +274,7 @@ pub fn recover_workspace_trial(
     };
     let evidence = crate::object::preserve_object(object_root, &serde_json::to_vec(&evidence)?)?;
     let proof = AbsenceProof {
-        verifier: "papertiger-mise.os-process-observer.v1".to_owned(),
+        verifier: "papertiger-mise.os_process_observer.v2".to_owned(),
         observed_at: Utc::now().to_rfc3339(),
         supervisor_identity: supervisor_identity.to_owned(),
         process_birth_identity: Some(expected_birth.to_owned()),

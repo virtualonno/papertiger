@@ -176,7 +176,7 @@ impl MisePlannerProjection {
         let material: Value = serde_json::from_slice(material_bytes)
             .context("projected candidate material is not JSON")?;
         if material.get("schema").and_then(Value::as_str)
-            != Some("papertiger-mise.candidate-material.v1")
+            != Some("papertiger-mise.candidate_material.v2")
         {
             bail!("projected candidate material has an unsupported schema");
         }
@@ -325,7 +325,7 @@ mod tests {
     use super::*;
 
     fn fixture() -> MisePlannerProjection {
-        let material = r#"{"schema":"papertiger-mise.candidate-material.v1","kind":"git_change_set","protocol":"papertiger-mise.git-change-set.v1","media_type":"application/vnd.papertiger-mise.git-change-set+json","payload_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","scope":{"changed_paths":["src/lib.rs"],"operations":["modify"]},"change_set":{"schema":"papertiger-mise.git-change-set.v1","changes":[]}}"#;
+        let material = r#"{"schema":"papertiger-mise.candidate_material.v2","kind":"git_change_set","protocol":"papertiger-mise.git_change_set.v2","media_type":"application/vnd.papertiger-mise.git-change-set+json","payload_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","scope":{"changed_paths":["src/lib.rs"],"operations":["modify"]},"change_set":{"schema":"papertiger-mise.git_change_set.v2","changes":[]}}"#;
         MisePlannerProjection {
             schema: MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned(),
             campaign_id: "subject-objective-a01".to_owned(),
