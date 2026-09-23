@@ -50,7 +50,7 @@ enum Cmd {
     /// Print the bundled JSON Schema for local planner reads, recovery, and mutation receipts; never opens authority
     Schema,
     /// Install a project-local native binary, receipt, ignore policy, and agent contract; does not accept --db or --actor
-    #[command(after_help = "JSON schema: papertiger.project_setup.v5")]
+    #[command(after_help = "JSON schema: papertiger.project_install_result.v6")]
     SetupProject {
         /// Existing consuming project directory
         project_root: std::path::PathBuf,
@@ -67,9 +67,6 @@ enum Cmd {
         #[arg(long, value_enum, value_name = "auto|agents|claude|both|none")]
         skill_target: Option<project_setup::SkillTargetRequest>,
     },
-    /// Inspect repository-owned AGENTS.md and CLAUDE.md without editing them or opening the planning authority
-    #[command(after_help = "JSON schema: papertiger.project_guidance.v1")]
-    InspectProjectGuidance {},
     /// Remove only receipt-owned project integration files; preserves authority and repository policy
     UninstallProject {
         /// Existing consuming project directory
@@ -1265,62 +1262,9 @@ fn run_planner(cli: Cli) -> Result<()> {
             for action in &result.actions {
                 println!("  {:?} {}", action.action, action.path);
             }
-            println!("  repository guidance (observed only; never managed):");
-            for file in &result.project_guidance.files {
-                println!("    {}: {}", file.path, file.classification.as_str());
-            }
             println!("next:");
             for action in &result.next_actions {
                 println!("  - {action}");
-            }
-        }
-        return Ok(());
-    }
-
-    if let Cmd::InspectProjectGuidance {} = &cli.cmd {
-        if cli.db.is_some() {
-            bail!(
-                "inspect-project-guidance does not accept --db because it never opens the planning authority; omit --db"
-            );
-        }
-        if cli.actor.is_some() {
-            bail!(
-                "inspect-project-guidance does not accept --actor because it records no planning events; omit --actor"
-            );
-        }
-        let root = if let Some(root) = cli.authority_project_root.as_deref() {
-            root.to_path_buf()
-        } else {
-            let current = std::env::current_dir().context("resolve current directory")?;
-            project_setup::discover_project_root(&current)?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no project-install receipt was discovered from {}; run from an installed project or pass --project-root <DIR>. For a first installation, inspect setup without writing with: papertiger setup-project \"{}\" --dry-run --json",
-                    current.display(),
-                    current.display()
-                )
-            })?
-        };
-        let result = project_setup::inspect_installed_project_guidance(&root)?;
-        if json {
-            println!("{}", serde_json::to_string_pretty(&result)?);
-        } else {
-            println!("papertiger repository guidance at {}", result.project_root);
-            println!(
-                "scope: {} ({} bytes per file)",
-                result.scope, result.max_file_bytes
-            );
-            for file in &result.files {
-                println!("  {}: {}", file.path, file.classification.as_str());
-                println!("    {}", file.detail);
-                println!(
-                    "    repository-owned trigger example: {}",
-                    file.corrective_trigger
-                );
-            }
-            println!("pair: {}", result.pair.detail);
-            println!("limitations:");
-            for limitation in &result.limitations {
-                println!("  - {limitation}");
             }
         }
         return Ok(());
@@ -1515,7 +1459,6 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::SetupProject { .. } | Cmd::Personal(_) => {
             unreachable!()
         }
-        Cmd::InspectProjectGuidance { .. } => unreachable!(),
         Cmd::UninstallProject { .. } => unreachable!(),
         Cmd::Init => unreachable!(),
         Cmd::Schema => unreachable!(),

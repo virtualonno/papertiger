@@ -127,7 +127,7 @@ mkdir -p "$project/.agents/skills/unrelated"
 printf 'unrelated skill\n' > "$project/.agents/skills/unrelated/SKILL.md"
 
 "$planner" setup-project "$project" --dry-run --json > "$fixture/setup-dry-run.json"
-grep -q '"schema": "papertiger.project_setup.v5"' "$fixture/setup-dry-run.json"
+grep -q '"schema": "papertiger.project_install_result.v6"' "$fixture/setup-dry-run.json"
 grep -q '"agents"' "$fixture/setup-dry-run.json"
 test ! -e "$project/scripts/papertiger"
 test ! -e "$project/scripts/papertiger.cmd"

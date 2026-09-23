@@ -2470,13 +2470,13 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
 
 fn mise_projection_fixture() -> pt::MisePlannerProjection {
     use pt::{
-        MISE_PLANNER_PROJECTION_SCHEMA_V1, MiseBudgetProjection, MiseMutationProjection,
+        MISE_PLANNER_PROJECTION_SCHEMA, MiseBudgetProjection, MiseMutationProjection,
         MisePlannerProjection, MiseProjectionDisposition, MiseSourceProjection, sha256,
     };
 
     let material = r#"{"schema":"papertiger-mise.candidate-material.v1","kind":"git_change_set","protocol":"papertiger-mise.git-change-set.v1","media_type":"application/vnd.papertiger-mise.git-change-set+json","payload_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","scope":{"changed_paths":["src/lib.rs"],"operations":["modify"]},"change_set":{"schema":"papertiger-mise.git-change-set.v1","changes":[]}}"#;
     MisePlannerProjection {
-        schema: MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned(),
+        schema: MISE_PLANNER_PROJECTION_SCHEMA.to_owned(),
         campaign_id: "subject-objective-a01".to_owned(),
         manifest_sha256: "1".repeat(64),
         candidate_id: "2".repeat(64),
@@ -2577,6 +2577,38 @@ fn mise_projection_is_immutable_idempotent_non_authoritative_and_transferable() 
         .unwrap()
         .unwrap();
     assert_eq!(restored_record.task_seq, task);
+    assert!(pt::audit(&restored).unwrap().is_empty());
+}
+
+#[test]
+fn legacy_mise_projection_id_is_readable_history_but_not_recordable() {
+    let mut legacy = mise_projection_fixture();
+    legacy.schema = pt::MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned();
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "projection", "Projection", "").unwrap();
+    let task = pt::add_task(&conn, "test", plan, "evidence", "", None, &[], &[], 0, None).unwrap();
+    let error =
+        pt::record_mise_projection(&conn, "test", task, &serde_json::to_vec(&legacy).unwrap())
+            .unwrap_err()
+            .to_string();
+    assert!(
+        error.contains("retired id papertiger.mise-planner-projection.v1")
+            && error.contains("papertiger mise record"),
+        "{error}"
+    );
+
+    let current = serde_json::to_vec(&mise_projection_fixture()).unwrap();
+    pt::record_mise_projection(&conn, "test", task, &current).unwrap();
+    let mut dump = pt::export(&conn, None).unwrap();
+    dump.mise_projections[0].projection_sha256 = legacy.projection_sha256().unwrap();
+    dump.mise_projections[0].projection = legacy;
+    let restored = db();
+    pt::import(&restored, "test", &dump).unwrap();
+    let stored = pt::task_mise_projections(&restored, task).unwrap();
+    assert_eq!(
+        stored[0].projection.schema,
+        pt::MISE_PLANNER_PROJECTION_SCHEMA_V1
+    );
     assert!(pt::audit(&restored).unwrap().is_empty());
 }
 

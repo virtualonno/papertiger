@@ -7,6 +7,19 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+const INSPECTION_SCHEMA: &str = "papertiger.history_inspection.v2";
+const QUARANTINE_SCHEMA: &str = "papertiger.history_quarantine.v2";
+/// Envelope id written by releases before 0.18; stored events are immutable,
+/// so readers keep accepting it.
+const QUARANTINE_SCHEMA_V1: &str = "papertiger.history-quarantine.v1";
+
+fn quarantine_schema(value: &serde_json::Value) -> bool {
+    matches!(
+        value.as_str(),
+        Some(QUARANTINE_SCHEMA | QUARANTINE_SCHEMA_V1)
+    )
+}
+
 pub(crate) const VIEW: &str = "CREATE VIEW canonical_events AS SELECT events.* FROM events WHERE NOT EXISTS (SELECT 1 FROM event_quarantines q WHERE q.event_id=events.event_id)";
 pub(crate) const IMMUTABILITY: &str = r#"
 CREATE TRIGGER event_quarantines_append_only_update BEFORE UPDATE ON event_quarantines
@@ -114,7 +127,7 @@ pub fn inspect(conn: &Connection, event_id: i64) -> Result<HistoryInspection> {
         )
         .optional()?;
     Ok(HistoryInspection {
-        schema: "papertiger.history-inspection.v1",
+        schema: INSPECTION_SCHEMA,
         original,
         sha256,
         problems,
@@ -128,9 +141,7 @@ pub(crate) fn validate_envelope(value: Option<&serde_json::Value>) -> Result<()>
     let original: RawEvent = serde_json::from_value(value["original"].clone())
         .context("quarantine_event original fields are incomplete; restore a verified export")?;
     let digest = crate::digest::sha256(&serde_json::to_vec(&original)?);
-    if value["schema"] != "papertiger.history-quarantine.v1"
-        || value["source_event_sha256"] != digest
-    {
+    if !quarantine_schema(&value["schema"]) || value["source_event_sha256"] != digest {
         bail!("quarantine_event evidence digest or schema is invalid; restore a verified export");
     }
     Ok(())
@@ -185,7 +196,7 @@ pub fn quarantine(
         );
     }
     let payload = serde_json::json!({
-        "schema": "papertiger.history-quarantine.v1",
+        "schema": QUARANTINE_SCHEMA,
         "disposition": "untrusted historical evidence; no timestamp, task association, or task state is inferred",
         "source_event_sha256": inspected.sha256,
         "original": inspected.original,
@@ -247,7 +258,7 @@ pub(crate) fn validate(conn: &Connection) -> Result<()> {
             .map(serde_json::from_str::<serde_json::Value>)
             .transpose()?;
         let valid = value.as_ref().is_some_and(|v| {
-            v["schema"] == "papertiger.history-quarantine.v1"
+            quarantine_schema(&v["schema"])
                 && v["source_event_sha256"] == inspected.sha256
                 && serde_json::from_value::<RawEvent>(v["original"].clone())
                     .ok()

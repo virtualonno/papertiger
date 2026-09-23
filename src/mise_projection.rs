@@ -102,6 +102,12 @@ pub fn record_mise_projection(
         bail!("recording a Mise projection requires a nonblank actor");
     }
     let projection = parse_mise_planner_projection(bytes)?;
+    if projection.schema != crate::MISE_PLANNER_PROJECTION_SCHEMA {
+        bail!(
+            "Mise planner projection uses the retired id {}; regenerate it with the current `papertiger-mise projection inspect`, then run `papertiger mise record <task> <projection>`",
+            projection.schema
+        );
+    }
     let projection_sha256 = projection.projection_sha256()?;
     let projection_json = serde_json::to_string(&projection)?;
     let transaction = begin_mutation(connection)?;

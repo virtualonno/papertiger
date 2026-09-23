@@ -6,6 +6,9 @@ use serde_json::Value;
 
 use crate::{sha256, validate_sha256};
 
+pub const MISE_PLANNER_PROJECTION_SCHEMA: &str = "papertiger.mise_planner_projection.v2";
+/// Documents recorded before 0.18 carry this id inside their hashed bytes.
+/// They stay readable and importable; new recordings must use the current id.
 pub const MISE_PLANNER_PROJECTION_SCHEMA_V1: &str = "papertiger.mise-planner-projection.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,8 +109,10 @@ pub struct MisePlannerProjectionSummary {
 
 impl MisePlannerProjection {
     pub fn validate(&self) -> Result<()> {
-        if self.schema != MISE_PLANNER_PROJECTION_SCHEMA_V1 {
-            bail!("Mise planner projection schema must be {MISE_PLANNER_PROJECTION_SCHEMA_V1}");
+        if self.schema != MISE_PLANNER_PROJECTION_SCHEMA
+            && self.schema != MISE_PLANNER_PROJECTION_SCHEMA_V1
+        {
+            bail!("Mise planner projection schema must be {MISE_PLANNER_PROJECTION_SCHEMA}");
         }
         for (name, value) in [
             ("campaign_id", self.campaign_id.as_str()),
@@ -327,7 +332,7 @@ mod tests {
     fn fixture() -> MisePlannerProjection {
         let material = r#"{"schema":"papertiger-mise.candidate-material.v1","kind":"git_change_set","protocol":"papertiger-mise.git-change-set.v1","media_type":"application/vnd.papertiger-mise.git-change-set+json","payload_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","scope":{"changed_paths":["src/lib.rs"],"operations":["modify"]},"change_set":{"schema":"papertiger-mise.git-change-set.v1","changes":[]}}"#;
         MisePlannerProjection {
-            schema: MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned(),
+            schema: MISE_PLANNER_PROJECTION_SCHEMA.to_owned(),
             campaign_id: "subject-objective-a01".to_owned(),
             manifest_sha256: "1".repeat(64),
             candidate_id: "2".repeat(64),

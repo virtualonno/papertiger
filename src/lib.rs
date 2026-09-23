@@ -68,9 +68,9 @@ pub use mise_projection::{
     task_mise_projection_summaries, task_mise_projections,
 };
 pub use mise_projection_contract::{
-    MISE_PLANNER_PROJECTION_SCHEMA_V1, MiseBudgetProjection, MiseMutationProjection,
-    MisePlannerProjection, MisePlannerProjectionSummary, MiseProjectionDisposition,
-    MiseSourceProjection,
+    MISE_PLANNER_PROJECTION_SCHEMA, MISE_PLANNER_PROJECTION_SCHEMA_V1, MiseBudgetProjection,
+    MiseMutationProjection, MisePlannerProjection, MisePlannerProjectionSummary,
+    MiseProjectionDisposition, MiseSourceProjection,
 };
 
 pub const SCHEMA_VERSION: i64 = 13;

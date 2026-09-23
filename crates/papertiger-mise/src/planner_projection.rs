@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use papertiger::{
-    MISE_PLANNER_PROJECTION_SCHEMA_V1, MiseBudgetProjection, MiseMutationProjection,
+    MISE_PLANNER_PROJECTION_SCHEMA, MiseBudgetProjection, MiseMutationProjection,
     MisePlannerProjection, MiseProjectionDisposition, MiseSourceProjection,
 };
 use rusqlite::Connection;
@@ -132,7 +132,7 @@ fn build_projection(
         })
         .collect();
     let projection = MisePlannerProjection {
-        schema: MISE_PLANNER_PROJECTION_SCHEMA_V1.to_owned(),
+        schema: MISE_PLANNER_PROJECTION_SCHEMA.to_owned(),
         campaign_id: manifest.campaign_id.clone(),
         manifest_sha256: verified.manifest_sha256,
         candidate_id: verified.candidate.candidate_id,

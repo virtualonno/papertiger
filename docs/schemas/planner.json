@@ -2265,7 +2265,7 @@
       ],
       "properties": {
         "schema": {
-          "const": "papertiger.history-inspection.v1"
+          "const": "papertiger.history_inspection.v2"
         },
         "original": {
           "type": "object",

@@ -65,6 +65,28 @@ fn quarantine_preserves_exact_evidence_and_round_trips_without_inventing_provena
         .find(|e| e.kind == "quarantine_event")
         .unwrap();
     assert_eq!(recovered.payload, envelope.payload);
+    assert_eq!(payload["schema"], "papertiger.history_quarantine.v2");
+    for (schema, accepted) in [
+        ("papertiger.history-quarantine.v1", true),
+        ("papertiger.history_quarantine.v1", false),
+    ] {
+        let mut legacy = pt::parse_dump_json(&serde_json::to_string(&dump).unwrap()).unwrap();
+        legacy
+            .events
+            .iter_mut()
+            .find(|e| e.kind == "quarantine_event")
+            .unwrap()
+            .payload
+            .as_mut()
+            .unwrap()["schema"] = serde_json::json!(schema);
+        let fresh = Connection::open_in_memory().unwrap();
+        pt::init(&fresh).unwrap();
+        assert_eq!(
+            pt::import(&fresh, "restore", &legacy).is_ok(),
+            accepted,
+            "{schema}"
+        );
+    }
     let mut forged = dump;
     forged
         .events

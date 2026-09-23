@@ -7,12 +7,10 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 mod filesystem;
-mod guidance;
 mod receipt;
 mod runtime_receipt;
 mod uninstall;
 
-pub(crate) use guidance::{ProjectGuidanceInspection, inspect_installed_project_guidance};
 pub(crate) use uninstall::{UninstallProjectRequest, uninstall_project};
 
 use filesystem::{
@@ -135,7 +133,6 @@ pub(crate) struct SetupProjectResult {
     pub(crate) dry_run: bool,
     pub(crate) operation: SetupOperation,
     pub(crate) actions: Vec<SetupAction>,
-    pub(crate) project_guidance: ProjectGuidanceInspection,
     pub(crate) next_actions: Vec<String>,
 }
 
@@ -502,9 +499,8 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         verify_runtime_installation(&root, &desired_runtime_receipt)?;
     }
 
-    let project_guidance = guidance::inspect_project_guidance(&root, &skill_targets);
     let authority_exists = root.join(Path::new(&authority_path)).is_file();
-    let mut next_actions = if request.dry_run {
+    let next_actions = if request.dry_run {
         let mut apply_command = format!("papertiger setup-project \"{}\"", normalized_path(&root));
         if prior_receipt.is_none() && request.authority_path.is_some() {
             apply_command.push_str(&format!(" --authority-path {authority_path}"));
@@ -593,15 +589,9 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         ));
         applied
     };
-    if !request.dry_run || prior_receipt.is_some() {
-        next_actions.push(format!(
-            "Inspect the bounded repository-owned guidance observation with: papertiger --project-root \"{}\" inspect-project-guidance --json. This read-only diagnostic never edits AGENTS.md or CLAUDE.md and does not prove that a harness will follow them.",
-            normalized_path(&root)
-        ));
-    }
 
     Ok(SetupProjectResult {
-        schema: "papertiger.project_setup.v5",
+        schema: "papertiger.project_install_result.v6",
         version: env!("CARGO_PKG_VERSION"),
         project_root: normalized_path(&root),
         authority_path,
@@ -611,7 +601,6 @@ pub(crate) fn setup_project(request: SetupProjectRequest<'_>) -> Result<SetupPro
         dry_run: request.dry_run,
         operation,
         actions,
-        project_guidance,
         next_actions,
     })
 }
@@ -1180,21 +1169,7 @@ mod tests {
         request.dry_run = true;
         let result = setup_project(request).unwrap();
         assert!(result.dry_run);
-        assert_eq!(result.schema, "papertiger.project_setup.v5");
-        assert!(result.project_guidance.inspection_complete);
-        assert!(
-            result
-                .project_guidance
-                .files
-                .iter()
-                .all(|file| { file.classification == guidance::GuidanceClassification::Missing })
-        );
-        assert!(
-            result
-                .next_actions
-                .iter()
-                .all(|action| !action.contains("inspect-project-guidance"))
-        );
+        assert_eq!(result.schema, "papertiger.project_install_result.v6");
         assert_eq!(result.runtime_install.binary.bytes, 17);
         assert_eq!(
             result.runtime_install.binary.sha256,
@@ -1515,11 +1490,9 @@ mod tests {
         .unwrap();
 
         let first = setup_project(request(&project, &binary)).unwrap();
-        assert_eq!(first.schema, "papertiger.project_setup.v5");
+        assert_eq!(first.schema, "papertiger.project_install_result.v6");
         assert_eq!(first.operation, SetupOperation::Install);
         assert_eq!(first.authority_path, DEFAULT_AUTHORITY_PATH);
-        assert_eq!(first.project_guidance.files.len(), 2);
-        assert!(first.project_guidance.inspection_complete);
         assert!(first.next_actions.iter().any(|action| {
             action.contains("tools/papertiger/bin/papertiger")
                 && action.contains("no shell launcher or process bridge")
@@ -1532,10 +1505,6 @@ mod tests {
             action.contains("tools/papertiger/bin")
                 && action.contains(DEFAULT_AUTHORITY_PATH)
                 && action.contains("never changes existing index entries")
-        }));
-        assert!(first.next_actions.iter().any(|action| {
-            action.contains("inspect-project-guidance --json")
-                && action.contains("never edits AGENTS.md or CLAUDE.md")
         }));
         assert_eq!(
             fs::read_to_string(project.join("AGENTS.md")).unwrap(),
