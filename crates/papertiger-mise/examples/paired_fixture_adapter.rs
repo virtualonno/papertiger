@@ -1,8 +1,8 @@
-//! Cross-platform external adapter used by the Contextmink paired dogfood.
+//! Cross-platform external adapter used by the `paired_dogfood` example.
 //!
 //! The adapter deliberately measures a tracked synthetic score fixture. It
 //! proves Mise's process, schedule, CAS, and classification lifecycle without
-//! presenting that score as a Contextmink performance measurement.
+//! presenting that score as a performance measurement of the source repository.
 
 use std::io::{Read as _, Write as _};
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ use serde_json::json;
 #[path = "support/synthetic_measurement.rs"]
 mod synthetic_measurement;
 
-const RESULT_SCHEMA: &str = "contextmink.synthetic-paired-trial-result.v1";
+const RESULT_SCHEMA: &str = "papertiger-mise.synthetic_paired_trial_result.v1";
 
 fn main() -> Result<()> {
     let mut request_bytes = Vec::new();
@@ -32,12 +32,10 @@ fn main() -> Result<()> {
         serde_json::from_value(request_value).context("type paired request")?;
     if request.schema != papertiger_mise::adapter::PAIRED_TRIAL_REQUEST_SCHEMA_V4 {
         bail!(
-            "synthetic fixture adapter requires paired-trial-request.v3 with measurement contracts"
+            "synthetic fixture adapter requires papertiger-mise.paired_trial_request.v4 with measurement contracts"
         );
     }
     let root = participant_root(&request.participant.identity_sha256.0)?;
-    let cargo = std::fs::read(root.join("Cargo.toml"))
-        .with_context(|| format!("read Contextmink Cargo.toml in {}", root.display()))?;
     let score_path = root.join(".mise-paired-score");
     let (score, score_source_sha256) = if score_path.exists() {
         let bytes = std::fs::read(&score_path)
@@ -49,7 +47,7 @@ fn main() -> Result<()> {
             .context("synthetic score is not a signed integer")?;
         (score, sha256(&bytes))
     } else {
-        (10_000, sha256(b"contextmink.synthetic-baseline.v1"))
+        (10_000, sha256(b"papertiger-mise.synthetic_baseline.v1"))
     };
     let executable = std::fs::canonicalize(std::env::current_exe()?)?;
     let process = MeasuredProcess::current()?;
@@ -64,13 +62,12 @@ fn main() -> Result<()> {
         adapter_executable_sha256: Sha256Digest(sha256(&std::fs::read(&executable)?)),
         participant_identity_sha256: request.participant.identity_sha256.clone(),
         domain_trial_receipt: json!({
-            "cargo_toml_sha256": sha256(&cargo),
             "execution_id": request.execution_id,
             "participant_revision": request.participant.revision,
             "score_source_sha256": score_source_sha256,
         }),
         domain_authority: json!({
-            "kind": "contextmink-tracked-synthetic-score",
+            "kind": "tracked-synthetic-score",
             "performance_claim": false,
         }),
         measurements: request

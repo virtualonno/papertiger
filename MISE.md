@@ -80,8 +80,8 @@ reproducible-build proof. It relies on the already-frozen evaluator to attest
 that it executed the declared argv, and on the operator-trusted host, compiler,
 filesystem, and CAS boundary. The supervisor proves that the exact retained
 bytes appeared in an empty trial-owned output root; it does not trace every
-compiler syscall. The earlier `parent_promotion_proof.v2` shape without a
-build binding is not accepted for a new descendant.
+compiler syscall. A `papertiger-mise.parent_promotion_proof.v2` proof, which
+carries no build binding, is not accepted for a new descendant.
 
 ## Campaign identity and naming
 
@@ -94,7 +94,7 @@ nomination or promotion-proof receipt on its independent gate.
 
 New campaign IDs use `<subject>-<objective>-aNN`: a stable consuming project or
 domain, a concise research objective, and a zero-padded admission-attempt
-ordinal. For example, `contextmink-clippy-idioms-a05` and
+ordinal. For example, `billing-service-clippy-idioms-a05` and
 `papertiger-mise-lifecycle-split-a01` say what is being judged without claiming
 an outcome. Increment `aNN` only when an already-admitted immutable manifest
 must be replaced; candidate retries and trial repetitions retain their own
@@ -180,30 +180,27 @@ local trust boundary.
 
 The brief (`papertiger-mise.project_improvement_brief.v3`) and compiled draft
 (`papertiger-mise.compiled_improvement_draft.v3`) preserve the same typed
-contracts; an earlier brief is refused with the command's required
-replacement fields rather than silently converted.
+contracts; a brief under any other schema is refused with the expected schema
+and required fields rather than converted.
 
 ### Schema identifiers
 
 Every Mise-owned schema, protocol, and domain-separation identifier has the
-form `papertiger-mise.<snake_case_name>.v<N>`. Release 0.18.0 renamed all of
-them and advanced every version, so no current identifier equals a retired one.
-Readers refuse a retired identifier and name its replacement. An
-operator-authored input — campaign manifest, containment policy, adapter
-binding, fixture bundle, brief, approval, paradigm registry, or evaluator
-output — must be re-authored under the current identifier. A campaign or
-shadow observation recorded before 0.18.0 stays frozen: every stored-manifest
-and shadow-evidence reader refuses it, so reopen it with a 0.17.x binary or
-admit a new campaign. Nothing converts retired evidence in place.
+form `papertiger-mise.<snake_case_name>.v<N>`. Each reader accepts exactly the
+identifiers it implements and refuses any other value, naming the expected
+identifier. An operator-authored input — campaign manifest, containment
+policy, adapter binding, fixture bundle, brief, approval, paradigm registry,
+or evaluator output — must be authored under that expected identifier. Stored
+evidence is never converted in place: a stored manifest or shadow observation
+under an unsupported identifier is refused, and its remedy is to restore the
+authority from verified recovery evidence or to record new evidence.
 
-The runtime still implements the shapes that preceded measurement provenance
-under renamed identifiers: `papertiger-mise.campaign.v3` (legacy Git-patch
-material), deterministic evaluator request and output v2, trial receipts v2–v4,
-materialization v3, candidate identity v2, paired analysis v2, paired trial
-request v3, and parent promotion proof v2. Admission accepts only
-`papertiger-mise.campaign.v4`, and no pre-0.18.0 authority holds these renamed
-identifiers, so today those shapes are reachable only from the crate's own tests
-until they are removed.
+The runtime also implements shapes without measurement provenance:
+`papertiger-mise.campaign.v3` (Git-patch material), deterministic evaluator
+request and output v2, trial receipts v2–v4, materialization v3, candidate
+identity v2, paired analysis v2, paired trial request v3, and parent promotion
+proof v2. Admission accepts only `papertiger-mise.campaign.v4`, so those shapes
+are reachable only from the crate's own tests until they are removed.
 
 A targeted structural campaign may use an exact target-module measurement as
 its primary objective, but it must retain the repository-wide largest-module
@@ -233,7 +230,7 @@ Measurements and thresholds are scaled signed integers. Decision arithmetic,
 binomial tails, Holm comparisons, and median order statistics use no floating
 point. Admission refuses an exact policy whose scaled values do not represent
 the campaign's declared objective thresholds and bounds those integers to a
-domain where distinct values cannot collapse to the same legacy `f64`
+domain where distinct values cannot collapse to the same manifest `f64`
 declaration. For a direction-normalized
 paired improvement, equality at a practical or non-regression threshold is a
 success; equality at a strict regression threshold is not a regression. Every
@@ -258,8 +255,9 @@ superiority, or safety outside the named objectives, population, hardware,
 fixtures, and environment profile.
 
 The current crate exposes the exact classifier and atomically reserves each
-research slot against its realized schedule. The earlier
-`papertiger-mise.paired_analysis.v2` shape is not executable.
+research slot against its realized schedule. The
+`papertiger-mise.paired_analysis.v2` shape binds no trial adapter and is not
+executable.
 `papertiger-mise.paired_analysis.v3` freezes an
 exact trial adapter executable, argv, working directory, environment, protocol,
 and bounds. Before launch, the durable runner derives the complete AB/BA
@@ -291,7 +289,7 @@ Historical evidence enters only through `evidence historical-shadow`. Its
 schema structurally requires `decision_eligible=false`, no campaign or candidate
 binding, unavailable schedule authority, and prohibited adjudication. Start
 times may describe observed order, but can never manufacture a precommitted
-schedule. This is replay and cutover evidence, not qualification evidence.
+schedule. This is replay evidence, not qualification evidence.
 
 Read-only domain observations use the separate `evidence domain-shadow`
 contract. A domain-shadow adapter binds an exact executable, argv, working
@@ -531,10 +529,10 @@ v3 with environment-bound `papertiger-mise.trial_receipt.v5`, or
 `papertiger-mise.paired_trial_request.v4` with provenance-bearing measurements.
 The `deterministic_evaluator` and `paired_fixture_adapter` examples exercise
 the current contract with explicitly synthetic data. The structural
-`debt_campaign_evaluator` and `lifecycle_campaign_evaluator` sources still emit
-the pre-provenance output v2 shape, which no admissible campaign accepts; author
-a v3 collector with explicit measurement scope before starting a new structural
-campaign.
+`debt_campaign_evaluator` and `lifecycle_campaign_evaluator` sources emit
+`papertiger-mise.deterministic_evaluator_output.v2`, which no admissible
+campaign accepts; author a v3 collector with explicit measurement scope before
+starting a structural campaign.
 
 The evaluator request binds both result-tree IDs and the runtime-verified
 baseline worktree locator. Successor-safe evaluators measure the candidate and
@@ -624,11 +622,11 @@ other than the frozen base plus the retained records. The public constructor
 derives this material from two exact full Git trees; the record command accepts
 only its canonical bytes.
 
-Legacy `git_patch.v1` material belongs only to the retained
-`papertiger-mise.campaign.v3` shape described under Schema identifiers. There is
-deliberately no public patch-recording compatibility alias: new operator writes use `candidate build-material` and `--material`.
-Legacy admission still refuses an allowlist entry absent from its base tree,
-while a typed Git change-set campaign may admit a new path. This contract does
+`git_patch.v1` material belongs only to the `papertiger-mise.campaign.v3`
+shape described under Schema identifiers, and no public command records it:
+operator writes use `candidate build-material` and `--material`. A
+`papertiger-mise.campaign.v3` manifest refuses an allowlist entry absent from
+its base tree, while a typed Git change-set campaign may admit a new path. This contract does
 not pretend every domain is Git. A future Ghidramink operation packet requires
 a separately named kind, protocol, scope validator, and materializer before it
 can become live decision evidence; existing Ghidramink runs remain shadow
@@ -657,8 +655,9 @@ of failed history. Cold recovery observes the durable PID and OS process birth
 identity itself and refuses a matching live evaluator. Absence evidence,
 conservative settlement, and the terminal trial transition commit in one
 transaction. It can also reverify a successful trial's CAS receipt and
-atomically settle a legacy
-succeeded-but-reserved row without replaying the evaluator. New successful
+atomically settle a
+succeeded trial whose reservation is still unsettled without replaying the
+evaluator. New successful
 completion commits terminal evidence and measured settlement in one SQLite
 transaction. The ambiguous `owned` window before PID ownership commits is
 closed only by `trial abandon`, which records an operator rationale and charges
@@ -691,11 +690,9 @@ cannot be reserved again. This makes prelaunch refusal recoverable without
 claiming that already bound or launched work used no resources.
 
 Every rationale flag also accepts `--why-file <path>` (or `-` for stdin).
-Cancellation requires Mise authority schema v9 or later; this binary requires
-v10, which renames the recorded cancellation rationale to `why`. Upgrade an
-existing authority deliberately with `papertiger-mise --db <database> init`;
-read commands never migrate it and older binaries refuse this schema rather
-than ignore cancellation requests.
+This binary requires Mise authority schema v10, which records the cancellation
+rationale as `why`. Migrate an existing authority deliberately with
+`papertiger-mise --db <database> init`; read commands never migrate it.
 
 Every campaign has a finite deadline, cumulative resource caps, failure caps,
 and a no-improvement stopping rule. Sequential early stopping is permitted only
@@ -771,11 +768,10 @@ not an adversarial-tenant boundary supplied by this library.
 Fixture baselines must be measured under the manifest's exact evaluator
 environment, not the authoring shell: the trial supervisor clears ambient
 state, and observed toolchain output (including rendered clippy warning sets)
-differs between an operator's full environment and the frozen one. Two
-Contextmink campaigns have now failed closed on exactly this class of
-measurement skew — a stale shared `CARGO_TARGET_DIR` in the first pilot and an
-ambient-environment baseline in `contextmink-clippy-portable-v4` — which is the
-no-op calibration doing its job, not runtime noise.
+differs between an operator's full environment and the frozen one. A baseline
+measured in the ambient environment, or through a stale shared
+`CARGO_TARGET_DIR`, makes the no-op calibration fail closed; that refusal is
+the calibration doing its job, not runtime noise.
 
 An evaluator may additionally declare `rust_build_environment`. Admission then
 binds exact Cargo and rustc executables, a named toolchain, the tracked
@@ -895,19 +891,20 @@ rejects semantically equivalent but byte-different input.
 materialization reservation shapes are public typed Rust values rather than an
 implicit CLI convention.
 
-The first repeatable external paired dogfood targets an isolated clone of
-Contextmink and uses a tracked synthetic score solely to exercise the lifecycle:
+The repeatable external paired dogfood targets an isolated clone of any clean
+SHA-1 Git repository and uses a tracked synthetic score solely to exercise the
+lifecycle:
 
 ```text
 cargo build -p papertiger-mise --examples
-contextmink_paired_dogfood --contextmink <repo> --state <new-contextmink-state-dir>
+paired_dogfood --repo <repository> --state <new-state-dir>
 ```
 
 It creates three real candidate materializations and 48 supervised adapter
 executions. A successful run requires an exactly flat no-op, a rejected
 known-bad calibration, a qualified research cohort reconstructed from CAS, globally
 unique domain receipts, and zero residual budget reservations. The output is
-not a Contextmink performance claim.
+not a performance claim about the cloned repository.
 
 The repeatable deterministic dogfood is an explicit gate after Mise lifecycle
 changes, rather than part of the generic workspace suite:

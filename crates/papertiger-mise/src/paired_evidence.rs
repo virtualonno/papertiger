@@ -204,9 +204,9 @@ pub fn record_historical_shadow(
     Ok((PairedEvidenceOutcome::Recorded, record))
 }
 
-/// Decode a durable binding. Evidence recorded before the 0.18.0 schema-id
-/// cutover is frozen: its schema is checked on the raw document and refused
-/// before any current reader interprets it.
+/// Decode a durable binding. Its schema is checked on the raw document, so a
+/// binding under any schema this reader does not implement is refused before
+/// its fields are interpreted.
 fn stored_historical_binding(binding_json: &str) -> Result<PairedAdapterBinding> {
     let value: serde_json::Value = serde_json::from_str(binding_json)?;
     let schema = value
@@ -218,7 +218,7 @@ fn stored_historical_binding(binding_json: &str) -> Result<PairedAdapterBinding>
             "historical-shadow binding",
             schema,
             crate::adapter::PAIRED_ADAPTER_BINDING_SCHEMA_V2,
-            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+            crate::schema_ids::STORED_EVIDENCE_REMEDY,
         ));
     }
     Ok(serde_json::from_value(value)?)
@@ -282,7 +282,7 @@ pub fn historical_shadow(
             "historical-shadow receipt",
             &receipt.schema,
             HISTORICAL_SHADOW_RECEIPT_SCHEMA_V2,
-            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+            crate::schema_ids::STORED_EVIDENCE_REMEDY,
         ));
     }
     let result = parse_historical_result(&result_bytes)?;
@@ -403,16 +403,7 @@ fn observed_order(
 }
 
 fn parse_historical_result(bytes: &[u8]) -> Result<DomainObservationResult> {
-    let mut value: Value = serde_json::from_slice(bytes)?;
-    let object = value
-        .as_object_mut()
-        .context("historical shadow result must be an object")?;
-    if !object.contains_key("adapter_executable_sha256")
-        && let Some(legacy) = object.remove("executor_executable_sha256")
-    {
-        object.insert("adapter_executable_sha256".to_owned(), legacy);
-    }
-    serde_json::from_value(value).context("parse historical shadow domain result")
+    serde_json::from_slice(bytes).context("parse historical shadow domain result")
 }
 
 fn observed_order_label(order: ObservedRunOrder) -> &'static str {
@@ -425,16 +416,18 @@ fn observed_order_label(order: ObservedRunOrder) -> &'static str {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn pre_cutover_historical_shadow_is_frozen() {
-        let error = super::stored_historical_binding(
-            r#"{"schema":"papertiger-mise.paired-adapter-binding.v1"}"#,
-        )
-        .expect_err("pre-0.18 historical-shadow evidence is frozen")
-        .to_string();
+    fn unsupported_stored_historical_binding_names_expected_schema() {
+        let error =
+            super::stored_historical_binding(r#"{"schema":"papertiger-mise.unknown_document.v1"}"#)
+                .expect_err("unsupported stored historical-shadow binding must be refused")
+                .to_string();
         assert!(
-            error.contains("papertiger-mise.paired_adapter_binding.v2"),
+            error.contains("expected 'papertiger-mise.paired_adapter_binding.v2'"),
             "{error}"
         );
-        assert!(error.contains("papertiger-mise 0.17.x"), "{error}");
+        assert!(
+            error.contains(crate::schema_ids::STORED_EVIDENCE_REMEDY),
+            "{error}"
+        );
     }
 }

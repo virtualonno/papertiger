@@ -223,15 +223,15 @@ fn reopen_paired_execution(
 ) -> Result<ReopenedPairedExecution> {
     let request_object = indexed_object(connection, &run.request_sha256)?;
     let (request, _): (PairedTrialRequest, Vec<u8>) =
-        read_verified_json(object_root, &request_object, "paired run request")?;
+        read_verified_json(object_root, &request_object, "paired execution request")?;
     if &request != expected_request {
-        bail!("paired run request differs from its exact regenerated schedule");
+        bail!("paired execution request differs from its exact regenerated schedule");
     }
     let result_object = indexed_object(
         connection,
         run.adapter_result_sha256
             .as_deref()
-            .context("successful paired run lost its adapter result")?,
+            .context("successful paired execution lost its adapter result")?,
     )?;
     let result_bytes = read_object(object_root, &result_object)?;
     let (_, result) = parse_validate_paired_trial_result(
@@ -245,7 +245,7 @@ fn reopen_paired_execution(
         connection,
         run.domain_receipt_sha256
             .as_deref()
-            .context("successful paired run lost its domain receipt")?,
+            .context("successful paired execution lost its domain receipt")?,
     )?;
     let (domain_receipt, _): (Value, Vec<u8>) =
         read_verified_json(object_root, &domain_object, "paired domain receipt")?;
@@ -256,7 +256,7 @@ fn reopen_paired_execution(
         connection,
         run.execution_receipt_sha256
             .as_deref()
-            .context("successful paired run lost its Mise execution receipt")?,
+            .context("successful paired execution lost its Mise execution receipt")?,
     )?;
     let (receipt, _): (PairedExecutionReceipt, Vec<u8>) =
         read_verified_json(object_root, &execution_object, "paired execution receipt")?;
@@ -387,7 +387,7 @@ pub fn execute_next_paired_execution(
         next_run_with_status(connection, cohort_id, PairedExecutionStatus::Launched)?
     {
         bail!(
-            "paired run '{}' has durable live ownership; run `papertiger-mise paired recover {}` before continuing",
+            "paired execution '{}' has durable live ownership; run `papertiger-mise paired recover {}` before continuing",
             launched.execution_id,
             launched.execution_id
         );
@@ -581,7 +581,7 @@ pub fn execute_next_paired_execution(
     }
     Ok(PairedExecutionOutcome::Completed(Box::new(
         paired_execution(connection, &run.execution_id)?
-            .context("completed paired run disappeared")?,
+            .context("completed paired execution disappeared")?,
     )))
 }
 
@@ -621,7 +621,9 @@ fn replay_paired_cohort(
             .iter()
             .any(|run| run.status != PairedExecutionStatus::Succeeded)
     {
-        bail!("paired adjudication requires every predeclared run to have succeeded exactly once");
+        bail!(
+            "paired adjudication requires every predeclared execution to have succeeded exactly once"
+        );
     }
     let mut results = BTreeMap::new();
     let mut execution_receipts = Vec::with_capacity(runs.len());
@@ -630,7 +632,7 @@ fn replay_paired_cohort(
         if usize::try_from(run.ordinal)? != ordinal
             || run.execution_id != expected_request.execution_id
         {
-            bail!("paired run order differs from the predeclared schedule");
+            bail!("paired execution order differs from the predeclared schedule");
         }
         let reopened = reopen_paired_execution(
             connection,
@@ -1158,25 +1160,25 @@ pub fn recover_paired_execution(
     execution_id: &str,
 ) -> Result<PairedExecutionRecord> {
     let run = paired_execution(connection, execution_id)?
-        .with_context(|| format!("unknown paired run '{execution_id}'"))?;
+        .with_context(|| format!("unknown paired execution '{execution_id}'"))?;
     if run.status != PairedExecutionStatus::Launched {
         bail!(
-            "paired recovery requires a launched run, found '{}'",
+            "paired recovery requires a launched execution, found '{}'",
             run.status
         );
     }
     let durable =
-        paired_cohort(connection, &run.cohort_id)?.context("paired run lost its cohort")?;
-    let pid = run.pid.context("launched paired run has no PID")?;
+        paired_cohort(connection, &run.cohort_id)?.context("paired execution lost its cohort")?;
+    let pid = run.pid.context("launched paired execution has no PID")?;
     let birth = run
         .process_birth_identity
         .as_deref()
-        .context("launched paired run has no process birth identity")?;
+        .context("launched paired execution has no process birth identity")?;
     match observe_process(pid)? {
         ProcessObservation::Active {
             process_birth_identity,
         } if process_birth_identity == birth => bail!(
-            "paired run '{execution_id}' still owns a live process; wait and rerun `papertiger-mise paired recover {execution_id}`"
+            "paired execution '{execution_id}' still owns a live process; wait and rerun `papertiger-mise paired recover {execution_id}`"
         ),
         ProcessObservation::Exited {
             process_birth_identity,
@@ -1539,7 +1541,7 @@ fn complete_paired_execution(
         ],
     )?;
     if changed != 1 {
-        bail!("paired run completion lost its exact launched ownership");
+        bail!("paired execution completion lost its exact launched ownership");
     }
     record_event_in_mutation(
         &transaction,
@@ -1576,7 +1578,7 @@ fn terminal_run_failure(
     let cohort_terminal_status = match terminal_status {
         PairedExecutionStatus::InfrastructureFailed => PairedCohortStatus::InfrastructureFailed,
         PairedExecutionStatus::IntegrityFailed => PairedCohortStatus::IntegrityFailed,
-        other => bail!("paired run failure cannot record nonterminal status '{other}'"),
+        other => bail!("paired execution failure cannot record nonterminal status '{other}'"),
     };
     let stdout_object = preserve_object(object_root, stdout)?;
     let stderr_object = preserve_object(object_root, stderr)?;
@@ -1612,7 +1614,7 @@ fn terminal_run_failure(
         ],
     )?;
     if changed != 1 {
-        bail!("paired run failure reconciliation lost its nonterminal ownership");
+        bail!("paired execution failure reconciliation lost its nonterminal ownership");
     }
     transaction.execute(
         "UPDATE paired_cohorts
@@ -1654,7 +1656,7 @@ fn terminal_run_failure(
     transaction.commit()?;
     Ok(PairedExecutionOutcome::Completed(Box::new(
         paired_execution(connection, &run.execution_id)?
-            .context("failed paired run disappeared")?,
+            .context("failed paired execution disappeared")?,
     )))
 }
 
@@ -1675,7 +1677,7 @@ fn mark_paired_execution_launched(
         params![execution_id, i64::from(pid), process_birth_identity, at],
     )?;
     if changed != 1 {
-        bail!("paired run launch could not bind its exact prepared intent");
+        bail!("paired execution launch could not bind its exact prepared intent");
     }
     transaction.execute(
         "UPDATE paired_cohorts SET status='running'
@@ -1710,7 +1712,7 @@ fn heartbeat_paired_execution(
         params![execution_id, now()],
     )?;
     if changed != 1 {
-        bail!("paired run heartbeat lost its exact launched ownership");
+        bail!("paired execution heartbeat lost its exact launched ownership");
     }
     record_event_in_mutation(
         &transaction,

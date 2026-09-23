@@ -27,7 +27,7 @@ mod path_identity;
 pub mod planner_projection;
 mod process_identity;
 pub mod promotion;
-pub mod schema_ids;
+mod schema_ids;
 pub mod state;
 pub mod statistics;
 pub mod store;

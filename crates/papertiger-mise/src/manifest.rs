@@ -194,7 +194,8 @@ pub struct ObjectiveSpec {
     pub regression_tolerance: f64,
     /// Absolute acceptance boundary, required for hard constraints.
     pub acceptance_threshold: Option<f64>,
-    /// Absent only in historical v1 manifests; every v2 objective binds meaning.
+    /// Absent only in `papertiger-mise.campaign.v3` manifests; every
+    /// `papertiger-mise.campaign.v4` objective binds its measurement contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub measurement: Option<crate::measurement::MeasurementContract>,
     /// Absolute target, required only for target-directed objectives.
@@ -349,14 +350,14 @@ pub struct KnownBadCalibration {
 #[serde(transparent)]
 pub struct Sha256Digest(pub String);
 
-/// Corrective action for a manifest that no current reader accepts.
-const MANIFEST_SCHEMA_REMEDY: &str = "author a new campaign manifest with schema papertiger-mise.campaign.v4 and run `papertiger-mise campaign preflight <manifest>`; a campaign admitted before papertiger-mise 0.18.0 is frozen and is never rewritten: reopen it with a papertiger-mise 0.17.x binary";
+/// Corrective action for an authored manifest whose schema no reader accepts.
+const MANIFEST_SCHEMA_REMEDY: &str = "author a campaign manifest with schema papertiger-mise.campaign.v4 and run `papertiger-mise campaign preflight <manifest>`";
 
 impl CampaignManifest {
     /// Decode an admitted manifest from authority storage. The schema is
-    /// checked on the raw document first, so a manifest admitted by a
-    /// pre-0.18.0 runtime is refused with its corrective action instead of
-    /// being decoded under a current reader's shape.
+    /// checked on the raw document first, so an unsupported manifest is
+    /// refused with its corrective action instead of being decoded under a
+    /// shape it does not declare.
     pub fn from_stored_json(json: &str) -> Result<Self> {
         let value: serde_json::Value = serde_json::from_str(json).context(
             "stored campaign manifest is not JSON; restore the campaign authority from verified recovery evidence",
@@ -370,7 +371,7 @@ impl CampaignManifest {
                 "stored campaign manifest",
                 schema,
                 CAMPAIGN_SCHEMA_V4,
-                crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+                crate::schema_ids::STORED_EVIDENCE_REMEDY,
             ));
         }
         serde_json::from_value(value).context(
@@ -522,7 +523,7 @@ impl CampaignManifest {
     pub(crate) fn validate_for_admission(&self) -> Result<()> {
         if self.schema != CAMPAIGN_SCHEMA_V4 {
             bail!(
-                "new campaign admission requires {CAMPAIGN_SCHEMA_V4} and objectives[].measurement; retain historical manifests unchanged and author a new campaign"
+                "campaign admission requires {CAMPAIGN_SCHEMA_V4} and objectives[].measurement; author a {CAMPAIGN_SCHEMA_V4} manifest and run `papertiger-mise campaign preflight <manifest>`"
             );
         }
         self.validate()
@@ -544,7 +545,7 @@ impl CampaignManifest {
             };
             if self.schema == CAMPAIGN_SCHEMA_V3 {
                 bail!(
-                    "historical papertiger-mise.campaign.v3 cannot add measurement contracts; author a new papertiger-mise.campaign.v4 manifest"
+                    "papertiger-mise.campaign.v3 does not accept measurement contracts; author a papertiger-mise.campaign.v4 manifest"
                 );
             }
             contract.validate(&objective.unit, objective.role)?;
@@ -1644,7 +1645,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn measurement_cutover_preserves_history_and_refuses_unscoped_admission() {
+    fn campaign_v3_round_trips_but_admission_requires_measured_v4() {
         let historical = valid_manifest();
         let bytes = historical.canonical_bytes().unwrap();
         assert!(round_trip_objectives_have_no_measurement(&historical));
@@ -2588,7 +2589,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn legacy_native_limit_and_process_tree_claims_are_rejected() {
+    fn native_limit_and_process_tree_claims_are_unknown_fields() {
         let manifest = valid_manifest();
         let mut value = serde_json::to_value(&manifest).expect("manifest JSON");
         value["execution_limits"]["maximum_processes"] = serde_json::json!(2);
@@ -2599,7 +2600,7 @@ pub(crate) mod tests {
         let mut value = serde_json::to_value(&manifest).expect("manifest JSON");
         value["containment"] = serde_json::json!("process_tree");
         let error = serde_json::from_value::<CampaignManifest>(value)
-            .expect_err("process-tree grade must no longer exist");
+            .expect_err("process_tree is not a containment grade");
         assert!(error.to_string().contains("process_tree"), "{error:#}");
     }
 

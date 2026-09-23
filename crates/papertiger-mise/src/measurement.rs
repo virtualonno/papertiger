@@ -383,7 +383,7 @@ pub(crate) fn validate_deterministic_provenance(
             Ok(())
         }
         _ => bail!(
-            "measurement contract and retained observation provenance must both be present; legacy values cannot supply provenance"
+            "measurement contract and retained observation provenance must both be present; an observation without provenance cannot satisfy a measurement contract"
         ),
     }
 }

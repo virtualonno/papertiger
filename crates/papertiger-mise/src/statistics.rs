@@ -1309,7 +1309,7 @@ fn validate_blocks<'a>(
             || !seen_trial_receipts.insert(block.baseline_trial_receipt_sha256.0.as_str())
             || !seen_trial_receipts.insert(block.candidate_trial_receipt_sha256.0.as_str())
         {
-            bail!("each paired run requires a unique immutable trial receipt");
+            bail!("each paired execution requires a unique immutable trial receipt");
         }
         let observations = block
             .observations

@@ -79,7 +79,7 @@ fn cancellation_of_real_paired_run_settles_the_entire_cohort() {
         {
             break;
         }
-        assert!(Instant::now() < deadline, "paired run did not launch");
+        assert!(Instant::now() < deadline, "paired execution did not launch");
         std::thread::sleep(Duration::from_millis(10));
     }
     let request = request_cancellation(

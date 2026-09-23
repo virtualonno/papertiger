@@ -233,8 +233,8 @@ pub fn record_domain_shadow(
     Ok((DomainShadowOutcome::Recorded, record))
 }
 
-/// Decode a durable binding. Evidence recorded before the 0.18.0 schema-id
-/// cutover is frozen and refused rather than reopened under current readers.
+/// Decode a durable binding. A binding under any schema other than the one
+/// this reader implements is refused rather than reinterpreted.
 fn stored_domain_shadow_binding(binding_json: &str) -> Result<DomainShadowAdapterBinding> {
     let binding: DomainShadowAdapterBinding = serde_json::from_str(binding_json)?;
     if serde_json::to_vec(&binding)? != binding_json.as_bytes() {
@@ -245,7 +245,7 @@ fn stored_domain_shadow_binding(binding_json: &str) -> Result<DomainShadowAdapte
             "domain-shadow binding",
             &binding.schema,
             DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2,
-            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+            crate::schema_ids::STORED_EVIDENCE_REMEDY,
         ));
     }
     binding.validate_contract()?;
@@ -321,7 +321,7 @@ pub fn domain_shadow(
             "domain-shadow receipt",
             &receipt.schema,
             DOMAIN_SHADOW_RECEIPT_SCHEMA_V2,
-            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+            crate::schema_ids::STORED_EVIDENCE_REMEDY,
         ));
     }
     validate_domain_shadow_result(&binding, &result, &sha256(&request_bytes))?;
@@ -684,15 +684,20 @@ mod tests {
             .expect("domain shadow record");
         assert_eq!(reopened, record);
 
-        let retired = String::from_utf8(serde_json::to_vec(&binding).expect("binding JSON"))
+        let unsupported = String::from_utf8(serde_json::to_vec(&binding).expect("binding JSON"))
             .expect("binding UTF-8")
             .replace(
                 DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2,
-                "papertiger-mise.domain-shadow-adapter-binding.v1",
+                "papertiger-mise.unknown_document.v1",
             );
-        let error = stored_domain_shadow_binding(&retired)
-            .expect_err("pre-0.18 domain-shadow evidence is frozen")
+        let error = stored_domain_shadow_binding(&unsupported)
+            .expect_err("unsupported stored domain-shadow binding must be refused")
             .to_string();
-        assert!(error.contains("papertiger-mise 0.17.x"), "{error}");
+        assert!(
+            error.contains(&format!(
+                "expected '{DOMAIN_SHADOW_ADAPTER_BINDING_SCHEMA_V2}'"
+            )),
+            "{error}"
+        );
     }
 }

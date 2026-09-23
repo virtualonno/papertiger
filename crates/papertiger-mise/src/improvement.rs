@@ -333,7 +333,7 @@ pub fn validate_project_improvement_brief(bytes: &[u8]) -> Result<ProjectImprove
             "project improvement brief",
             header["schema"].as_str().unwrap_or_default(),
             PROJECT_IMPROVEMENT_BRIEF_SCHEMA_V3,
-            "author a new brief with schema papertiger-mise.project_improvement_brief.v3, typed objectives[].measurement, and resource_costs; retain historical bytes unchanged",
+            "author the brief with schema papertiger-mise.project_improvement_brief.v3, typed objectives[].measurement, and resource_costs",
         ));
     }
     let brief: ProjectImprovementBrief =

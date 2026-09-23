@@ -2031,7 +2031,7 @@ fn validate_trial_receipt_schema(
             "trial receipt",
             &receipt.schema,
             expected_schema,
-            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+            crate::schema_ids::STORED_EVIDENCE_REMEDY,
         ));
     }
     if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {

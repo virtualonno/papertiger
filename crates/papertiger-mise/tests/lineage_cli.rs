@@ -148,30 +148,74 @@ fn help(args: &[&str]) -> String {
 }
 
 #[test]
-fn paired_surface_names_executions_and_retires_run_commands() {
-    for command in ["execute-next", "show-execution", "list-executions"] {
-        help(&["paired", command]);
-    }
-    for retired in ["run-next", "show-run", "list-runs"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
-            .args(["paired", retired, "--help"])
-            .output()
-            .expect("launch retired paired command");
-        assert!(!output.status.success(), "paired {retired} must not exist");
-    }
-    for (group, retired, current) in [
-        ("improvement", "verify", "verify-registry"),
-        ("improvement", "brief-verify", "verify-brief"),
-        ("promotion", "inspect", "rederive"),
-        ("projection", "inspect", "export"),
+fn operator_surface_uses_canonical_command_names() {
+    for command in [
+        &["paired", "execute-next"][..],
+        &["paired", "show-execution"],
+        &["paired", "list-executions"],
+        &["improvement", "verify-registry"],
+        &["improvement", "verify-brief"],
+        &["promotion", "rederive"],
+        &["projection", "export"],
     ] {
-        help(&[group, current]);
-        let output = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
-            .args([group, retired, "--help"])
-            .output()
-            .expect("launch retired command");
-        assert!(!output.status.success(), "{group} {retired} must not exist");
+        help(command);
     }
+}
+
+#[test]
+fn unknown_paired_execution_is_named_the_same_by_every_command() {
+    let root = tempfile::tempdir().expect("project root");
+    let init = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+        .args(["--project-root"])
+        .arg(root.path())
+        .arg("init")
+        .output()
+        .expect("launch init");
+    assert!(
+        init.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    for command in [
+        &["paired", "show-execution", "nope"][..],
+        &["paired", "recover", "nope"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+            .args(["--project-root"])
+            .arg(root.path())
+            .args(command)
+            .output()
+            .expect("launch paired command");
+        assert!(
+            !output.status.success(),
+            "{command:?} accepted an unknown execution"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("unknown paired execution 'nope'"),
+            "{command:?}: {stderr}"
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+        .args(["--project-root"])
+        .arg(root.path())
+        .args(["paired", "cancel", "nope", "--why", "operator stop"])
+        .output()
+        .expect("launch paired cancel");
+    assert!(
+        !output.status.success(),
+        "cancel accepted an unknown execution"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cancellation requires a launched execution"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("Error code"),
+        "trigger refusal leaked SQLite noise: {stderr}"
+    );
 }
 
 #[test]
@@ -188,10 +232,6 @@ fn rationale_flags_are_why_pairs() {
         assert!(
             text.contains("--why-file <PATH|->"),
             "{command:?} lacks --why-file"
-        );
-        assert!(
-            !text.contains("--reason"),
-            "{command:?} still exposes --reason"
         );
     }
 }

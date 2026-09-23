@@ -1,7 +1,8 @@
-//! Repeatable public-API dogfood of durable paired authority against Contextmink.
+//! Repeatable public-API dogfood of durable paired authority over any SHA-1
+//! Git repository.
 //!
 //! The campaign deliberately uses a tracked synthetic score fixture. It is a
-//! lifecycle/authority probe, not a Contextmink performance result.
+//! lifecycle/authority probe, not a performance result for the repository.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
@@ -33,8 +34,8 @@ use papertiger_mise::{
 };
 use serde_json::json;
 
-const ACTOR: &str = "contextmink-paired-dogfood";
-const CAMPAIGN_ID: &str = "contextmink-paired-synthetic-a01";
+const ACTOR: &str = "paired-dogfood";
+const CAMPAIGN_ID: &str = "paired-dogfood-synthetic-a01";
 const SCORE_PATH: &str = ".mise-paired-score";
 
 struct SeedMaterial {
@@ -46,9 +47,10 @@ struct SeedMaterial {
 
 #[derive(Parser)]
 struct Args {
-    /// Canonical Contextmink repository. Only its committed HEAD is cloned.
+    /// Clean Git repository to clone as the campaign source. Only its
+    /// committed HEAD is cloned; the repository itself is never modified.
     #[arg(long)]
-    contextmink: PathBuf,
+    repo: PathBuf,
     /// New state directory; the dogfood refuses to overwrite any prior evidence.
     #[arg(long)]
     state: PathBuf,
@@ -67,8 +69,8 @@ fn main() -> Result<()> {
             args.state.display()
         );
     }
-    let source_input = std::fs::canonicalize(&args.contextmink)
-        .with_context(|| format!("canonicalize Contextmink {}", args.contextmink.display()))?;
+    let source_input = std::fs::canonicalize(&args.repo)
+        .with_context(|| format!("canonicalize repository {}", args.repo.display()))?;
     require_git_clean_head_exists(&source_input)?;
     std::fs::create_dir_all(&args.state)?;
     let state = std::fs::canonicalize(&args.state)?;
@@ -88,15 +90,14 @@ fn main() -> Result<()> {
 
     let fixtures = source.join("fixtures/mise");
     std::fs::create_dir_all(&fixtures)?;
-    let adapter_bytes =
-        br#"{"kind":"contextmink-synthetic-score-adapter","performance_claim":false}"#;
+    let adapter_bytes = br#"{"kind":"synthetic-score-adapter","performance_claim":false}"#;
     let evaluator_bytes = br#"{"kind":"paired-only-placeholder"}"#;
-    let no_op_fixture = br#"{"cohort":"no-op","schema":"contextmink.synthetic-fixture.v1"}"#;
+    let no_op_fixture = br#"{"cohort":"no-op","schema":"papertiger-mise.synthetic_fixture.v1"}"#;
     let known_bad_fixture =
-        br#"{"cohort":"known-bad","schema":"contextmink.synthetic-fixture.v1"}"#;
+        br#"{"cohort":"known-bad","schema":"papertiger-mise.synthetic_fixture.v1"}"#;
     let exploration_fixture =
-        br#"{"cohort":"research","schema":"contextmink.synthetic-fixture.v1"}"#;
-    let sampling_protocol = br#"{"independence":"the score outcome is constant over the population, so threshold indicators are degenerate independent Bernoulli variables","population":"all 256-bit synthetic workload labels","sampling":"one independent OS-CSPRNG draw per frozen block after candidate identity","schema":"contextmink.synthetic-sampling.v1"}"#;
+        br#"{"cohort":"research","schema":"papertiger-mise.synthetic_fixture.v1"}"#;
+    let sampling_protocol = br#"{"independence":"the score outcome is constant over the population, so threshold indicators are degenerate independent Bernoulli variables","population":"all 256-bit synthetic workload labels","sampling":"one independent OS-CSPRNG draw per frozen block after candidate identity","schema":"papertiger-mise.synthetic_sampling.v1"}"#;
     let order_seed_protocol = br#"{"commit":"sha256(OS-CSPRNG seed bytes)","generation":"after candidate identity","reveal":"only in the admitted cohort","schema":"papertiger-mise.order_seed_protocol.v2"}"#;
     for (name, bytes) in [
         ("adapter.json", adapter_bytes.as_slice()),
@@ -124,10 +125,12 @@ fn main() -> Result<()> {
     git_commit(&source, "add frozen Mise paired dogfood fixtures")?;
     let source_binding = inspect_source_binding(&source)?;
     if source_binding.git_object_format != GitObjectFormat::Sha1 {
-        bail!("dogfood currently expects Contextmink's SHA-1 Git object format");
+        bail!(
+            "paired dogfood supports only SHA-1 Git repositories; pass --repo with a SHA-1 repository"
+        );
     }
 
-    let proposal_policy = br#"{"policy":"external-agent-proposals-only","schema":"contextmink.synthetic-proposal-policy.v1"}"#;
+    let proposal_policy = br#"{"policy":"external-agent-proposals-only","schema":"papertiger-mise.synthetic_proposal_policy.v1"}"#;
     let policy_sha = digest(proposal_policy);
     let adapter_sha = digest(adapter_bytes);
     let known_bad_patch = score_patch(20_000);
@@ -197,7 +200,7 @@ fn main() -> Result<()> {
                 portable_lexical(&research.worktree)?,
             ),
         ]),
-        result_schema: "contextmink.synthetic-paired-trial-result.v1".to_owned(),
+        result_schema: "papertiger-mise.synthetic_paired_trial_result.v1".to_owned(),
         maximum_wall_time_ms: 5_000,
         maximum_output_bytes: 1_048_576,
     };
@@ -216,7 +219,7 @@ fn main() -> Result<()> {
             media_type: GIT_CHANGE_SET_MEDIA_TYPE.to_owned(),
         }),
         adapter: AdapterBinding {
-            name: "contextmink-synthetic-score".to_owned(),
+            name: "synthetic-score".to_owned(),
             protocol: "papertiger-mise.adapter.v2".to_owned(),
             implementation_locator: "fixtures/mise/adapter.json".to_owned(),
             implementation_sha256: Sha256Digest(adapter_sha.clone()),
@@ -349,7 +352,7 @@ fn main() -> Result<()> {
     let manifest_path = control.join("campaign.json");
     std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
     git(&control, &["add", "--all"])?;
-    git_commit(&control, "freeze Contextmink paired dogfood campaign")?;
+    git_commit(&control, "freeze paired dogfood campaign")?;
     let verified = verify_campaign_admission(&manifest_path)?;
 
     let database = state.join("mise.sqlite");
@@ -366,7 +369,7 @@ fn main() -> Result<()> {
     let no_op_record = run_cohort(
         &connection,
         &objects,
-        "contextmink-no-op",
+        "dogfood-no-op",
         &no_op,
         PairedCohort::NoOpCalibration,
         &seeds.no_op,
@@ -377,7 +380,7 @@ fn main() -> Result<()> {
     let known_bad_record = run_cohort(
         &connection,
         &objects,
-        "contextmink-known-bad",
+        "dogfood-known-bad",
         &known_bad,
         PairedCohort::KnownBadCalibration,
         &seeds.known_bad,
@@ -396,7 +399,7 @@ fn main() -> Result<()> {
     let research_record = run_cohort(
         &connection,
         &objects,
-        "contextmink-research",
+        "dogfood-research",
         &research,
         PairedCohort::Research {
             candidate_analysis_slot: 1,
@@ -417,7 +420,7 @@ fn main() -> Result<()> {
             "known_bad": known_bad_record,
             "research": research_record,
             "budgets": budget_balances(&connection, CAMPAIGN_ID)?,
-            "claim": "durable paired lifecycle proof over a synthetic tracked Contextmink fixture; not a performance result",
+            "claim": "durable paired lifecycle proof over a tracked synthetic fixture; not a performance result",
         }))?
     );
     Ok(())
@@ -528,7 +531,7 @@ fn paired_plan(
         trial_adapter: Some(trial_adapter),
         inference_scope:
             papertiger_mise::statistics::PairedInferenceScope::IndependentBlockPopulation {
-                population: "uniform-256-bit-contextmink-synthetic-workload-labels".to_owned(),
+                population: "uniform-256-bit-synthetic-workload-labels".to_owned(),
                 sampling_protocol_locator: "fixtures/mise/sampling-protocol.json".to_owned(),
                 sampling_protocol_sha256: Sha256Digest(digest(sampling_protocol)),
             },
@@ -602,7 +605,7 @@ fn paired_plan(
                     fixture_locator: "fixtures/mise/exploration.json".to_owned(),
                     fixture_sha256: Sha256Digest(exploration.to_owned()),
                     environment_profile_sha256: Sha256Digest(digest(
-                        b"contextmink.synthetic-environment.v1",
+                        b"papertiger-mise.synthetic_environment.v1",
                     )),
                     workload_seed: workload_seed.clone(),
                 },

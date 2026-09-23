@@ -537,7 +537,7 @@ enum EvidenceCommand {
         #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
-    /// Execute and retain adapter-backed legacy evidence without decision authority.
+    /// Execute and retain adapter-backed historical evidence without decision authority.
     #[command(name = "historical-shadow")]
     RecordHistorical {
         /// Paired adapter binding JSON file.
@@ -653,9 +653,26 @@ enum PromotionCommand {
 
 fn main() {
     if let Err(error) = run(Cli::parse()) {
-        eprintln!("error: {error:#}");
+        eprintln!("error: {}", render_error(&error));
         std::process::exit(1);
     }
+}
+
+/// Render an error chain as `{:#}` does, except that an authority trigger's
+/// `RAISE(ABORT, ...)` refusal ends the chain: its message is the complete
+/// refusal, and SQLite's generic constraint code beneath it adds no input.
+fn render_error(error: &anyhow::Error) -> String {
+    let mut rendered = Vec::new();
+    for cause in error.chain() {
+        rendered.push(cause.to_string());
+        if let Some(rusqlite::Error::SqliteFailure(failure, Some(_))) =
+            cause.downcast_ref::<rusqlite::Error>()
+            && failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER
+        {
+            break;
+        }
+    }
+    rendered.join(": ")
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -1721,4 +1738,42 @@ fn parse_amount(value: &str) -> Result<(BudgetResource, u64)> {
         bail!("budget amount must be nonzero");
     }
     Ok((resource, amount))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_error;
+
+    fn constraint_failure(ddl: &str, statement: &str) -> anyhow::Error {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory database");
+        connection.execute_batch(ddl).expect("fixture schema");
+        let error = connection
+            .execute(statement, [])
+            .expect_err("fixture statement must be refused");
+        anyhow::Error::from(error).context("record fixture")
+    }
+
+    #[test]
+    fn trigger_refusal_omits_sqlite_constraint_code() {
+        let error = constraint_failure(
+            "CREATE TABLE fixture (id TEXT);
+             CREATE TRIGGER fixture_guard BEFORE INSERT ON fixture
+             BEGIN SELECT RAISE(ABORT, 'fixture refusal; run the corrective command'); END;",
+            "INSERT INTO fixture (id) VALUES ('one')",
+        );
+        assert_eq!(
+            render_error(&error),
+            "record fixture: fixture refusal; run the corrective command"
+        );
+    }
+
+    #[test]
+    fn other_sqlite_failures_keep_their_complete_chain() {
+        let error = constraint_failure(
+            "CREATE TABLE fixture (id TEXT NOT NULL);",
+            "INSERT INTO fixture (id) VALUES (NULL)",
+        );
+        assert_eq!(render_error(&error), format!("{error:#}"));
+        assert!(render_error(&error).contains("Error code"), "{error:#}");
+    }
 }
