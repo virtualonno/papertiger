@@ -26,8 +26,8 @@ use runtime_receipt::{
     runtime_receipt_relative_path, verify_runtime_installation, write_runtime_receipt,
 };
 
-const AGENT_INTEGRATION: &[u8] = include_bytes!("../../agent_integration.md");
-const AGENT_SKILL: &[u8] = include_bytes!("../../templates/papertiger/SKILL.md");
+const AGENT_INTEGRATION: &[u8] = include_bytes!("../../templates/agent_integration.md");
+const AGENT_SKILL: &[u8] = include_bytes!("../../templates/skills/papertiger/SKILL.md");
 const AGENT_INTEGRATION_PATH: &str = "tools/papertiger/agent_integration.md";
 const INSTALL_RECEIPT_PATH: &str = "tools/papertiger/project-install.json";
 const DEFAULT_AUTHORITY_PATH: &str = "state/papertiger.sqlite";

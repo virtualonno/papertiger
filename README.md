@@ -437,7 +437,7 @@ it is not a repository snapshot. For a commit-backed outcome, retain and hash
 the immutable audit receipt as evidence, then record the full commit object ID
 separately with `commit add`. Neither identity substitutes for the other.
 
-The installer copies [agent_integration.md](agent_integration.md) into the
+The installer copies [templates/agent_integration.md](templates/agent_integration.md) into the
 project as the reference the skill links to for installation, migration and
 recovery. No repository guidance edit is required.
 

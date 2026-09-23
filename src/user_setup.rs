@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use papertiger::sha256;
 const TOOL: &str = "papertiger";
-const SKILL: &str = include_str!("../templates/papertiger/SKILL.md");
-const REFERENCE: &[u8] = include_bytes!("../agent_integration.md");
+const SKILL: &str = include_str!("../templates/skills/papertiger/SKILL.md");
+const REFERENCE: &[u8] = include_bytes!("../templates/agent_integration.md");
 
 /// Separate derive boundary keeps Clap's debug stack bounded on Windows.
 #[derive(clap::Subcommand)]

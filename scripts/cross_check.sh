@@ -137,11 +137,11 @@ grep -Fq "\"papertiger_version\": \"$planner_semver\"" \
 grep -Fq '"authority_path": "state/papertiger.sqlite"' \
     "$project/tools/papertiger/project-install.json"
 cmp "$project/tools/papertiger/agent_integration.md" \
-    "$root/agent_integration.md"
+    "$root/templates/agent_integration.md"
 test -f "$project/.agents/skills/papertiger/SKILL.md"
 test ! -e "$project/.claude/skills/papertiger/SKILL.md"
 cmp "$project/.agents/skills/papertiger/SKILL.md" \
-    "$root/templates/papertiger/SKILL.md"
+    "$root/templates/skills/papertiger/SKILL.md"
 test "$(cat "$project/AGENTS.md")" = "repository contract"
 installed_planner="$project/tools/papertiger/bin/papertiger$exe"
 test "$(cd "$project" && "$installed_planner" --version)" = "$planner_version"

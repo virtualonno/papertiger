@@ -9,7 +9,7 @@ two separate SQLite authorities, one workspace.
 This file is the always-loaded contract. Load operational detail only when
 needed:
 
-- **Planner usage**: `agent_integration.md` (the vendored operating contract).
+- **Planner usage**: `templates/agent_integration.md` (the operating contract setup installs).
 - **Human changelogs**: the `changelog` skill.
 - **Mise campaigns**: `MISE.md` (generational model, evidence contract,
   promotion boundary). Ordinary planning work never needs it.

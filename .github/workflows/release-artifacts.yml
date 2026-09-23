@@ -156,7 +156,7 @@ jobs:
           mkdir -p "${bundle}"
           cp "target/${{ matrix.target }}/release/papertiger" "${bundle}/"
           cp "target/${{ matrix.target }}/release/papertiger-mise" "${bundle}/"
-          cp README.md CHANGELOG.md MISE.md agent_integration.md \
+          cp README.md CHANGELOG.md MISE.md templates/agent_integration.md \
              LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
           cat > "${bundle}/manifest.json" <<EOF
           {
@@ -189,7 +189,7 @@ jobs:
           mkdir -p "$bundle"
           cp "target/${{ matrix.target }}/release/papertiger.exe" "$bundle/"
           cp "target/${{ matrix.target }}/release/papertiger-mise.exe" "$bundle/"
-          cp README.md CHANGELOG.md MISE.md agent_integration.md \
+          cp README.md CHANGELOG.md MISE.md templates/agent_integration.md \
              LICENSE LICENSE-SSL LICENSE-VPL "$bundle/"
           cat > "$bundle/manifest.json" <<EOF
           {
@@ -261,7 +261,7 @@ jobs:
           test -f "$project/.agents/skills/papertiger/SKILL.md"
           test ! -e "$project/.claude/skills/papertiger/SKILL.md"
           cmp "$project/.agents/skills/papertiger/SKILL.md" \
-              templates/papertiger/SKILL.md
+              templates/skills/papertiger/SKILL.md
           test "$(cat "$project/AGENTS.md")" = "repository contract"
           installed_planner="$(cd "$project/tools/papertiger/bin" && pwd)/papertiger"
           test "$(cd "$project" && "$installed_planner" --version)" = "papertiger ${VERSION}"
@@ -344,7 +344,7 @@ jobs:
           test -f "$project/.agents/skills/papertiger/SKILL.md"
           test ! -e "$project/.claude/skills/papertiger/SKILL.md"
           cmp "$project/.agents/skills/papertiger/SKILL.md" \
-              templates/papertiger/SKILL.md
+              templates/skills/papertiger/SKILL.md
           test "$(cat "$project/AGENTS.md")" = "repository contract"
           installed_planner="$(cd "$project/tools/papertiger/bin" && pwd)/papertiger.exe"
           test "$(cd "$project" && "$installed_planner" --version)" = "papertiger ${VERSION}"
