@@ -1992,6 +1992,11 @@ mod tests {
         init(&fresh).expect("initialize current schema");
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize current schema");
+        // Store one v9 rationale before the v9 triggers exist, so the
+        // migration must carry real data rather than only reshape DDL.
+        let (v9_table, v9_triggers) = crate::cancellation::CANCELLATION_SCHEMA_V9
+            .split_once("CREATE TRIGGER")
+            .expect("v9 schema defines triggers");
         connection
             .execute_batch(&format!(
                 "DROP TRIGGER cancellation_request_launched_guard;
@@ -2000,9 +2005,13 @@ mod tests {
                  DROP TRIGGER trial_cancellation_success_guard;
                  DROP TRIGGER paired_cancellation_success_guard;
                  DROP TABLE cancellation_requests;
-                 {}
-                 UPDATE meta SET value='9' WHERE key='schema_version';",
-                crate::cancellation::CANCELLATION_SCHEMA_V9
+                 {v9_table}
+                 PRAGMA foreign_keys=OFF;
+                 INSERT INTO cancellation_requests (trial_id, actor, reason, requested_at)
+                   VALUES ('trial-v9', 'operator', 'stale branch after rebase', '2026-09-01T00:00:00Z');
+                 PRAGMA foreign_keys=ON;
+                 CREATE TRIGGER{v9_triggers}
+                 UPDATE meta SET value='9' WHERE key='schema_version';"
             ))
             .expect("construct exact v9 cancellation boundary");
         assert!(
@@ -2017,6 +2026,20 @@ mod tests {
         assert_eq!(migrated, cancellation_ddl(&fresh));
         assert!(migrated.iter().any(|sql| sql.contains("why TEXT NOT NULL")));
         assert!(migrated.iter().all(|sql| !sql.contains("reason")));
+        let preserved: (String, String) = connection
+            .query_row(
+                "SELECT trial_id, why FROM cancellation_requests",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("v9 cancellation row survives migration");
+        assert_eq!(
+            preserved,
+            (
+                "trial-v9".to_owned(),
+                "stale branch after rebase".to_owned()
+            )
+        );
         assert!(
             migrated
                 .iter()

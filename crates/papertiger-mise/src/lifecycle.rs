@@ -2027,7 +2027,12 @@ fn validate_trial_receipt_schema(
 ) -> Result<()> {
     let expected_schema = deterministic_trial_receipt_schema(manifest);
     if receipt.schema != expected_schema {
-        bail!("trial receipt requires schema={expected_schema} for this frozen campaign");
+        return Err(crate::schema_ids::schema_refusal(
+            "trial receipt",
+            &receipt.schema,
+            expected_schema,
+            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+        ));
     }
     if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {
         let expected = sha256(&serde_json::to_vec(&trial.environment)?);
