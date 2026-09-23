@@ -37,25 +37,40 @@ WHEN NEW.status='succeeded' AND EXISTS (
 BEGIN SELECT RAISE(ABORT, 'cancellation requested; supervisor must settle the paired run without qualification'); END;
 "#;
 
+/// v10 renames the operator rationale column to the canonical `why` and
+/// rewrites the launched-target refusal to name the current inspection
+/// commands. Fresh authorities apply the v9 DDL and then this step, so both
+/// paths hold identical schema text.
+pub(crate) const CANCELLATION_SCHEMA_V10: &str = r#"
+ALTER TABLE cancellation_requests RENAME COLUMN reason TO why;
+DROP TRIGGER cancellation_request_launched_guard;
+CREATE TRIGGER cancellation_request_launched_guard BEFORE INSERT ON cancellation_requests
+WHEN (NEW.trial_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM trials WHERE trial_id=NEW.trial_id AND status='launched'))
+  OR (NEW.execution_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM paired_runs WHERE execution_id=NEW.execution_id AND status='launched'))
+BEGIN SELECT RAISE(ABORT, 'cancellation requires a launched execution; inspect `papertiger-mise trial show` or `papertiger-mise paired show-execution`'); END;
+"#;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CancellationTarget {
     Trial,
-    PairedRun,
+    PairedExecution,
 }
 
 impl CancellationTarget {
     fn column(self) -> &'static str {
         match self {
             Self::Trial => "trial_id",
-            Self::PairedRun => "execution_id",
+            Self::PairedExecution => "execution_id",
         }
     }
 
     fn entity(self) -> &'static str {
         match self {
             Self::Trial => "trial",
-            Self::PairedRun => "paired_run",
+            Self::PairedExecution => "paired_run",
         }
     }
 }
@@ -66,7 +81,7 @@ pub struct CancellationRequest {
     pub target: CancellationTarget,
     pub execution_id: String,
     pub actor: String,
-    pub reason: String,
+    pub why: String,
     pub requested_at: String,
 }
 
@@ -101,7 +116,7 @@ pub fn cancellation_request(
     Ok(connection
         .query_row(
             &format!(
-                "SELECT actor, reason, requested_at FROM cancellation_requests WHERE {}=?1",
+                "SELECT actor, why, requested_at FROM cancellation_requests WHERE {}=?1",
                 target.column()
             ),
             params![execution_id],
@@ -110,7 +125,7 @@ pub fn cancellation_request(
                     target,
                     execution_id: execution_id.to_owned(),
                     actor: row.get(0)?,
-                    reason: row.get(1)?,
+                    why: row.get(1)?,
                     requested_at: row.get(2)?,
                 })
             },
@@ -126,16 +141,16 @@ pub fn request_cancellation(
     actor: &str,
     target: CancellationTarget,
     execution_id: &str,
-    reason: &str,
+    why: &str,
 ) -> Result<CancellationRequest> {
     validate_nonblank("actor", actor)?;
     validate_nonblank("execution_id", execution_id)?;
-    validate_nonblank("cancellation reason (--reason)", reason)?;
+    validate_nonblank("cancellation rationale (--why)", why)?;
     let transaction = begin_mutation(connection)?;
     if let Some(existing) = cancellation_request(&transaction, target, execution_id)? {
-        if existing.reason != reason {
+        if existing.why != why {
             bail!(
-                "execution '{execution_id}' already has a cancellation request; replay its exact --reason or inspect its recorded request"
+                "execution '{execution_id}' already has a cancellation request; replay its exact --why, or inspect the recorded request with `papertiger-mise trial show` or `papertiger-mise paired show-execution`"
             );
         }
         return Ok(existing);
@@ -144,12 +159,12 @@ pub fn request_cancellation(
         target,
         execution_id: execution_id.to_owned(),
         actor: actor.to_owned(),
-        reason: reason.to_owned(),
+        why: why.to_owned(),
         requested_at: now(),
     };
     transaction.execute(
-        &format!("INSERT INTO cancellation_requests ({}, actor, reason, requested_at) VALUES (?1, ?2, ?3, ?4)", target.column()),
-        params![execution_id, actor, reason, request.requested_at],
+        &format!("INSERT INTO cancellation_requests ({}, actor, why, requested_at) VALUES (?1, ?2, ?3, ?4)", target.column()),
+        params![execution_id, actor, why, request.requested_at],
     )?;
     record_event_in_mutation(
         &transaction,
@@ -157,7 +172,7 @@ pub fn request_cancellation(
         target.entity(),
         execution_id,
         "cancellation-requested",
-        Some(reason),
+        Some(why),
         Some(&serde_json::to_value(&request)?),
     )?;
     transaction.commit()?;

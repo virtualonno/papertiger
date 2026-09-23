@@ -781,9 +781,9 @@ pub fn materialize_candidate(
         verify_tree_has_only_regular_files(&manifest, &result_tree)?;
         let receipt = MaterializationReceipt {
             schema: if manifest.candidate_material.is_some() {
-                "papertiger-mise.materialization.v2"
+                "papertiger-mise.materialization.v4"
             } else {
-                "papertiger-mise.materialization.v1"
+                "papertiger-mise.materialization.v3"
             }
             .to_owned(),
             campaign_id: durable_candidate.campaign_id.clone(),
@@ -907,12 +907,12 @@ pub fn abandon_materialization_attempt(
     actor: &str,
     candidate_id: &str,
     reservation_id: &str,
-    reason: &str,
+    why: &str,
 ) -> Result<SettlementOutcome> {
     validate_nonblank("actor", actor)?;
     validate_nonblank("candidate_id", candidate_id)?;
     validate_nonblank("reservation_id", reservation_id)?;
-    validate_nonblank("reason", reason)?;
+    validate_nonblank("materialization abandonment rationale (--why)", why)?;
     let transaction = begin_mutation(connection)?;
     let candidate = candidate_in(&transaction, candidate_id)?
         .with_context(|| format!("unknown candidate '{candidate_id}'"))?;
@@ -949,7 +949,7 @@ pub fn abandon_materialization_attempt(
             "candidate",
             candidate_id,
             "materialization-abandoned",
-            Some(reason),
+            Some(why),
             Some(&json!({
                 "reservation_id": reservation_id,
                 "reservation_charged": true,
@@ -1037,7 +1037,7 @@ fn bind_or_require_reservation_use(
         )?;
         if active != 0 {
             bail!(
-                "prior {use_kind} reservation '{prior}' remains active; run `papertiger-mise candidate abandon-materialization {entity_key} --reservation {prior} --reason <reason>` before retrying"
+                "prior {use_kind} reservation '{prior}' remains active; run `papertiger-mise candidate abandon-materialization {entity_key} --reservation {prior} --why <rationale>` before retrying"
             );
         }
     }
@@ -1074,8 +1074,7 @@ fn campaign_manifest(connection: &Connection, campaign_id: &str) -> Result<Campa
         )
         .optional()?
         .with_context(|| format!("unknown campaign '{campaign_id}'"))?;
-    let manifest: CampaignManifest = serde_json::from_str(&manifest_json)
-        .context("stored campaign manifest is not a typed Mise manifest")?;
+    let manifest = CampaignManifest::from_stored_json(&manifest_json)?;
     manifest.validate()?;
     Ok(manifest)
 }
@@ -1131,7 +1130,9 @@ fn exact_patch_paths(candidate: &BoundCandidate) -> Result<BTreeSet<String>> {
                 || old.contains('"')
                 || new.contains('"')
             {
-                bail!("Mise v1 accepts only unquoted, non-renaming Git patch headers");
+                bail!(
+                    "legacy git_patch.v1 material accepts only unquoted, non-renaming Git patch headers"
+                );
             }
             let path = old[2..].to_owned();
             paths.insert(path.clone());
@@ -1141,7 +1142,9 @@ fn exact_patch_paths(candidate: &BoundCandidate) -> Result<BTreeSet<String>> {
                 .as_mut()
                 .context("patch old-file marker precedes a Git file header")?;
             if old == "/dev/null" {
-                bail!("Mise v1 candidate patches do not admit /dev/null new-file markers");
+                bail!(
+                    "legacy git_patch.v1 candidate patches do not admit /dev/null new-file markers"
+                );
             }
             if *old_seen || old != format!("a/{path}") {
                 bail!("candidate patch old-file marker differs from its Git header");
@@ -1152,7 +1155,9 @@ fn exact_patch_paths(candidate: &BoundCandidate) -> Result<BTreeSet<String>> {
                 .as_mut()
                 .context("patch new-file marker precedes a Git file header")?;
             if new == "/dev/null" {
-                bail!("Mise v1 candidate patches do not admit /dev/null deletion markers");
+                bail!(
+                    "legacy git_patch.v1 candidate patches do not admit /dev/null deletion markers"
+                );
             }
             if *new_seen || new != format!("b/{path}") {
                 bail!("candidate patch new-file marker differs from its Git header");
@@ -1169,10 +1174,10 @@ fn exact_patch_paths(candidate: &BoundCandidate) -> Result<BTreeSet<String>> {
             || line.starts_with("deleted file mode ")
             || line.starts_with("similarity index ")
         {
-            bail!("Mise v1 candidate patches do not admit rename/copy/mode records");
+            bail!("legacy git_patch.v1 candidate patches do not admit rename/copy/mode records");
         }
         if line == "GIT binary patch" || line.starts_with("Binary files ") {
-            bail!("Mise v1 candidate patches require inspectable textual file markers");
+            bail!("legacy git_patch.v1 candidate patches require inspectable textual file markers");
         }
     }
     if current
@@ -1790,7 +1795,7 @@ pub(crate) fn complete_deterministic_trial(
         classify_deterministic(&manifest.objectives, &receipt.observations, false)?;
     validate_calibration_outcome(&durable_trial, &receipt, &classification, &manifest)?;
     let outcome = json!({
-        "schema": "papertiger-mise.trial-outcome.v1",
+        "schema": "papertiger-mise.trial_outcome.v2",
         "receipt": completion.receipt,
         "classification": classification,
     });
@@ -2004,14 +2009,14 @@ fn validate_observation_bindings(
 }
 
 fn deterministic_trial_receipt_schema(manifest: &CampaignManifest) -> &'static str {
-    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
-        "papertiger-mise.trial-receipt.v4"
+    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {
+        "papertiger-mise.trial_receipt.v5"
     } else if manifest.evaluator.judge_build.is_some() {
-        "papertiger-mise.trial-receipt.v3"
+        "papertiger-mise.trial_receipt.v4"
     } else if manifest.evaluator.rust_build_environment.is_some() {
-        "papertiger-mise.trial-receipt.v2"
+        "papertiger-mise.trial_receipt.v3"
     } else {
-        "papertiger-mise.trial-receipt.v1"
+        "papertiger-mise.trial_receipt.v2"
     }
 }
 
@@ -2022,9 +2027,14 @@ fn validate_trial_receipt_schema(
 ) -> Result<()> {
     let expected_schema = deterministic_trial_receipt_schema(manifest);
     if receipt.schema != expected_schema {
-        bail!("trial receipt requires schema={expected_schema} for this frozen campaign");
+        return Err(crate::schema_ids::schema_refusal(
+            "trial receipt",
+            &receipt.schema,
+            expected_schema,
+            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+        ));
     }
-    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
+    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {
         let expected = sha256(&serde_json::to_vec(&trial.environment)?);
         if receipt.environment_sha256.as_deref() != Some(expected.as_str()) {
             bail!(
@@ -2043,35 +2053,41 @@ fn validate_trial_receipt_schema(
         &manifest.evaluator.judge_build,
     ) {
         (None, None) => {
-            if receipt.schema != "papertiger-mise.trial-receipt.v1"
+            if receipt.schema != "papertiger-mise.trial_receipt.v2"
                 || receipt.environment_sha256.is_some()
                 || receipt.judge_build.is_some()
             {
-                bail!("ordinary deterministic trials require an exact v1 receipt");
+                bail!(
+                    "ordinary deterministic trials require an exact papertiger-mise.trial_receipt.v2"
+                );
             }
         }
         (Some(_), None) => {
-            if receipt.schema != "papertiger-mise.trial-receipt.v2" {
-                bail!("Rust-build trials require an exact v2 environment-bound receipt");
+            if receipt.schema != "papertiger-mise.trial_receipt.v3" {
+                bail!(
+                    "Rust-build trials require an exact environment-bound papertiger-mise.trial_receipt.v3"
+                );
             }
             let expected = sha256(&serde_json::to_vec(&trial.environment)?);
             if receipt.environment_sha256.as_deref() != Some(expected.as_str()) {
                 bail!("trial receipt does not bind the exact runtime-owned Rust environment");
             }
             if receipt.judge_build.is_some() {
-                bail!("v2 Rust-build trial receipt cannot contain a judge build");
+                bail!(
+                    "papertiger-mise.trial_receipt.v3 Rust-build receipt cannot contain a judge build"
+                );
             }
         }
         (_, Some(_)) => {
-            if receipt.schema != "papertiger-mise.trial-receipt.v3" {
-                bail!("judge-build trials require an exact v3 receipt");
+            if receipt.schema != "papertiger-mise.trial_receipt.v4" {
+                bail!("judge-build trials require an exact papertiger-mise.trial_receipt.v4");
             }
             let expected = sha256(&serde_json::to_vec(&trial.environment)?);
             if receipt.environment_sha256.as_deref() != Some(expected.as_str()) {
                 bail!("judge-build receipt does not bind the exact runtime-owned environment");
             }
             if receipt.judge_build.is_none() {
-                bail!("v3 trial receipt omitted its judge build");
+                bail!("papertiger-mise.trial_receipt.v4 omitted its judge build");
             }
         }
     }
@@ -2094,7 +2110,7 @@ fn validate_judge_build_receipt(
         .judge_build
         .as_ref()
         .context("trial receipt omitted its frozen judge build")?;
-    if build.schema != "papertiger-mise.judge-build-receipt.v1"
+    if build.schema != "papertiger-mise.judge_build_receipt.v2"
         || build.argv != binding.argv
         || build.toolchain_name != binding.toolchain_name
         || build.toolchain_version != binding.toolchain_version
@@ -2282,7 +2298,7 @@ pub(crate) fn record_integrity_failure(
         bail!("integrity evidence exceeds the trial artifact reservation");
     }
     let outcome = json!({
-        "schema": "papertiger-mise.integrity-failure.v2",
+        "schema": "papertiger-mise.integrity_failure.v3",
         "failure": failure,
     });
     if !durable_trial.status.has_live_ownership()

@@ -1,5 +1,5 @@
 {
-  "schema": "papertiger.project-improvement-brief.v2",
+  "schema": "papertiger-mise.project_improvement_brief.v3",
   "brief_id": "example-project-runtime-readiness-b01",
   "authority": "planning_input_only",
   "project": {
@@ -12,7 +12,7 @@
   "template": {
     "key": "reliability_recovery",
     "version": 3,
-    "registry_sha256": "ee704be32be5a47a2c19dfe1d3ff7d2329a4dbffef05cd670402ed56e994a30a"
+    "registry_sha256": "a6e0ee32bdaa3dc575983c6d5147c5dc0ea999c3851da59bdf252df8716f05b4"
   },
   "evidence": [
     {
@@ -157,7 +157,7 @@
       {
         "key": "compiler-peak-memory-bytes",
         "measurement": {
-          "schema": "papertiger-mise.measurement-contract.v1",
+          "schema": "papertiger-mise.measurement_contract.v2",
           "subject": "Participant compilation",
           "process_role": "compiler",
           "executable_name": "rustc",
@@ -193,7 +193,7 @@
       {
         "key": "diagnostic-latency-ms",
         "measurement": {
-          "schema": "papertiger-mise.measurement-contract.v1",
+          "schema": "papertiger-mise.measurement_contract.v2",
           "subject": "Runtime readiness fixture",
           "process_role": "candidate_runtime",
           "executable_name": "runtime-readiness",
@@ -237,7 +237,7 @@
         "regression_tolerance_units": 0,
         "acceptance_threshold_units": 1,
         "measurement": {
-          "schema": "papertiger-mise.measurement-contract.v1",
+          "schema": "papertiger-mise.measurement_contract.v2",
           "subject": "Runtime readiness fixture",
           "process_role": "candidate_runtime",
           "executable_name": "runtime-readiness",
@@ -278,7 +278,7 @@
         "regression_tolerance_units": 0,
         "acceptance_threshold_units": 1,
         "measurement": {
-          "schema": "papertiger-mise.measurement-contract.v1",
+          "schema": "papertiger-mise.measurement_contract.v2",
           "subject": "Runtime readiness fixture",
           "process_role": "candidate_runtime",
           "executable_name": "runtime-readiness",
@@ -319,7 +319,7 @@
         "regression_tolerance_units": 0,
         "acceptance_threshold_units": null,
         "measurement": {
-          "schema": "papertiger-mise.measurement-contract.v1",
+          "schema": "papertiger-mise.measurement_contract.v2",
           "subject": "Runtime readiness fixture",
           "process_role": "candidate_runtime",
           "executable_name": "runtime-readiness",
@@ -360,7 +360,7 @@
         "regression_tolerance_units": 0,
         "acceptance_threshold_units": null,
         "measurement": {
-          "schema": "papertiger-mise.measurement-contract.v1",
+          "schema": "papertiger-mise.measurement_contract.v2",
           "subject": "Runtime readiness fixture",
           "process_role": "candidate_runtime",
           "executable_name": "runtime-readiness",
@@ -401,7 +401,7 @@
         "regression_tolerance_units": 10000,
         "acceptance_threshold_units": null,
         "measurement": {
-          "schema": "papertiger-mise.measurement-contract.v1",
+          "schema": "papertiger-mise.measurement_contract.v2",
           "subject": "Runtime readiness fixture",
           "process_role": "candidate_runtime",
           "executable_name": "runtime-readiness",
@@ -443,7 +443,7 @@
         "regression_tolerance_units": 0,
         "acceptance_threshold_units": null,
         "measurement": {
-          "schema": "papertiger-mise.measurement-contract.v1",
+          "schema": "papertiger-mise.measurement_contract.v2",
           "subject": "Runtime readiness fixture",
           "process_role": "candidate_runtime",
           "executable_name": "runtime-readiness",

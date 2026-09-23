@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use papertiger_mise::manifest::Sha256Digest;
 use papertiger_mise::measurement::{
-    MEASUREMENT_SAMPLE_SCHEMA_V1, MeasuredProcess, MeasurementSample,
+    MEASUREMENT_SAMPLE_SCHEMA_V2, MeasuredProcess, MeasurementSample,
 };
 use papertiger_mise::{DomainTrialMeasurement, DomainTrialResult, PairedTrialRequest};
 use serde_json::json;
@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     }
     let request: PairedTrialRequest =
         serde_json::from_value(request_value).context("type paired request")?;
-    if request.schema != papertiger_mise::adapter::PAIRED_TRIAL_REQUEST_SCHEMA_V3 {
+    if request.schema != papertiger_mise::adapter::PAIRED_TRIAL_REQUEST_SCHEMA_V4 {
         bail!(
             "synthetic fixture adapter requires paired-trial-request.v3 with measurement contracts"
         );
@@ -90,7 +90,7 @@ fn main() -> Result<()> {
                 }
                 Ok(DomainTrialMeasurement {
                     provenance: Some(MeasurementSample {
-                        schema: MEASUREMENT_SAMPLE_SCHEMA_V1.to_owned(), observed,
+                        schema: MEASUREMENT_SAMPLE_SCHEMA_V2.to_owned(), observed,
                         process: process.clone(), participant_revision: request.participant.revision.clone(),
                         fixture_sha256: request.fixture_sha256.0.clone(),
                         environment_sha256: request.environment_profile_sha256.0.clone(),

@@ -68,20 +68,20 @@ New development successor proofs require parent candidate trials with a frozen
 runtime-owned output root. The frozen evaluator reports the exact build argv
 and executable locator; the supervisor requires those values to match the
 manifest, confines the output to that fresh root, accepts only a plain regular
-file within its byte ceiling, and preserves the executable in CAS. The v3 trial
-receipt binds that object to the promoted source tree, exact evaluator
-environment, toolchain executable and version, and build recipe. A v2 parent
-proof names every relied-upon candidate build-trial receipt and requires the
-successor judge SHA-256 to equal their one parent-produced executable identity.
+file within its byte ceiling, and preserves the executable in CAS. The
+`papertiger-mise.trial_receipt.v5` receipt binds that object to the promoted
+source tree, exact evaluator environment, toolchain executable and version, and
+build recipe. A `papertiger-mise.parent_promotion_proof.v3` proof names every
+relied-upon candidate build-trial receipt and requires the successor judge
+SHA-256 to equal their one parent-produced executable identity.
 
 This is a build receipt, not sealed compiler attestation or a universal
 reproducible-build proof. It relies on the already-frozen evaluator to attest
 that it executed the declared argv, and on the operator-trusted host, compiler,
 filesystem, and CAS boundary. The supervisor proves that the exact retained
 bytes appeared in an empty trial-owned output root; it does not trace every
-compiler syscall. Historical admitted v1 parent proofs remain reopenable, but
-they do not authorize another new descendant without a build-bound parent
-campaign.
+compiler syscall. The earlier `parent_promotion_proof.v2` shape without a
+build binding is not accepted for a new descendant.
 
 ## Campaign identity and naming
 
@@ -140,8 +140,8 @@ belong only in hard constraints. This prevents a development campaign from
 qualifying on feature presence, command success, or another self-certifying
 yes/no proxy.
 
-New campaign admission requires `papertiger-mise.campaign.v2`. Every objective
-includes a `papertiger-mise.measurement-contract.v1`: measured subject and
+New campaign admission requires `papertiger-mise.campaign.v4`. Every objective
+includes a `papertiger-mise.measurement_contract.v2`: measured subject and
 process role, executable name, product behavior versus development or
 infrastructure cost, phase, metric meaning and unit, complete workload and
 cardinality, host and environment class, aggregation, sampling, cache state,
@@ -178,12 +178,32 @@ declaring `compiler`, `build`, or a compiler executable cannot satisfy an
 indexer-runtime contract. Relabeling all evidence dishonestly is outside this
 local trust boundary.
 
-Historical campaign v1 manifests and their receipts remain readable with their
-original bytes and no inferred provenance. They cannot be newly admitted or
-upgraded in place. The provenance cutover changes JSON protocols, not the Mise
-SQLite schema. Brief v2 and compiled draft v2 preserve the same typed contracts;
-historical brief v1 input is refused with the command's required replacement
-fields rather than silently converted.
+The brief (`papertiger-mise.project_improvement_brief.v3`) and compiled draft
+(`papertiger-mise.compiled_improvement_draft.v3`) preserve the same typed
+contracts; an earlier brief is refused with the command's required
+replacement fields rather than silently converted.
+
+### Schema identifiers
+
+Every Mise-owned schema, protocol, and domain-separation identifier has the
+form `papertiger-mise.<snake_case_name>.v<N>`. Release 0.18.0 renamed all of
+them and advanced every version, so no current identifier equals a retired one.
+Readers refuse a retired identifier and name its replacement. An
+operator-authored input — campaign manifest, containment policy, adapter
+binding, fixture bundle, brief, approval, paradigm registry, or evaluator
+output — must be re-authored under the current identifier. A campaign or
+shadow observation recorded before 0.18.0 stays frozen: every stored-manifest
+and shadow-evidence reader refuses it, so reopen it with a 0.17.x binary or
+admit a new campaign. Nothing converts retired evidence in place.
+
+The runtime still implements the shapes that preceded measurement provenance
+under renamed identifiers: `papertiger-mise.campaign.v3` (legacy Git-patch
+material), deterministic evaluator request and output v2, trial receipts v2–v4,
+materialization v3, candidate identity v2, paired analysis v2, paired trial
+request v3, and parent promotion proof v2. Admission accepts only
+`papertiger-mise.campaign.v4`, and no pre-0.18.0 authority holds these renamed
+identifiers, so today those shapes are reachable only from the crate's own tests
+until they are removed.
 
 A targeted structural campaign may use an exact target-module measurement as
 its primary objective, but it must retain the repository-wide largest-module
@@ -238,24 +258,26 @@ superiority, or safety outside the named objectives, population, hardware,
 fixtures, and environment profile.
 
 The current crate exposes the exact classifier and atomically reserves each
-research slot against its realized schedule. Historical paired-analysis v1
-plans remain readable but are not executable. Paired-analysis v2 freezes an
+research slot against its realized schedule. The earlier
+`papertiger-mise.paired_analysis.v2` shape is not executable.
+`papertiger-mise.paired_analysis.v3` freezes an
 exact trial adapter executable, argv, working directory, environment, protocol,
 and bounds. Before launch, the durable runner derives the complete AB/BA
 schedule, writes every measurement-free request to CAS, reserves all trials,
 wall time, one cohort-failure unit, and every research disclosure, and commits
-the exact run order in SQLite. It then executes only the next prepared run
-through the shared portable supervisor. Each success retains the raw adapter
-result, exact domain receipt, Mise execution receipt, PID birth identity,
-elapsed time, and backend diagnostics before another run can start. Domain
+the exact execution order in SQLite. It then performs only the next prepared
+execution through the shared portable supervisor. Each success retains the raw
+adapter result, exact domain receipt, Mise execution receipt, PID birth
+identity, elapsed time, and backend diagnostics before another execution can
+start. Domain
 receipt identities are globally unique across live and historical evidence.
 
 Adjudication regenerates the schedule and reopens every request, result, domain
 receipt, and Mise receipt from CAS. It never classifies an in-memory adapter
 return. A missing, noncanonical, substituted, or mismatched object terminally
 marks the complete cohort `integrity_failed` and charges its reservation;
-calling adjudication before every run succeeds is an ordinary refusal and does
-not destroy the cohort. A launched run can resume only by proving its exact PID
+calling adjudication before every execution succeeds is an ordinary refusal and
+does not destroy the cohort. A launched execution can resume only by proving its exact PID
 and OS birth identity absent, and that recovery charges the failed cohort
 without replaying the process.
 
@@ -283,7 +305,7 @@ domain shadow has no paired participants, measurements, schedule, candidate,
 classification, or nomination semantics.
 
 The deterministic runtime still refuses to execute or adjudicate a manifest
-containing a paired-analysis plan; `paired prepare`, `run-next`, `recover`, and
+containing a paired-analysis plan; `paired prepare`, `execute-next`, `recover`, and
 `adjudicate` are the sole live path. WorkspaceOnly paired plans bind their
 research blocks to the campaign's disclosed exploration tier. They can produce
 a durable local development qualification after reason-coded no-op and
@@ -292,8 +314,8 @@ automatically. `paired derive-nomination` is the sole explicit transition: it
 requires the exact no-op, known-bad, and qualified research cohort identities,
 reopens every cohort and its candidate/materialization evidence from CAS,
 reclassifies them under the admitted plan, and can mint one immutable
-`workspace_only_development` nomination. Generic promotion inspection repeats
-that derivation. Paired promotion-proof derivation still refuses until sealed,
+`workspace_only_development` nomination. `promotion rederive` repeats that
+derivation. Paired promotion-proof derivation still refuses until sealed,
 verdict-only cohort attestations are implemented.
 
 Sealed paired plans bind the confirmation tier, but the local runner explicitly
@@ -343,7 +365,7 @@ deployment. Domain adapters retain product truth, Papertiger retains mutable
 planning authority, and Mise retains immutable experimental authority.
 
 The live boundary is intentionally two-step and operator-controlled. First,
-`papertiger-mise projection inspect --nomination <id> --objects <root>` (or
+`papertiger-mise projection export --nomination <id> --objects <root>` (or
 `--candidate <id>` for terminal non-nominations) opens the Mise authority
 read-only, reopens the exact candidate material and relied-upon CAS evidence,
 rederives budget balances, and emits
@@ -354,29 +376,28 @@ same projection on the same task is a no-op; binding the candidate to another
 task or changing its projected payload is refused. `papertiger mise list
 <task>`, `papertiger mise show <projection-sha256>`, and `papertiger show
 <task> --json` revalidate stored payloads on read. Projection records survive
-`papertiger.dump.v6` export/import. None of these commands changes task, gate,
-or candidate state.
+export/import. None of these commands changes task, gate, or candidate state.
 
 The projection argument may be `-`, so a shell may use a no-scratch-file path:
 
 ```text
-papertiger-mise projection inspect --nomination <id> --objects <root> |
+papertiger-mise projection export --nomination <id> --objects <root> |
   papertiger mise record <task> -
 ```
 
 On shells whose native pipeline does not preserve large JSON arguments, use
-`papertiger-mise projection inspect ... --output <new-file>` followed by
-`papertiger mise record <task> <file>`. The inspector refuses to overwrite an
+`papertiger-mise projection export ... --output <new-file>` followed by
+`papertiger mise record <task> <file>`. The exporter refuses to overwrite an
 existing output.
 
 Generic improvement guidance is separately content-addressed by
-`papertiger.improvement-paradigm-registry.v1`. Templates contain discovery
+`papertiger-mise.improvement_paradigm_registry.v2`. Templates contain discovery
 questions, objective-role shapes, countermetrics, controls, fixture guidance,
 candidate-scope guidance, invalid-proxy warnings, and symbolic stop defaults.
 They contain no project paths, commands, thresholds, or verdicts. A later
 approved project brief supplies those facts; neither a template nor a brief is
-an admitted campaign. `papertiger-mise improvement paradigms`, `brief-verify`,
-and `compile` own this pre-admission surface; the planner binary does not.
+an admitted campaign. `papertiger-mise improvement paradigms`, `verify-registry`,
+`verify-brief`, and `compile` own this pre-admission surface; the planner binary does not.
 
 ### Maintainability and debt-erasure campaigns
 
@@ -473,7 +494,7 @@ They reduce leaked descendants but do not alter campaign admission,
 classification, nomination eligibility, or promotion authority. A hostile
 POSIX child can leave its group, and the current Windows assignment occurs just
 after spawn. Receipts retain the backend and platform as diagnostics alongside
-the common `papertiger-mise.portable-local-supervision.v1` contract. The
+the common `papertiger-mise.portable_local_supervision.v2` contract. The
 `papertiger-mise execution-status` command reports the same separation: local
 supervision is available, adversarial isolation is not.
 
@@ -498,21 +519,22 @@ proof as isolation evidence.
 Admission canonicalizes objective keys lexicographically. A deterministic
 evaluator must emit exactly one observation for every admitted objective in that
 canonical order, and its successful stdout must be the compact exact Rust-typed
-serialization of `papertiger-mise.deterministic-evaluator-output.v2`. Field
+serialization of `papertiger-mise.deterministic_evaluator_output.v3`. Field
 order is therefore part of the byte contract; arbitrary valid or sorted JSON is
 not canonical. The
 objective-order refusal prints both the expected and observed sequences; adapter
 authors should treat the admitted manifest returned by `campaign show`, not the
 authoring file's display order, as the executable contract.
 
-Campaign v2 uses deterministic request v2, output v2, and environment-bound
-trial receipt v4, or paired request v3 with provenance-bearing measurements.
-Historical campaign v1 keeps its original protocol versions. The
-`deterministic_evaluator` and `paired_fixture_adapter` examples exercise the
-current contract with explicitly synthetic data. The structural
-`debt_campaign_evaluator` and `lifecycle_campaign_evaluator` sources retain
-their historical v1 protocol for earlier experiments; author a v2 collector
-with explicit measurement scope before starting a new structural campaign.
+`papertiger-mise.campaign.v4` uses deterministic evaluator request and output
+v3 with environment-bound `papertiger-mise.trial_receipt.v5`, or
+`papertiger-mise.paired_trial_request.v4` with provenance-bearing measurements.
+The `deterministic_evaluator` and `paired_fixture_adapter` examples exercise
+the current contract with explicitly synthetic data. The structural
+`debt_campaign_evaluator` and `lifecycle_campaign_evaluator` sources still emit
+the pre-provenance output v2 shape, which no admissible campaign accepts; author
+a v3 collector with explicit measurement scope before starting a new structural
+campaign.
 
 The evaluator request binds both result-tree IDs and the runtime-verified
 baseline worktree locator. Successor-safe evaluators measure the candidate and
@@ -527,7 +549,8 @@ workspace, Mise library, CLI, and evaluator tests remain explicit gates; the
 serial requirement is not left to the host test runner's default concurrency.
 
 Adversarial isolation is a separate, platform-neutral attested-worker
-contract. Attestation v2 binds outcomes rather than host mechanisms: an
+contract. The `papertiger-mise.sealed_attestation.v3` attestation binds
+outcomes rather than host mechanisms: an
 isolated workspace, denied network, read-only evaluator inputs, exact nonzero
 process and memory ceilings, cleanup after controller loss, hidden-fixture
 secrecy, and verdict-only disclosure where required. An OCI container, VM, or
@@ -601,9 +624,9 @@ other than the frozen base plus the retained records. The public constructor
 derives this material from two exact full Git trees; the record command accepts
 only its canonical bytes.
 
-Previously admitted `git_patch.v1` campaigns and receipts remain readable and
-reverifiable. There is deliberately no public patch-recording compatibility
-alias: new operator writes use `candidate build-material` and `--material`.
+Legacy `git_patch.v1` material belongs only to the retained
+`papertiger-mise.campaign.v3` shape described under Schema identifiers. There is
+deliberately no public patch-recording compatibility alias: new operator writes use `candidate build-material` and `--material`.
 Legacy admission still refuses an allowlist entry absent from its base tree,
 while a typed Git change-set campaign may admit a new path. This contract does
 not pretend every domain is Git. A future Ghidramink operation packet requires
@@ -619,7 +642,7 @@ immutable. A fresh reservation may retry the same candidate only after every
 prior attempt is terminally settled and no materialization receipt exists;
 both bindings and an explicit retry event remain in the authority. If a caller
 dies after binding but before settlement, `candidate abandon-materialization`
-records the operator's reason and atomically charges the exact bound
+records the operator's rationale (`--why`) and atomically charges the exact bound
 reservation without claiming what filesystem work occurred.
 
 ## Evidence and stopping doctrine
@@ -638,19 +661,19 @@ atomically settle a legacy
 succeeded-but-reserved row without replaying the evaluator. New successful
 completion commits terminal evidence and measured settlement in one SQLite
 transaction. The ambiguous `owned` window before PID ownership commits is
-closed only by `trial abandon`, which records an operator reason and charges
+closed only by `trial abandon`, which records an operator rationale and charges
 the full bound reservation atomically. It explicitly records that no process-
 absence claim was made; launched work instead requires `trial recover` and its
 OS-derived process observation.
 
-`trial cancel <trial> --reason <reason>` and `paired cancel <execution> --reason
-<reason>` record an immutable cooperative request for a launched execution. The
+`trial cancel <trial> --why <rationale>` and `paired cancel <execution> --why
+<rationale>` record an immutable cooperative request for a launched execution. The
 live supervisor polls that authority, stops its process through the same private
 native cleanup adapter, and retains `operator-cancelled` failure evidence. A
 request that commits before completion prevents success in the same database
-transaction; completion that commits first refuses a later request. Exact reason
-replay returns the original request, including after restart and settlement.
-`trial show` and `paired show-run` include the recorded request.
+transaction; completion that commits first refuses a later request. Exact
+rationale replay returns the original request, including after restart and settlement.
+`trial show` and `paired show-execution` include the recorded request.
 
 Cancellation is terminal non-qualification: deterministic trials become
 `infrastructure_failed`, and a paired cancellation fails the entire cohort.
@@ -660,16 +683,19 @@ completed cleanup. If its supervisor has died, use the existing birth-bound
 `recover` command once the evaluator is absent. An ambiguous `owned` trial still
 requires `trial abandon`; cancellation accepts only a durably launched target.
 
-`budget release <campaign> <reservation> --reason <reason>` instead releases all
+`budget release <campaign> <reservation> --why <rationale>` instead releases all
 resources at zero when no lifecycle operation has ever bound that reservation.
 The binding check and settlement are atomic. Releasing bound candidate,
 materialization, trial, or paired-cohort work refuses; released identifiers
 cannot be reserved again. This makes prelaunch refusal recoverable without
 claiming that already bound or launched work used no resources.
 
-Cancellation requires Mise schema v9. Upgrade an existing authority deliberately
-with `papertiger-mise --db <database> init`; read commands never migrate it and
-older binaries refuse this schema rather than ignore cancellation requests.
+Every rationale flag also accepts `--why-file <path>` (or `-` for stdin).
+Cancellation requires Mise authority schema v9 or later; this binary requires
+v10, which renames the recorded cancellation rationale to `why`. Upgrade an
+existing authority deliberately with `papertiger-mise --db <database> init`;
+read commands never migrate it and older binaries refuse this schema rather
+than ignore cancellation requests.
 
 Every campaign has a finite deadline, cumulative resource caps, failure caps,
 and a no-improvement stopping rule. Sequential early stopping is permitted only
@@ -694,7 +720,7 @@ nor automatic hypothesis generation.
 `campaign inspect <id>` discovers recorded candidates, trials, paired cohorts,
 and reservations in one read-only SQLite snapshot. Choose `--section
 candidates|trials|cohorts|reservations`; `--limit` accepts 1–100 (default 20).
-`papertiger-mise.campaign-inspection.v1` reports complete entity counts and
+`papertiger-mise.campaign_inspection.v2` reports complete entity counts and
 recorded budgets alongside the selected page, exact inspection argument vectors,
 and continuation arguments that retain the project and database selection.
 Pagination is live identity ordering: restart it after concurrent changes.
@@ -715,7 +741,7 @@ root regardless of the agent's caller directory. The consumer owns
 read-only. `init` is the only authority creation or migration step.
 
 For a custom `--db`, `status` requires `--objects <object-root>` because the
-database has no stored CAS-root binding. Project-status v2 names the selected
+database has no stored CAS-root binding. `papertiger-mise.project_status.v3` names the selected
 paths and labels the object check `directory_presence_only`; a present directory
 is not verified evidence or a claim that it belongs to that database. Use the
 existing object, candidate, cohort, and nomination inspection commands to
@@ -776,10 +802,10 @@ the frozen path, so nested direct compiler invocations resolve the same tool.
 Compiler subprocesses never need an ambient writable temporary directory. Rust
 and judge-build roots use one bounded, domain-separated 128-bit path identity
 derived from the exact campaign and trial IDs; receipts retain the full IDs,
-while caller-chosen label length cannot exhaust a host path limit. Environment-
-bound v2 receipts remain readable; a trial that also preserves a judge build
-uses v3 and binds both the exact environment and build receipt. Nomination
-reopening rederives either admitted form. This removes shared mutable build
+while caller-chosen label length cannot exhaust a host path limit. The
+`papertiger-mise.trial_receipt.v5` receipt binds the exact environment and,
+when the manifest admits a judge build, its build receipt. Nomination
+reopening rederives both. This removes shared mutable build
 caches, temporary paths, and ambient linker lookup from the decision path.
 It does not claim OS-enforced network denial: under
 `WorkspaceOnly`, candidate code and build scripts remain capable of using the
@@ -792,11 +818,16 @@ bytes. The evaluator writes only the relative output below
 `PAPERTIGER_MISE_JUDGE_BUILD_ROOT` and includes the exact `judge_build` echo in
 its canonical result. Trial artifact reservations must cover the evaluator
 output, receipt overhead, and frozen executable ceiling. Nomination reopening
-rechecks both the v3 receipt and the executable object before a v2 successor
-proof can be derived.
+rechecks both the trial receipt and the executable object before a
+`papertiger-mise.parent_promotion_proof.v3` successor proof can be derived.
 
-The command-line surface intentionally exposes only operator boundaries. The
-examples below assume the prefix `papertiger-mise --project-root <consumer>`:
+The command-line surface intentionally exposes only operator boundaries.
+`--papertiger-db` names the independent planning database that holds a closed
+gate; `campaign admit-successor`, `promotion verify-parent`, and `promotion
+verify` open it read-only and default it to `state/papertiger.sqlite`, resolved
+like every other relative path from the project root. `promotion derive` and
+`promotion verify` always refuse until sealed confirmation attestation lands.
+The examples below assume the prefix `papertiger-mise --project-root <consumer>`:
 
 ```text
 papertiger-mise --project-root <consumer> status --json
@@ -808,41 +839,41 @@ papertiger-mise campaign preflight <manifest.json>
 papertiger-mise campaign admit <manifest.json>
 papertiger-mise promotion derive-parent --nomination <id> --successor-manifest <manifest.json> --objects <object-root>
 papertiger-mise promotion verify-parent --nomination <id> --successor-manifest <manifest.json> --task <seq> --gate <name> --evidence <locator> --sha256 <digest> --objects <object-root>
-papertiger-mise campaign admit-successor <manifest.json> --parent-nomination <id> --gate-binding <binding.json> --papertiger-db <db> --objects <object-root>
+papertiger-mise campaign admit-successor <manifest.json> --parent-nomination <id> --gate-binding <binding.json> [--papertiger-db <db>] --objects <object-root>
 papertiger-mise campaign show-successor <campaign>
 papertiger-mise budget reserve <campaign> <reservation> --amount <resource>=<n>
-papertiger-mise budget release <campaign> <reservation> --reason <reason>
+papertiger-mise budget release <campaign> <reservation> --why <rationale>
 papertiger-mise candidate build-material --repository <repo> --base-tree <tree> --result-tree <tree> --output <file>
 papertiger-mise candidate record --proposal <proposal.json> --material <material.json> --reservation <id>
 papertiger-mise candidate materialize <candidate> --reservation <id> --worktree <path>
-papertiger-mise candidate abandon-materialization <candidate> --reservation <id> --reason <reason>
+papertiger-mise candidate abandon-materialization <candidate> --reservation <id> --why <rationale>
 papertiger-mise candidate show <candidate>
 papertiger-mise candidate adjudicate <candidate>
 papertiger-mise trial run --spec <trial.json>
 papertiger-mise trial recover <trial> --objects <object-root>
-papertiger-mise trial cancel <trial> --reason <reason>
-papertiger-mise trial abandon <trial> --reason <reason>
+papertiger-mise trial cancel <trial> --why <rationale>
+papertiger-mise trial abandon <trial> --why <rationale>
 papertiger-mise trial show <trial>
 papertiger-mise paired reserve-slot <campaign> <candidate> <slot> --seed <file>
 papertiger-mise paired prepare --spec <cohort.json> --objects <object-root>
-papertiger-mise paired run-next <cohort> --objects <object-root>
+papertiger-mise paired execute-next <cohort> --objects <object-root>
 papertiger-mise paired adjudicate <cohort> --objects <object-root>
 papertiger-mise paired derive-nomination <research-cohort> --no-op <cohort> --known-bad <cohort> --objects <object-root>
 papertiger-mise paired recover <execution> --objects <object-root>
-papertiger-mise paired cancel <execution> --reason <reason>
+papertiger-mise paired cancel <execution> --why <rationale>
 papertiger-mise paired list-cohorts <campaign>
 papertiger-mise paired show-cohort <cohort>
-papertiger-mise paired list-runs <cohort>
-papertiger-mise paired show-run <execution>
+papertiger-mise paired list-executions <cohort>
+papertiger-mise paired show-execution <execution>
 papertiger-mise object read <sha256> <bytes> --objects <object-root>
 papertiger-mise evidence historical-shadow --binding <binding.json> --request <request.json>
 papertiger-mise evidence show-historical-shadow <evidence-id>
 papertiger-mise evidence domain-shadow --binding <binding.json> --request <request.json>
 papertiger-mise evidence show-domain-shadow <evidence-id>
 papertiger-mise promotion list [--campaign <id>]
-papertiger-mise promotion inspect <nomination> --objects <object-root>
-papertiger-mise projection inspect --nomination <id> --objects <object-root>
-papertiger-mise projection inspect --candidate <id> --objects <object-root>
+papertiger-mise promotion rederive <nomination> --objects <object-root>
+papertiger-mise projection export --nomination <id> --objects <object-root>
+papertiger-mise projection export --candidate <id> --objects <object-root>
 papertiger-mise promotion derive --nomination <id> --containment-policy <policy.json>
 papertiger-mise promotion verify --nomination <id> --containment-policy <policy.json> ...
 ```

@@ -95,9 +95,7 @@ pub fn inspect_campaign(
             "unknown campaign '{campaign_id}'; run `status --json` and pass an admitted campaign ID"
         )
     })?;
-    let manifest: CampaignManifest = serde_json::from_str(&record.manifest_json).context(
-        "invalid stored manifest; restore the campaign authority from verified recovery evidence",
-    )?;
+    let manifest = CampaignManifest::from_stored_json(&record.manifest_json)?;
     if manifest.campaign_id != campaign_id
         || manifest.schema != record.manifest_schema
         || sha256(record.manifest_json.as_bytes()) != record.manifest_sha256
@@ -142,7 +140,7 @@ pub fn inspect_campaign(
         .checked_add(returned)
         .context("inspection page offset overflow; reduce --offset")?;
     Ok(CampaignInspection {
-        schema: "papertiger-mise.campaign-inspection.v1",
+        schema: "papertiger-mise.campaign_inspection.v2",
         campaign_id: campaign_id.to_owned(),
         manifest_sha256: record.manifest_sha256,
         evidence_check: "recorded_state_only_cas_not_reopened",

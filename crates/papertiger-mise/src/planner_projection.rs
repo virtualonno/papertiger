@@ -71,7 +71,7 @@ pub fn derive_candidate_planner_projection(
             MiseProjectionDisposition::InfrastructureFailed
         }
         CandidateDisposition::Nominated => bail!(
-            "nominated candidate evidence must be projected by nomination; run `papertiger-mise projection inspect --nomination <nomination-id>`"
+            "nominated candidate evidence must be projected by nomination; run `papertiger-mise projection export --nomination <nomination-id>`"
         ),
         state => bail!(
             "candidate disposition '{state:?}' is not terminal projectable evidence; adjudicate or reconcile it first"
@@ -115,7 +115,7 @@ fn build_projection(
 ) -> Result<MisePlannerProjection> {
     let manifest = &verified.manifest;
     let mut limitations = limitations;
-    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
+    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {
         limitations.push(
             "measurement-provenance-trusts-the-collector-and-does-not-attest-the-host".to_owned(),
         );

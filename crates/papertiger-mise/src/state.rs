@@ -75,7 +75,7 @@ impl PairedCohortStatus {
     }
 }
 
-stored_vocabulary!(PairedRunStatus {
+stored_vocabulary!(PairedExecutionStatus {
     Prepared => "prepared",
     Launched => "launched",
     Succeeded => "succeeded",

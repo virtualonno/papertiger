@@ -247,7 +247,7 @@ fn preserve_judge_build(
         .with_context(|| format!("read judge executable {}", canonical_executable.display()))?;
     let executable = crate::object::preserve_object(object_root, &bytes)?;
     Ok(Some(JudgeBuildReceipt {
-        schema: "papertiger-mise.judge-build-receipt.v1".to_owned(),
+        schema: "papertiger-mise.judge_build_receipt.v2".to_owned(),
         argv: binding.argv.clone(),
         toolchain_name: binding.toolchain_name.clone(),
         toolchain_version: binding.toolchain_version.clone(),
@@ -379,7 +379,7 @@ pub fn execute_workspace_trial(
     )?;
     let owner_uuid = sha256(
         format!(
-            "papertiger-mise.workspace-owner.v1\n{}\n{}\n{}\n{}",
+            "papertiger-mise.workspace_owner.v2\n{}\n{}\n{}\n{}",
             spec.campaign_id,
             spec.trial_id,
             manifest.generation.outer_judge_executable_sha256.0,
@@ -388,7 +388,7 @@ pub fn execute_workspace_trial(
         .as_bytes(),
     );
     let supervisor_identity = format!(
-        "papertiger-mise.workspace-supervisor.v1:{}",
+        "papertiger-mise.workspace_supervisor.v2:{}",
         manifest.generation.outer_judge_executable_sha256.0
     );
     let trial_environment =
@@ -455,10 +455,10 @@ pub fn execute_workspace_trial(
     let baseline_result_tree = baseline_materialization.result_tree.clone();
     let (fixture_locator, fixture_sha256) = expected_fixture_binding(&manifest, &spec.tier)?;
     let request = DeterministicEvaluatorRequest {
-        schema: if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
-            "papertiger-mise.deterministic-evaluator-request.v2"
+        schema: if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {
+            "papertiger-mise.deterministic_evaluator_request.v3"
         } else {
-            "papertiger-mise.deterministic-evaluator-request.v1"
+            "papertiger-mise.deterministic_evaluator_request.v2"
         }
         .to_owned(),
         trial_id: spec.trial_id.clone(),
@@ -470,7 +470,7 @@ pub fn execute_workspace_trial(
         tier: spec.tier.clone(),
         fixture_locator,
         fixture_sha256: fixture_sha256.clone(),
-        environment_sha256: if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
+        environment_sha256: if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {
             Some(sha256(&serde_json::to_vec(&trial_environment)?))
         } else {
             None
@@ -599,10 +599,10 @@ pub fn execute_workspace_trial(
             return Err(error).context("parse deterministic evaluator output");
         }
     };
-    let output_schema = if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2 {
-        "papertiger-mise.deterministic-evaluator-output.v2"
+    let output_schema = if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {
+        "papertiger-mise.deterministic_evaluator_output.v3"
     } else {
-        "papertiger-mise.deterministic-evaluator-output.v1"
+        "papertiger-mise.deterministic_evaluator_output.v2"
     };
     if evaluator_output.schema != output_schema || serde_json::to_vec(&evaluator_output)? != stdout
     {
@@ -619,6 +619,16 @@ pub fn execute_workspace_trial(
                 stderr: Some(&stderr),
             },
         )?;
+        if evaluator_output.schema != output_schema {
+            return Err(crate::schema_ids::schema_refusal(
+                "deterministic evaluator output",
+                &evaluator_output.schema,
+                output_schema,
+                &format!(
+                    "update the evaluator to emit canonical typed JSON under {output_schema}; the trial was retained as an infrastructure failure"
+                ),
+            ));
+        }
         bail!("WorkspaceOnly evaluator output must be canonical typed JSON under {output_schema}");
     }
     let judge_build = match preserve_judge_build(
@@ -654,7 +664,7 @@ pub fn execute_workspace_trial(
         elapsed_ms,
         u64::try_from(stdout.len())?.saturating_add(u64::try_from(stderr.len())?),
     )?;
-    let environment_sha256 = if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V2
+    let environment_sha256 = if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4
         || manifest.evaluator.rust_build_environment.is_some()
         || manifest.evaluator.judge_build.is_some()
     {
@@ -918,7 +928,7 @@ pub(super) fn record_runtime_integrity_failure(
     let evidence = crate::object::preserve_object(
         object_root,
         &serde_json::to_vec(&json!({
-            "schema": "papertiger-mise.runtime-input-integrity.v2",
+            "schema": "papertiger-mise.runtime_input_integrity.v3",
             "trial_id": intent.trial_id,
             "mismatch": mismatch,
             "observed_outer_judge_sha256": observed_outer_judge_sha256,
@@ -1098,7 +1108,7 @@ fn reconcile_supervisor_failure_with_capture(
         .map(|bytes| crate::object::preserve_object(object_root, bytes))
         .transpose()?;
     let evidence_bytes = serde_json::to_vec(&json!({
-        "schema": "papertiger-mise.workspace-supervisor-failure.v1",
+        "schema": "papertiger-mise.workspace_supervisor_failure.v2",
         "trial_id": intent.trial_id,
         "reason": failure.reason,
         "detail": failure.detail.chars().take(1024).collect::<String>(),
@@ -1113,7 +1123,7 @@ fn reconcile_supervisor_failure_with_capture(
         object_root,
         &intent.trial_id,
         &AbsenceProof {
-            verifier: "papertiger-mise.workspace-supervisor.v1".to_owned(),
+            verifier: "papertiger-mise.workspace_supervisor.v2".to_owned(),
             observed_at: now(),
             supervisor_identity: intent.supervisor_identity.clone(),
             process_birth_identity: failure.process_birth_identity.map(str::to_owned),

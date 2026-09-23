@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use papertiger_mise::measurement::{
-    MEASUREMENT_SAMPLE_SCHEMA_V1, MeasuredProcess, MeasurementSample, ObservationProvenance,
+    MEASUREMENT_SAMPLE_SCHEMA_V2, MeasuredProcess, MeasurementSample, ObservationProvenance,
 };
 use papertiger_mise::{
     DeterministicEvaluatorOutput, DeterministicEvaluatorRequest, DeterministicObservation,
@@ -35,7 +35,7 @@ fn run() -> Result<()> {
     let mut request_bytes = Vec::new();
     std::io::stdin().read_to_end(&mut request_bytes)?;
     let request: DeterministicEvaluatorRequest = serde_json::from_slice(&request_bytes)?;
-    if request.schema != "papertiger-mise.deterministic-evaluator-request.v2" {
+    if request.schema != "papertiger-mise.deterministic_evaluator_request.v3" {
         bail!("fixture requires deterministic-evaluator-request.v2");
     }
     let score_bytes = std::fs::read("src/score.txt")?;
@@ -89,7 +89,7 @@ fn run() -> Result<()> {
         let observed = synthetic_measurement::contract(&objective.unit, executable_name);
         if objective.measurement.as_ref() != Some(&observed) { bail!("fixture measurement scope differs from admitted contract"); }
         let sample = |revision: &str, value: f64, bytes: &[u8]| MeasurementSample {
-            schema: MEASUREMENT_SAMPLE_SCHEMA_V1.to_owned(),
+            schema: MEASUREMENT_SAMPLE_SCHEMA_V2.to_owned(),
             observed: observed.clone(), process: process.clone(),
             participant_revision: revision.to_owned(), fixture_sha256: request.fixture_sha256.clone(),
             environment_sha256: environment.clone(), value: serde_json::Number::from_f64(value).expect("finite fixture value"), scale10: 0,
@@ -126,7 +126,7 @@ fn run() -> Result<()> {
         b"fixture-parent-built-judge-v1",
     )?;
     let output = DeterministicEvaluatorOutput {
-        schema: "papertiger-mise.deterministic-evaluator-output.v2".to_owned(),
+        schema: "papertiger-mise.deterministic_evaluator_output.v3".to_owned(),
         observations,
         reason_code: reason,
         judge_build: Some(EvaluatorJudgeBuild {

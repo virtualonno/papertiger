@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::digest::{sha256, validate_sha256};
 
-pub const CANDIDATE_MATERIAL_SCHEMA_V1: &str = "papertiger-mise.candidate-material.v1";
-pub const GIT_CHANGE_SET_SCHEMA_V1: &str = "papertiger-mise.git-change-set.v1";
-pub const GIT_CHANGE_SET_PROTOCOL_V1: &str = "papertiger-mise.git-change-set.v1";
+pub const CANDIDATE_MATERIAL_SCHEMA_V2: &str = "papertiger-mise.candidate_material.v2";
+pub const GIT_CHANGE_SET_SCHEMA_V2: &str = "papertiger-mise.git_change_set.v2";
+pub const GIT_CHANGE_SET_PROTOCOL_V2: &str = "papertiger-mise.git_change_set.v2";
 pub const GIT_CHANGE_SET_MEDIA_TYPE: &str = "application/vnd.papertiger-mise.git-change-set+json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,7 +152,7 @@ impl CandidateMaterial {
     pub fn from_changes(mut changes: Vec<GitChange>) -> Result<Self> {
         changes.sort_by(|left, right| left.path.cmp(&right.path));
         let change_set = GitChangeSet {
-            schema: GIT_CHANGE_SET_SCHEMA_V1.to_owned(),
+            schema: GIT_CHANGE_SET_SCHEMA_V2.to_owned(),
             changes,
         };
         let paths = change_set
@@ -167,9 +167,9 @@ impl CandidateMaterial {
             .collect();
         let payload_sha256 = sha256(&serde_json::to_vec(&change_set)?);
         let material = Self {
-            schema: CANDIDATE_MATERIAL_SCHEMA_V1.to_owned(),
+            schema: CANDIDATE_MATERIAL_SCHEMA_V2.to_owned(),
             kind: "git_change_set".to_owned(),
-            protocol: GIT_CHANGE_SET_PROTOCOL_V1.to_owned(),
+            protocol: GIT_CHANGE_SET_PROTOCOL_V2.to_owned(),
             media_type: GIT_CHANGE_SET_MEDIA_TYPE.to_owned(),
             payload_sha256,
             scope: GitChangeSetScope {
@@ -200,16 +200,16 @@ impl CandidateMaterial {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.schema != CANDIDATE_MATERIAL_SCHEMA_V1
+        if self.schema != CANDIDATE_MATERIAL_SCHEMA_V2
             || self.kind != "git_change_set"
-            || self.protocol != GIT_CHANGE_SET_PROTOCOL_V1
+            || self.protocol != GIT_CHANGE_SET_PROTOCOL_V2
             || self.media_type != GIT_CHANGE_SET_MEDIA_TYPE
         {
             bail!(
                 "candidate material does not declare the exact supported Git change-set contract"
             );
         }
-        if self.change_set.schema != GIT_CHANGE_SET_SCHEMA_V1 {
+        if self.change_set.schema != GIT_CHANGE_SET_SCHEMA_V2 {
             bail!("candidate material has an unsupported Git change-set payload schema");
         }
         let payload = serde_json::to_vec(&self.change_set)?;
@@ -310,12 +310,12 @@ pub fn bind_candidate(
     }
     let material_sha256 = sha256(&material_bytes);
     let identity = serde_json::to_vec(&CandidateIdentity {
-        schema: "papertiger-mise.candidate-identity.v2",
+        schema: "papertiger-mise.candidate_identity.v3",
         proposal: &proposal,
         material_sha256: &material_sha256,
     })?;
     let negative = serde_json::to_vec(&NegativeFingerprint {
-        schema: "papertiger-mise.negative-fingerprint.v1",
+        schema: "papertiger-mise.negative_fingerprint.v2",
         changed_paths: &proposal.changed_paths,
         changed_symbols: &proposal.changed_symbols,
         semantic_class: &proposal.semantic_class,
@@ -340,12 +340,12 @@ pub(crate) fn bind_legacy_patch_candidate(
     }
     let material_sha256 = sha256(&patch_bytes);
     let identity = serde_json::to_vec(&LegacyCandidateIdentity {
-        schema: "papertiger-mise.candidate-identity.v1",
+        schema: "papertiger-mise.candidate_identity.v2",
         proposal: &proposal,
         patch_sha256: &material_sha256,
     })?;
     let negative = serde_json::to_vec(&NegativeFingerprint {
-        schema: "papertiger-mise.negative-fingerprint.v1",
+        schema: "papertiger-mise.negative_fingerprint.v2",
         changed_paths: &proposal.changed_paths,
         changed_symbols: &proposal.changed_symbols,
         semantic_class: &proposal.semantic_class,

@@ -18,18 +18,18 @@ use papertiger_mise::manifest::{
     ObjectiveRole, ObjectiveSpec, Sha256Digest, StopRules,
 };
 use papertiger_mise::{
-    BudgetLimit, BudgetRequest, BudgetResource, CandidateProposal, FIXTURE_BUNDLE_SCHEMA_V1,
+    BudgetLimit, BudgetRequest, BudgetResource, CandidateProposal, FIXTURE_BUNDLE_SCHEMA_V2,
     FixtureBundleDescriptor, FixtureBundleEntry, GIT_CHANGE_SET_MEDIA_TYPE,
-    GIT_CHANGE_SET_PROTOCOL_V1, Hypothesis, PAIRED_ADAPTER_BINDING_SCHEMA_V1,
-    PAIRED_ANALYSIS_SCHEMA_V2, PAIRED_MEASUREMENT_PROTOCOL_V1, PairedAdapterBinding,
+    GIT_CHANGE_SET_PROTOCOL_V2, Hypothesis, PAIRED_ADAPTER_BINDING_SCHEMA_V2,
+    PAIRED_ANALYSIS_SCHEMA_V3, PAIRED_MEASUREMENT_PROTOCOL_V2, PairedAdapterBinding,
     PairedAnalysisMethod, PairedAnalysisPlan, PairedCalibrationFixtureBindings, PairedCohort,
-    PairedCohortAdjudication, PairedExecutionParticipant, PairedExecutionParticipants,
-    PairedFixtureBinding, PairedObjectivePolicy, PairedRunOutcome, PairedSlotSeedCommitment,
-    PreparePairedCohortSpec, RationalThreshold, adjudicate_paired_cohort, admit_verified_campaign,
-    bind_candidate, budget_balances, build_git_change_set_material, execute_next_paired_run,
-    git_worktree_add_without_hooks, init, inspect_source_binding, materialize_candidate,
-    open_for_init, prepare_paired_cohort, preserve_object, record_candidate, reserve_budget,
-    reserve_paired_analysis_slot, verify_campaign_admission,
+    PairedCohortAdjudication, PairedExecutionOutcome, PairedExecutionParticipant,
+    PairedExecutionParticipants, PairedFixtureBinding, PairedObjectivePolicy,
+    PairedSlotSeedCommitment, PreparePairedCohortSpec, RationalThreshold, adjudicate_paired_cohort,
+    admit_verified_campaign, bind_candidate, budget_balances, build_git_change_set_material,
+    execute_next_paired_execution, git_worktree_add_without_hooks, init, inspect_source_binding,
+    materialize_candidate, open_for_init, prepare_paired_cohort, preserve_object, record_candidate,
+    reserve_budget, reserve_paired_analysis_slot, verify_campaign_admission,
 };
 use serde_json::json;
 
@@ -97,7 +97,7 @@ fn main() -> Result<()> {
     let exploration_fixture =
         br#"{"cohort":"research","schema":"contextmink.synthetic-fixture.v1"}"#;
     let sampling_protocol = br#"{"independence":"the score outcome is constant over the population, so threshold indicators are degenerate independent Bernoulli variables","population":"all 256-bit synthetic workload labels","sampling":"one independent OS-CSPRNG draw per frozen block after candidate identity","schema":"contextmink.synthetic-sampling.v1"}"#;
-    let order_seed_protocol = br#"{"commit":"sha256(OS-CSPRNG seed bytes)","generation":"after candidate identity","reveal":"only in the admitted cohort","schema":"papertiger-mise.order-seed-protocol.v1"}"#;
+    let order_seed_protocol = br#"{"commit":"sha256(OS-CSPRNG seed bytes)","generation":"after candidate identity","reveal":"only in the admitted cohort","schema":"papertiger-mise.order_seed_protocol.v2"}"#;
     for (name, bytes) in [
         ("adapter.json", adapter_bytes.as_slice()),
         ("evaluator.json", evaluator_bytes.as_slice()),
@@ -115,7 +115,7 @@ fn main() -> Result<()> {
     let known_bad_fixture_sha = digest(known_bad_fixture);
     let exploration_sha = digest(exploration_fixture);
     let bundle = FixtureBundleDescriptor {
-        schema: FIXTURE_BUNDLE_SCHEMA_V1.to_owned(),
+        schema: FIXTURE_BUNDLE_SCHEMA_V2.to_owned(),
         fixtures: required_fixture_entries(&no_op_sha, &known_bad_fixture_sha, &exploration_sha),
     };
     let bundle_bytes = bundle.canonical_bytes()?;
@@ -166,7 +166,7 @@ fn main() -> Result<()> {
     let judge_locator = portable(&judge)?;
     let adapter_locator = portable(&adapter_executable)?;
     let trial_adapter = PairedAdapterBinding {
-        schema: PAIRED_ADAPTER_BINDING_SCHEMA_V1.to_owned(),
+        schema: PAIRED_ADAPTER_BINDING_SCHEMA_V2.to_owned(),
         executable_locator: adapter_locator.clone(),
         executable_sha256: Sha256Digest(digest(&std::fs::read(&adapter_executable)?)),
         argv: vec![adapter_locator],
@@ -203,7 +203,7 @@ fn main() -> Result<()> {
     };
     let objectives = objectives();
     let manifest = CampaignManifest {
-        schema: "papertiger-mise.campaign.v2".to_owned(),
+        schema: "papertiger-mise.campaign.v4".to_owned(),
         campaign_id: CAMPAIGN_ID.to_owned(),
         source: source_binding.clone(),
         mutation_scope: MutationScope {
@@ -212,12 +212,12 @@ fn main() -> Result<()> {
         },
         candidate_material: Some(CandidateMaterialContract {
             kind: "git_change_set".to_owned(),
-            protocol: GIT_CHANGE_SET_PROTOCOL_V1.to_owned(),
+            protocol: GIT_CHANGE_SET_PROTOCOL_V2.to_owned(),
             media_type: GIT_CHANGE_SET_MEDIA_TYPE.to_owned(),
         }),
         adapter: AdapterBinding {
             name: "contextmink-synthetic-score".to_owned(),
-            protocol: "papertiger-mise.adapter.v1".to_owned(),
+            protocol: "papertiger-mise.adapter.v2".to_owned(),
             implementation_locator: "fixtures/mise/adapter.json".to_owned(),
             implementation_sha256: Sha256Digest(adapter_sha.clone()),
         },
@@ -234,7 +234,7 @@ fn main() -> Result<()> {
             evaluator_sha256: Sha256Digest(digest(evaluator_bytes)),
             fixture_bundle_locator: "fixtures/mise/bundle.json".to_owned(),
             fixture_bundle_sha256: Sha256Digest(digest(&bundle_bytes)),
-            protocol: PAIRED_MEASUREMENT_PROTOCOL_V1.to_owned(),
+            protocol: PAIRED_MEASUREMENT_PROTOCOL_V2.to_owned(),
             rust_build_environment: None,
             judge_build: None,
         },
@@ -523,7 +523,7 @@ fn paired_plan(
     seeds: &SeedMaterial,
 ) -> PairedAnalysisPlan {
     PairedAnalysisPlan {
-        schema: PAIRED_ANALYSIS_SCHEMA_V2.to_owned(),
+        schema: PAIRED_ANALYSIS_SCHEMA_V3.to_owned(),
         method: PairedAnalysisMethod::FixedSampleExactPairedBinomial,
         trial_adapter: Some(trial_adapter),
         inference_scope:
@@ -813,8 +813,8 @@ fn run_cohort(
     prepare_paired_cohort(connection, ACTOR, objects, &spec)?;
     loop {
         if matches!(
-            execute_next_paired_run(connection, ACTOR, objects, cohort_id)?,
-            PairedRunOutcome::ReadyForAdjudication
+            execute_next_paired_execution(connection, ACTOR, objects, cohort_id)?,
+            PairedExecutionOutcome::ReadyForAdjudication
         ) {
             break;
         }

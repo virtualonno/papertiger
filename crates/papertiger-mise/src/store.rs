@@ -14,7 +14,7 @@ use crate::digest::{sha256, validate_sha256};
 use crate::manifest::CampaignManifest;
 use crate::validation::validate_nonblank;
 
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.mise";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
 
@@ -43,7 +43,7 @@ CREATE TRIGGER budget_reservation_uses_no_delete BEFORE DELETE ON budget_reserva
 BEGIN SELECT RAISE(ABORT, 'budget reservation use is immutable'); END;
 "#;
 
-const PAIRED_ANALYSIS_SCHEMA_V2: &str = r#"
+const PAIRED_ANALYSIS_SCHEMA_V3: &str = r#"
 CREATE TABLE paired_analysis_slots (
   campaign_id TEXT NOT NULL REFERENCES campaigns(campaign_id),
   slot INTEGER NOT NULL CHECK (slot > 0),
@@ -890,12 +890,13 @@ WHEN NOT EXISTS (
 BEGIN SELECT RAISE(ABORT, 'nomination requires a qualified terminal candidate'); END;
 "#,
     )?;
-    transaction.execute_batch(PAIRED_ANALYSIS_SCHEMA_V2)?;
+    transaction.execute_batch(PAIRED_ANALYSIS_SCHEMA_V3)?;
     transaction.execute_batch(PAIRED_EVIDENCE_SCHEMA_V3)?;
     transaction.execute_batch(DOMAIN_SHADOW_SCHEMA_V4)?;
     transaction.execute_batch(PAIRED_RUNTIME_SCHEMA_V5)?;
     transaction.execute_batch(SUCCESSOR_SCHEMA_V6)?;
     transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V9)?;
+    transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V10)?;
     transaction.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
@@ -919,7 +920,7 @@ fn migrate(connection: &Connection, from: i64) -> Result<()> {
     }
     if from == 1 {
         let transaction = begin_mutation(connection)?;
-        transaction.execute_batch(PAIRED_ANALYSIS_SCHEMA_V2)?;
+        transaction.execute_batch(PAIRED_ANALYSIS_SCHEMA_V3)?;
         transaction.execute(
             "UPDATE meta SET value=?1 WHERE key='schema_version'",
             params![2_i64.to_string()],
@@ -995,6 +996,16 @@ fn migrate(connection: &Connection, from: i64) -> Result<()> {
         transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V9)?;
         transaction.execute(
             "UPDATE meta SET value=?1 WHERE key='schema_version'",
+            params![9_i64.to_string()],
+        )?;
+        transaction.commit()?;
+        return migrate(connection, 9);
+    }
+    if from == 9 {
+        let transaction = begin_mutation(connection)?;
+        transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V10)?;
+        transaction.execute(
+            "UPDATE meta SET value=?1 WHERE key='schema_version'",
             params![SCHEMA_VERSION.to_string()],
         )?;
         transaction.commit()?;
@@ -1033,8 +1044,7 @@ fn validate_campaign_admission(
     validate_nonblank("campaign_id", &admission.campaign_id)?;
     validate_nonblank("manifest_schema", &admission.manifest_schema)?;
     validate_sha256(&admission.manifest_sha256, "campaign manifest SHA-256")?;
-    let manifest: CampaignManifest = serde_json::from_str(&admission.manifest_json)
-        .context("campaign admission manifest_json must be a typed Mise campaign manifest")?;
+    let manifest = CampaignManifest::from_stored_json(&admission.manifest_json)?;
     manifest.validate()?;
     if manifest.campaign_id != admission.campaign_id
         || manifest.schema != admission.manifest_schema
@@ -1540,7 +1550,7 @@ pub fn authority_status(connection: &Connection, recent_limit: usize) -> Result<
         |row| row.get(0),
     )?;
     Ok(AuthorityStatus {
-        schema: "papertiger-mise.authority-status.v1",
+        schema: "papertiger-mise.authority_status.v2",
         schema_version: SCHEMA_VERSION,
         campaign_count,
         recent_campaigns_truncated: campaign_count > i64::try_from(recent_campaigns.len())?,
@@ -1852,7 +1862,7 @@ mod tests {
         });
         child.validate().expect("child manifest");
         let proof = crate::successor::ParentPromotionProof {
-            schema: crate::successor::PARENT_PROMOTION_PROOF_SCHEMA_V1.to_owned(),
+            schema: crate::successor::PARENT_PROMOTION_PROOF_SCHEMA_V2.to_owned(),
             scope: crate::successor::SUCCESSOR_ADMISSION_SCOPE_V1.to_owned(),
             parent_campaign_id: parent.campaign_id.clone(),
             parent_manifest_sha256: parent.sha256().expect("parent digest"),
@@ -1960,6 +1970,80 @@ mod tests {
                 .execute("CREATE TABLE forbidden_read_only_write (value TEXT)", [])
                 .is_err(),
             "read-only authority must reject mutation by construction"
+        );
+    }
+
+    #[test]
+    fn schema_nine_migrates_cancellation_rationale_to_why() {
+        fn cancellation_ddl(connection: &Connection) -> Vec<String> {
+            let mut statement = connection
+                .prepare(
+                    "SELECT sql FROM sqlite_schema
+                     WHERE tbl_name='cancellation_requests' AND sql IS NOT NULL ORDER BY name",
+                )
+                .expect("cancellation DDL query");
+            statement
+                .query_map([], |row| row.get(0))
+                .expect("cancellation DDL rows")
+                .collect::<rusqlite::Result<_>>()
+                .expect("cancellation DDL")
+        }
+        let fresh = Connection::open_in_memory().expect("fresh database");
+        init(&fresh).expect("initialize current schema");
+        let connection = Connection::open_in_memory().expect("database");
+        init(&connection).expect("initialize current schema");
+        // Store one v9 rationale before the v9 triggers exist, so the
+        // migration must carry real data rather than only reshape DDL.
+        let (v9_table, v9_triggers) = crate::cancellation::CANCELLATION_SCHEMA_V9
+            .split_once("CREATE TRIGGER")
+            .expect("v9 schema defines triggers");
+        connection
+            .execute_batch(&format!(
+                "DROP TRIGGER cancellation_request_launched_guard;
+                 DROP TRIGGER cancellation_requests_no_update;
+                 DROP TRIGGER cancellation_requests_no_delete;
+                 DROP TRIGGER trial_cancellation_success_guard;
+                 DROP TRIGGER paired_cancellation_success_guard;
+                 DROP TABLE cancellation_requests;
+                 {v9_table}
+                 PRAGMA foreign_keys=OFF;
+                 INSERT INTO cancellation_requests (trial_id, actor, reason, requested_at)
+                   VALUES ('trial-v9', 'operator', 'stale branch after rebase', '2026-09-01T00:00:00Z');
+                 PRAGMA foreign_keys=ON;
+                 CREATE TRIGGER{v9_triggers}
+                 UPDATE meta SET value='9' WHERE key='schema_version';"
+            ))
+            .expect("construct exact v9 cancellation boundary");
+        assert!(
+            cancellation_ddl(&connection)
+                .iter()
+                .any(|sql| sql.contains("paired show-run"))
+        );
+
+        init(&connection).expect("explicit migration");
+        assert_eq!(schema_version(&connection).unwrap(), SCHEMA_VERSION);
+        let migrated = cancellation_ddl(&connection);
+        assert_eq!(migrated, cancellation_ddl(&fresh));
+        assert!(migrated.iter().any(|sql| sql.contains("why TEXT NOT NULL")));
+        assert!(migrated.iter().all(|sql| !sql.contains("reason")));
+        let preserved: (String, String) = connection
+            .query_row(
+                "SELECT trial_id, why FROM cancellation_requests",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("v9 cancellation row survives migration");
+        assert_eq!(
+            preserved,
+            (
+                "trial-v9".to_owned(),
+                "stale branch after rebase".to_owned()
+            )
+        );
+        assert!(
+            migrated
+                .iter()
+                .any(|sql| sql.contains("paired show-execution"))
         );
     }
 
@@ -2475,7 +2559,7 @@ mod tests {
         admit_campaign(&connection, "agent", &second).expect("second campaign");
 
         let status = authority_status(&connection, 1).expect("status");
-        assert_eq!(status.schema, "papertiger-mise.authority-status.v1");
+        assert_eq!(status.schema, "papertiger-mise.authority_status.v2");
         assert_eq!(status.schema_version, SCHEMA_VERSION);
         assert_eq!(status.campaign_count, 2);
         assert_eq!(status.recent_campaigns.len(), 1);

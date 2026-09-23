@@ -15,9 +15,9 @@ use crate::statistics::{
 };
 use crate::validation::validate_bounded_token as validate_token;
 
-pub const PAIRED_ADAPTER_BINDING_SCHEMA_V1: &str = "papertiger-mise.paired-adapter-binding.v1";
-pub const PAIRED_TRIAL_REQUEST_SCHEMA_V2: &str = "papertiger-mise.paired-trial-request.v2";
-pub const PAIRED_TRIAL_REQUEST_SCHEMA_V3: &str = "papertiger-mise.paired-trial-request.v3";
+pub const PAIRED_ADAPTER_BINDING_SCHEMA_V2: &str = "papertiger-mise.paired_adapter_binding.v2";
+pub const PAIRED_TRIAL_REQUEST_SCHEMA_V3: &str = "papertiger-mise.paired_trial_request.v3";
+pub const PAIRED_TRIAL_REQUEST_SCHEMA_V4: &str = "papertiger-mise.paired_trial_request.v4";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -207,8 +207,13 @@ impl PairedAdapterBinding {
     }
 
     pub(crate) fn validate_contract(&self) -> Result<()> {
-        if self.schema != PAIRED_ADAPTER_BINDING_SCHEMA_V1 {
-            bail!("paired adapter binding schema must be '{PAIRED_ADAPTER_BINDING_SCHEMA_V1}'");
+        if self.schema != PAIRED_ADAPTER_BINDING_SCHEMA_V2 {
+            return Err(crate::schema_ids::schema_refusal(
+                "paired adapter binding",
+                &self.schema,
+                PAIRED_ADAPTER_BINDING_SCHEMA_V2,
+                "reissue the binding file with schema papertiger-mise.paired_adapter_binding.v2",
+            ));
         }
         validate_absolute_syntax("adapter executable", &self.executable_locator)?;
         validate_sha256(&self.executable_sha256.0, "adapter executable")?;
@@ -433,9 +438,9 @@ pub(crate) fn prepare_paired_adapter_cohort(
                     .iter()
                     .any(|objective| objective.measurement.is_some())
                 {
-                    PAIRED_TRIAL_REQUEST_SCHEMA_V3
+                    PAIRED_TRIAL_REQUEST_SCHEMA_V4
                 } else {
-                    PAIRED_TRIAL_REQUEST_SCHEMA_V2
+                    PAIRED_TRIAL_REQUEST_SCHEMA_V3
                 }
                 .to_owned(),
                 execution_id: trial_execution_id(
@@ -644,7 +649,7 @@ fn trial_execution_id(
     };
     sha256(
         format!(
-            "papertiger-mise.paired-trial.v1\n{experiment_id}\n{}\n{block_index}\n{role}\n{}\n{}",
+            "papertiger-mise.paired_trial.v2\n{experiment_id}\n{}\n{block_index}\n{role}\n{}\n{}",
             schedule_sha256.0, participant.identity_sha256.0, participant.revision
         )
         .as_bytes(),
@@ -842,7 +847,7 @@ mod tests {
         .unwrap()
         .requests
         .remove(0);
-        assert_eq!(request.schema, PAIRED_TRIAL_REQUEST_SCHEMA_V3);
+        assert_eq!(request.schema, PAIRED_TRIAL_REQUEST_SCHEMA_V4);
         let binding = plan.trial_adapter.as_ref().unwrap();
         let request_sha256 =
             sha256(&serde_json::to_vec(&serde_json::to_value(&request).unwrap()).unwrap());

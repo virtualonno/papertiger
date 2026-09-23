@@ -10,8 +10,8 @@ use crate::improvement::objective_unit_is_boolean;
 use crate::budget::{BudgetLimit, BudgetResource};
 use crate::digest::sha256;
 
-pub const CAMPAIGN_SCHEMA_V1: &str = "papertiger-mise.campaign.v1";
-pub const CAMPAIGN_SCHEMA_V2: &str = "papertiger-mise.campaign.v2";
+pub const CAMPAIGN_SCHEMA_V3: &str = "papertiger-mise.campaign.v3";
+pub const CAMPAIGN_SCHEMA_V4: &str = "papertiger-mise.campaign.v4";
 const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 /// Immutable, content-bound admission contract for one Mise campaign.
@@ -349,16 +349,46 @@ pub struct KnownBadCalibration {
 #[serde(transparent)]
 pub struct Sha256Digest(pub String);
 
+/// Corrective action for a manifest that no current reader accepts.
+const MANIFEST_SCHEMA_REMEDY: &str = "author a new campaign manifest with schema papertiger-mise.campaign.v4 and run `papertiger-mise campaign preflight <manifest>`; a campaign admitted before papertiger-mise 0.18.0 is frozen and is never rewritten: reopen it with a papertiger-mise 0.17.x binary";
+
 impl CampaignManifest {
+    /// Decode an admitted manifest from authority storage. The schema is
+    /// checked on the raw document first, so a manifest admitted by a
+    /// pre-0.18.0 runtime is refused with its corrective action instead of
+    /// being decoded under a current reader's shape.
+    pub fn from_stored_json(json: &str) -> Result<Self> {
+        let value: serde_json::Value = serde_json::from_str(json).context(
+            "stored campaign manifest is not JSON; restore the campaign authority from verified recovery evidence",
+        )?;
+        let schema = value
+            .get("schema")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if !matches!(schema, CAMPAIGN_SCHEMA_V3 | CAMPAIGN_SCHEMA_V4) {
+            return Err(crate::schema_ids::schema_refusal(
+                "stored campaign manifest",
+                schema,
+                CAMPAIGN_SCHEMA_V4,
+                crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+            ));
+        }
+        serde_json::from_value(value).context(
+            "stored campaign manifest is not a typed Mise campaign manifest; restore the campaign authority from verified recovery evidence",
+        )
+    }
+
     pub fn validate(&self) -> Result<()> {
         if !matches!(
             self.schema.as_str(),
-            CAMPAIGN_SCHEMA_V1 | CAMPAIGN_SCHEMA_V2
+            CAMPAIGN_SCHEMA_V3 | CAMPAIGN_SCHEMA_V4
         ) {
-            bail!(
-                "unsupported campaign schema '{}' (expected '{CAMPAIGN_SCHEMA_V2}'; v1 is historical)",
-                self.schema
-            );
+            return Err(crate::schema_ids::schema_refusal(
+                "campaign manifest",
+                &self.schema,
+                CAMPAIGN_SCHEMA_V4,
+                MANIFEST_SCHEMA_REMEDY,
+            ));
         }
         validate_identifier("campaign_id", &self.campaign_id)?;
         self.source.validate()?;
@@ -394,10 +424,10 @@ impl CampaignManifest {
         self.validate_measurement_contracts()?;
         if let Some(plan) = &self.paired_analysis {
             plan.validate(&self.objectives)?;
-            if self.evaluator.protocol != crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V1 {
+            if self.evaluator.protocol != crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V2 {
                 bail!(
                     "paired analysis requires evaluator protocol '{}'",
-                    crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V1
+                    crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V2
                 );
             }
             self.mutation_scope.require_protected(
@@ -490,9 +520,9 @@ impl CampaignManifest {
     }
 
     pub(crate) fn validate_for_admission(&self) -> Result<()> {
-        if self.schema != CAMPAIGN_SCHEMA_V2 {
+        if self.schema != CAMPAIGN_SCHEMA_V4 {
             bail!(
-                "new campaign admission requires {CAMPAIGN_SCHEMA_V2} and objectives[].measurement; retain historical manifests unchanged and author a new campaign"
+                "new campaign admission requires {CAMPAIGN_SCHEMA_V4} and objectives[].measurement; retain historical manifests unchanged and author a new campaign"
             );
         }
         self.validate()
@@ -504,7 +534,7 @@ impl CampaignManifest {
         let mut behavioral_primary = false;
         for objective in &self.objectives {
             let Some(contract) = &objective.measurement else {
-                if self.schema == CAMPAIGN_SCHEMA_V2 {
+                if self.schema == CAMPAIGN_SCHEMA_V4 {
                     bail!(
                         "objective '{}' requires measurement process/workload provenance",
                         objective.key
@@ -512,9 +542,9 @@ impl CampaignManifest {
                 }
                 continue;
             };
-            if self.schema == CAMPAIGN_SCHEMA_V1 {
+            if self.schema == CAMPAIGN_SCHEMA_V3 {
                 bail!(
-                    "historical campaign.v1 cannot add measurement contracts; author a new campaign.v2 manifest"
+                    "historical papertiger-mise.campaign.v3 cannot add measurement contracts; author a new papertiger-mise.campaign.v4 manifest"
                 );
             }
             contract.validate(&objective.unit, objective.role)?;
@@ -702,8 +732,10 @@ impl CampaignManifest {
         match (self.containment, self.containment_requirement.as_ref()) {
             (ContainmentGrade::Sealed, Some(binding)) => {
                 validate_exact_string("containment_requirement.protocol", &binding.protocol)?;
-                if binding.protocol != crate::attestation::SEALED_ATTESTATION_PROTOCOL_V2 {
-                    bail!("sealed campaigns require the platform-neutral v2 attestation protocol");
+                if binding.protocol != crate::attestation::SEALED_ATTESTATION_PROTOCOL_V3 {
+                    bail!(
+                        "sealed campaigns require the platform-neutral papertiger-mise.ed25519_sealed.v3 attestation protocol"
+                    );
                 }
                 validate_repo_relative_path(
                     "containment_requirement.executor_locator",
@@ -1017,7 +1049,7 @@ impl AdapterBinding {
 impl CandidateMaterialContract {
     fn validate(&self) -> Result<()> {
         if self.kind != "git_change_set"
-            || self.protocol != crate::candidate::GIT_CHANGE_SET_PROTOCOL_V1
+            || self.protocol != crate::candidate::GIT_CHANGE_SET_PROTOCOL_V2
             || self.media_type != crate::candidate::GIT_CHANGE_SET_MEDIA_TYPE
         {
             bail!("candidate_material must declare the exact supported Git change-set contract");
@@ -1620,7 +1652,7 @@ pub(crate) mod tests {
         assert_eq!(round_trip.canonical_bytes().unwrap(), bytes);
         assert!(historical.validate_for_admission().is_err());
         let mut current = historical;
-        current.schema = CAMPAIGN_SCHEMA_V2.to_owned();
+        current.schema = CAMPAIGN_SCHEMA_V4.to_owned();
         assert!(current.validate_for_admission().is_err());
         for objective in &mut current.objectives {
             objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
@@ -1634,7 +1666,7 @@ pub(crate) mod tests {
             MeasurementPhase, MetricKind, ProcessRole, ResourceConstraintBasis, ResourceMetric,
         };
         let mut manifest = valid_manifest();
-        manifest.schema = CAMPAIGN_SCHEMA_V2.to_owned();
+        manifest.schema = CAMPAIGN_SCHEMA_V4.to_owned();
         for objective in &mut manifest.objectives {
             objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
         }
@@ -1683,7 +1715,7 @@ pub(crate) mod tests {
     pub(crate) fn valid_manifest() -> CampaignManifest {
         let (judge_locator, judge_sha256) = test_executable_identity().clone();
         CampaignManifest {
-            schema: CAMPAIGN_SCHEMA_V1.to_owned(),
+            schema: CAMPAIGN_SCHEMA_V3.to_owned(),
             campaign_id: "fixture-rsi-1".to_owned(),
             source: SourceBinding {
                 repository_id: "virtualonno-fixture".to_owned(),
@@ -1699,7 +1731,7 @@ pub(crate) mod tests {
             },
             adapter: AdapterBinding {
                 name: "deterministic-fixture".to_owned(),
-                protocol: "papertiger-mise.adapter.v1".to_owned(),
+                protocol: "papertiger-mise.adapter.v2".to_owned(),
                 implementation_locator: "fixtures/mise/adapter.json".to_owned(),
                 implementation_sha256: digest('5'),
             },
@@ -1718,7 +1750,7 @@ pub(crate) mod tests {
                 evaluator_sha256: digest('b'),
                 fixture_bundle_locator: "fixtures/mise/confirmation.json".to_owned(),
                 fixture_bundle_sha256: digest('c'),
-                protocol: "papertiger-mise.measurement.v1".to_owned(),
+                protocol: "papertiger-mise.measurement.v2".to_owned(),
                 rust_build_environment: None,
                 judge_build: None,
             },
@@ -1796,7 +1828,7 @@ pub(crate) mod tests {
             },
             containment: ContainmentGrade::Sealed,
             containment_requirement: Some(ContainmentRequirement {
-                protocol: crate::attestation::SEALED_ATTESTATION_PROTOCOL_V2.to_owned(),
+                protocol: crate::attestation::SEALED_ATTESTATION_PROTOCOL_V3.to_owned(),
                 executor_locator: "fixtures/mise/containment-executor.json".to_owned(),
                 executor_sha256: digest('4'),
                 profile_sha256: digest('3'),
@@ -1879,14 +1911,14 @@ pub(crate) mod tests {
     #[test]
     fn paired_analysis_is_an_immutable_admission_contract_not_an_adapter_option() {
         use crate::statistics::{
-            PAIRED_ANALYSIS_SCHEMA_V2, PAIRED_MEASUREMENT_PROTOCOL_V1, PairedAnalysisMethod,
+            PAIRED_ANALYSIS_SCHEMA_V3, PAIRED_MEASUREMENT_PROTOCOL_V2, PairedAnalysisMethod,
             PairedAnalysisPlan, PairedBlockDesign, PairedCalibrationFixtureBindings,
             PairedFixtureBinding, PairedObjectivePolicy, RationalThreshold,
         };
 
         let revealed_seed = b"admission-test-secret-seed-00000001";
         let mut manifest = valid_manifest();
-        manifest.evaluator.protocol = PAIRED_MEASUREMENT_PROTOCOL_V1.to_owned();
+        manifest.evaluator.protocol = PAIRED_MEASUREMENT_PROTOCOL_V2.to_owned();
         let confirmation = manifest
             .holdouts
             .tiers
@@ -1914,10 +1946,10 @@ pub(crate) mod tests {
             .hard_limit = 64;
         manifest.stop_rules.max_trials_without_qualified_improvement = 24;
         manifest.paired_analysis = Some(PairedAnalysisPlan {
-            schema: PAIRED_ANALYSIS_SCHEMA_V2.to_owned(),
+            schema: PAIRED_ANALYSIS_SCHEMA_V3.to_owned(),
             method: PairedAnalysisMethod::FixedSampleExactPairedBinomial,
             trial_adapter: Some(crate::adapter::PairedAdapterBinding {
-                schema: crate::adapter::PAIRED_ADAPTER_BINDING_SCHEMA_V1.to_owned(),
+                schema: crate::adapter::PAIRED_ADAPTER_BINDING_SCHEMA_V2.to_owned(),
                 executable_locator: manifest.evaluator.launcher_locator.clone(),
                 executable_sha256: manifest.evaluator.launcher_sha256.clone(),
                 argv: vec![manifest.evaluator.launcher_locator.clone()],
@@ -2088,7 +2120,7 @@ pub(crate) mod tests {
             .reverse();
         assert_eq!(first, manifest.sha256().unwrap());
 
-        manifest.evaluator.protocol = "papertiger-mise.measurement.v1".to_owned();
+        manifest.evaluator.protocol = "papertiger-mise.measurement.v2".to_owned();
         assert!(
             manifest
                 .validate()

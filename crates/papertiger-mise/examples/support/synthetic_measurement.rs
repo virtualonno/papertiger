@@ -1,12 +1,12 @@
 //! Honest scope for synthetic lifecycle fixtures; never domain performance proof.
 use papertiger_mise::measurement::{
-    Aggregation, CacheState, CostCategory, MEASUREMENT_CONTRACT_SCHEMA_V1, MeasurementContract,
+    Aggregation, CacheState, CostCategory, MEASUREMENT_CONTRACT_SCHEMA_V2, MeasurementContract,
     MeasurementPhase, MetricKind, ProcessRole, SamplingMethod, WorkloadScope,
 };
 
 pub fn contract(unit: &str, executable_name: &str) -> MeasurementContract {
     MeasurementContract {
-        schema: MEASUREMENT_CONTRACT_SCHEMA_V1.to_owned(),
+        schema: MEASUREMENT_CONTRACT_SCHEMA_V2.to_owned(),
         subject: "Synthetic lifecycle score fixture".to_owned(),
         process_role: ProcessRole::TestHarness,
         executable_name: executable_name.to_owned(),

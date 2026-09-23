@@ -10,8 +10,8 @@ use papertiger_mise::{
 };
 use serde::Deserialize;
 
-const REQUEST_SCHEMA: &str = "papertiger-mise.deterministic-evaluator-request.v1";
-const OUTPUT_SCHEMA: &str = "papertiger-mise.deterministic-evaluator-output.v1";
+const REQUEST_SCHEMA: &str = "papertiger-mise.deterministic_evaluator_request.v2";
+const OUTPUT_SCHEMA: &str = "papertiger-mise.deterministic_evaluator_output.v2";
 const EVALUATOR_LOCATOR: &str = "crates/papertiger-mise/examples/lifecycle_campaign_evaluator.rs";
 
 const OBJECTIVES: [&str; 9] = [
@@ -465,7 +465,7 @@ mod tests {
         };
         assert_eq!(
             String::from_utf8(serde_json::to_vec(&output)?)?,
-            "{\"schema\":\"papertiger-mise.deterministic-evaluator-output.v1\",\"observations\":[],\"reason_code\":null,\"judge_build\":{\"argv\":[\"cargo\",\"build\"],\"executable_locator\":\"papertiger-mise\"}}"
+            "{\"schema\":\"papertiger-mise.deterministic_evaluator_output.v2\",\"observations\":[],\"reason_code\":null,\"judge_build\":{\"argv\":[\"cargo\",\"build\"],\"executable_locator\":\"papertiger-mise\"}}"
         );
         Ok(())
     }

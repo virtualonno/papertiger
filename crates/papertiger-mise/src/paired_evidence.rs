@@ -16,8 +16,8 @@ use crate::object::{
 use crate::store::{begin_mutation, now};
 use crate::validation::validate_actor;
 
-pub const HISTORICAL_SHADOW_RECEIPT_SCHEMA_V1: &str =
-    "papertiger-mise.historical-shadow-receipt.v1";
+pub const HISTORICAL_SHADOW_RECEIPT_SCHEMA_V2: &str =
+    "papertiger-mise.historical_shadow_receipt.v2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -101,7 +101,7 @@ pub fn record_historical_shadow(
         })
         .collect::<Result<Vec<_>>>()?;
     let receipt = HistoricalShadowReceipt {
-        schema: HISTORICAL_SHADOW_RECEIPT_SCHEMA_V1.to_owned(),
+        schema: HISTORICAL_SHADOW_RECEIPT_SCHEMA_V2.to_owned(),
         scope: "historical_shadow".to_owned(),
         decision_eligible: false,
         schedule_authority: "unavailable".to_owned(),
@@ -204,6 +204,26 @@ pub fn record_historical_shadow(
     Ok((PairedEvidenceOutcome::Recorded, record))
 }
 
+/// Decode a durable binding. Evidence recorded before the 0.18.0 schema-id
+/// cutover is frozen: its schema is checked on the raw document and refused
+/// before any current reader interprets it.
+fn stored_historical_binding(binding_json: &str) -> Result<PairedAdapterBinding> {
+    let value: serde_json::Value = serde_json::from_str(binding_json)?;
+    let schema = value
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if schema != crate::adapter::PAIRED_ADAPTER_BINDING_SCHEMA_V2 {
+        return Err(crate::schema_ids::schema_refusal(
+            "historical-shadow binding",
+            schema,
+            crate::adapter::PAIRED_ADAPTER_BINDING_SCHEMA_V2,
+            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+        ));
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
 pub fn historical_shadow(
     connection: &Connection,
     object_root: &Path,
@@ -249,7 +269,7 @@ pub fn historical_shadow(
     {
         bail!("historical shadow durable identity failed closed");
     }
-    let binding: PairedAdapterBinding = serde_json::from_str(&binding_json)?;
+    let binding = stored_historical_binding(&binding_json)?;
     let request = artifact(connection, &request_sha256)?;
     let result_object = artifact(connection, &result_sha256)?;
     let receipt_object = artifact(connection, &receipt_sha256)?;
@@ -257,6 +277,14 @@ pub fn historical_shadow(
     let result_bytes = read_object(object_root, &result_object)?;
     let (receipt, receipt_bytes): (HistoricalShadowReceipt, Vec<u8>) =
         read_verified_json(object_root, &receipt_object, "historical-shadow receipt")?;
+    if receipt.schema != HISTORICAL_SHADOW_RECEIPT_SCHEMA_V2 {
+        return Err(crate::schema_ids::schema_refusal(
+            "historical-shadow receipt",
+            &receipt.schema,
+            HISTORICAL_SHADOW_RECEIPT_SCHEMA_V2,
+            crate::schema_ids::FROZEN_EVIDENCE_REMEDY,
+        ));
+    }
     let result = parse_historical_result(&result_bytes)?;
     if request.sha256 != result.request_sha256.0
         || result.adapter_executable_sha256 != binding.executable_sha256
@@ -391,5 +419,22 @@ fn observed_order_label(order: ObservedRunOrder) -> &'static str {
     match order {
         ObservedRunOrder::BaselineFirst => "baseline_first",
         ObservedRunOrder::CandidateFirst => "candidate_first",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pre_cutover_historical_shadow_is_frozen() {
+        let error = super::stored_historical_binding(
+            r#"{"schema":"papertiger-mise.paired-adapter-binding.v1"}"#,
+        )
+        .expect_err("pre-0.18 historical-shadow evidence is frozen")
+        .to_string();
+        assert!(
+            error.contains("papertiger-mise.paired_adapter_binding.v2"),
+            "{error}"
+        );
+        assert!(error.contains("papertiger-mise 0.17.x"), "{error}");
     }
 }

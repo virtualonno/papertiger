@@ -44,14 +44,14 @@ fn cancellation_of_real_paired_run_settles_the_entire_cohort() {
         "cancel-cohort-budget",
     );
     prepare_paired_cohort(&fixture.connection, ACTOR, fixture.objects.path(), &spec).unwrap();
-    let run = paired_runs(&fixture.connection, &spec.cohort_id)
+    let run = paired_executions(&fixture.connection, &spec.cohort_id)
         .unwrap()
         .remove(0);
     assert!(
         request_cancellation(
             &fixture.connection,
             ACTOR,
-            CancellationTarget::PairedRun,
+            CancellationTarget::PairedExecution,
             &run.execution_id,
             "not launched"
         )
@@ -67,15 +67,15 @@ fn cancellation_of_real_paired_run_settles_the_entire_cohort() {
     let connection = fixture.connection;
     let object_path = fixture.objects.path().to_path_buf();
     let worker = std::thread::spawn(move || {
-        execute_next_paired_run(&connection, ACTOR, &object_path, "cancel-cohort")
+        execute_next_paired_execution(&connection, ACTOR, &object_path, "cancel-cohort")
     });
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        if paired_run(&observer, &run.execution_id)
+        if paired_execution(&observer, &run.execution_id)
             .unwrap()
             .unwrap()
             .status
-            == PairedRunStatus::Launched
+            == PairedExecutionStatus::Launched
         {
             break;
         }
@@ -85,14 +85,16 @@ fn cancellation_of_real_paired_run_settles_the_entire_cohort() {
     let request = request_cancellation(
         &observer,
         "operator",
-        CancellationTarget::PairedRun,
+        CancellationTarget::PairedExecution,
         &run.execution_id,
         "stop this cohort",
     )
     .unwrap();
     worker.join().unwrap().unwrap();
-    let record = paired_run(&observer, &run.execution_id).unwrap().unwrap();
-    assert_eq!(record.status, PairedRunStatus::InfrastructureFailed);
+    let record = paired_execution(&observer, &run.execution_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.status, PairedExecutionStatus::InfrastructureFailed);
     assert_eq!(record.failure_code.as_deref(), Some("operator-cancelled"));
     assert_eq!(
         paired_cohort(&observer, "cancel-cohort")
@@ -115,9 +117,9 @@ fn cancellation_of_real_paired_run_settles_the_entire_cohort() {
         request_cancellation(
             &observer,
             ACTOR,
-            CancellationTarget::PairedRun,
+            CancellationTarget::PairedExecution,
             &run.execution_id,
-            &request.reason
+            &request.why
         )
         .unwrap(),
         request
@@ -125,7 +127,12 @@ fn cancellation_of_real_paired_run_settles_the_entire_cohort() {
     drop(observer);
     let reopened = crate::store::open_existing(&db).unwrap();
     assert_eq!(
-        cancellation_request(&reopened, CancellationTarget::PairedRun, &run.execution_id).unwrap(),
+        cancellation_request(
+            &reopened,
+            CancellationTarget::PairedExecution,
+            &run.execution_id
+        )
+        .unwrap(),
         Some(request)
     );
     let receipt =
@@ -147,12 +154,12 @@ fn persisted_calibrations_and_research_adjudicate_only_from_reopened_receipts() 
     );
     prepare_paired_cohort(&fixture.connection, ACTOR, fixture.objects.path(), &no_op)
         .expect("prepare no-op cohort");
-    let no_op_runs = paired_runs(&fixture.connection, &no_op.cohort_id).unwrap();
+    let no_op_runs = paired_executions(&fixture.connection, &no_op.cohort_id).unwrap();
     assert_eq!(no_op_runs.len(), 16);
     assert!(
         no_op_runs
             .iter()
-            .all(|run| run.status == PairedRunStatus::Prepared)
+            .all(|run| run.status == PairedExecutionStatus::Prepared)
     );
 
     let first = &no_op_runs[0];
@@ -165,7 +172,7 @@ fn persisted_calibrations_and_research_adjudicate_only_from_reopened_receipts() 
         } => process_birth_identity,
         ProcessObservation::Absent => panic!("test process cannot be absent"),
     };
-    mark_paired_run_launched(
+    mark_paired_execution_launched(
         &fixture.connection,
         ACTOR,
         &no_op.cohort_id,
@@ -174,7 +181,7 @@ fn persisted_calibrations_and_research_adjudicate_only_from_reopened_receipts() 
         &active_identity,
     )
     .expect("bind simulated interrupted run");
-    let replay = execute_next_paired_run(
+    let replay = execute_next_paired_execution(
         &fixture.connection,
         ACTOR,
         fixture.objects.path(),
@@ -182,7 +189,7 @@ fn persisted_calibrations_and_research_adjudicate_only_from_reopened_receipts() 
     )
     .expect_err("launched run cannot replay");
     assert!(replay.to_string().contains("paired recover"));
-    let recovery = recover_paired_run(
+    let recovery = recover_paired_execution(
         &fixture.connection,
         ACTOR,
         fixture.objects.path(),
@@ -387,7 +394,7 @@ fn complete_cohort_with_missing_cas_result_fails_terminally_without_a_wedge() {
     prepare_paired_cohort(&fixture.connection, ACTOR, fixture.objects.path(), &spec)
         .expect("prepare corruption fixture");
     fixture.complete_all(&spec.cohort_id, CalibrationMode::NoOp);
-    let runs = paired_runs(&fixture.connection, &spec.cohort_id).unwrap();
+    let runs = paired_executions(&fixture.connection, &spec.cohort_id).unwrap();
     let result = indexed_object(
         &fixture.connection,
         runs[0]
@@ -543,11 +550,11 @@ impl Fixture {
             ContainmentGrade::Sealed => crate::manifest::HoldoutTierKind::Confirmation,
         };
         manifest.objectives = statistic_fixtures::objectives();
-        manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V2.to_owned();
+        manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V4.to_owned();
         for objective in &mut manifest.objectives {
             objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
         }
-        manifest.evaluator.protocol = crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V1.to_owned();
+        manifest.evaluator.protocol = crate::statistics::PAIRED_MEASUREMENT_PROTOCOL_V2.to_owned();
         manifest.calibration.no_op.minimum_repetitions = 16;
         manifest.calibration.known_bad.minimum_repetitions = 16;
         let evidence_tier = manifest
@@ -705,7 +712,7 @@ impl Fixture {
     }
 
     fn complete_all(&self, cohort_id: &str, mode: CalibrationMode) {
-        let runs = paired_runs(&self.connection, cohort_id).unwrap();
+        let runs = paired_executions(&self.connection, cohort_id).unwrap();
         let binding = self
             .manifest
             .paired_analysis
@@ -718,8 +725,8 @@ impl Fixture {
             let request_object = indexed_object(&self.connection, &run.request_sha256).unwrap();
             let request_bytes = read_object(self.objects.path(), &request_object).unwrap();
             let request: PairedTrialRequest = serde_json::from_slice(&request_bytes).unwrap();
-            if run.status == PairedRunStatus::Prepared {
-                mark_paired_run_launched(
+            if run.status == PairedExecutionStatus::Prepared {
+                mark_paired_execution_launched(
                     &self.connection,
                     ACTOR,
                     cohort_id,
@@ -783,14 +790,14 @@ impl Fixture {
             let birth_identity = format!("fixture-birth-{}", run.execution_id);
             let capabilities = ExecutionCapabilities {
                 portable_contract: Some(
-                    crate::executor::PORTABLE_LOCAL_SUPERVISION_CONTRACT_V1.to_owned(),
+                    crate::executor::PORTABLE_LOCAL_SUPERVISION_CONTRACT_V2.to_owned(),
                 ),
                 platform: std::env::consts::OS.to_owned(),
                 process_family: "fixture-diagnostic".to_owned(),
                 aggregate_process_limit: false,
                 aggregate_memory_limit: false,
             };
-            complete_paired_run(
+            complete_paired_execution(
                 &self.connection,
                 ACTOR,
                 self.objects.path(),
@@ -898,7 +905,7 @@ fn seed_candidate(
         .to_owned();
     let worktree_locator = canonical_or_pending_absolute(worktree).expect("worktree locator");
     let receipt = crate::lifecycle::MaterializationReceipt {
-        schema: "papertiger-mise.materialization.v1".to_owned(),
+        schema: "papertiger-mise.materialization.v3".to_owned(),
         campaign_id: manifest.campaign_id.clone(),
         candidate_id: candidate.candidate_id.clone(),
         base_commit: manifest.source.base_commit.clone(),

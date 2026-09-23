@@ -49,7 +49,7 @@ fn project_root_binds_default_authority_from_an_unrelated_working_directory() {
         String::from_utf8_lossy(&before.stderr)
     );
     let before: Value = serde_json::from_slice(&before.stdout).expect("status JSON");
-    assert_eq!(before["schema"], "papertiger-mise.project-status.v2");
+    assert_eq!(before["schema"], "papertiger-mise.project_status.v3");
     assert_eq!(before["initialized"], false);
     for field in ["project_root", "database", "object_store"] {
         let rendered = before[field].as_str().expect("portable path field");
@@ -179,7 +179,7 @@ fn improvement_inputs_are_mise_owned_and_do_not_create_authority() {
     std::fs::write(
         &approval,
         serde_json::to_vec(&serde_json::json!({
-            "schema": "papertiger.project-improvement-brief-approval.v1",
+            "schema": "papertiger-mise.project_improvement_brief_approval.v2",
             "brief_sha256": papertiger::sha256(&brief_bytes),
             "approved_by": "test-operator",
             "approved_at": "2026-08-08T00:00:00Z",

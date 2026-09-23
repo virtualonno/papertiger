@@ -11,16 +11,15 @@ use crate::manifest::{CampaignManifest, ContainmentGrade, HoldoutDisclosure, Hol
 use crate::object::{PreservedObject, read_object};
 use crate::store::{begin_mutation, campaign, now, record_event_in_mutation};
 
-pub const SEALED_ATTESTATION_SCHEMA_V2: &str = "papertiger-mise.sealed-attestation.v2";
-pub const SEALED_ATTESTATION_PROTOCOL_V2: &str = "papertiger-mise.ed25519-sealed.v2";
-pub const TRUSTED_CONTAINMENT_POLICY_SCHEMA_V2: &str =
-    "papertiger-mise.trusted-containment-policy.v2";
+pub const SEALED_ATTESTATION_SCHEMA_V3: &str = "papertiger-mise.sealed_attestation.v3";
+pub const SEALED_ATTESTATION_PROTOCOL_V3: &str = "papertiger-mise.ed25519_sealed.v3";
+pub const CONTAINMENT_POLICY_SCHEMA_V3: &str = "papertiger-mise.containment_policy.v3";
 
 /// Operator-owned trust root. It is deliberately external to the campaign: a
 /// self-improving campaign cannot nominate its own attestation key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TrustedContainmentPolicy {
+pub struct ContainmentPolicy {
     pub schema: String,
     pub protocol: String,
     pub issuer_identity: String,
@@ -29,7 +28,7 @@ pub struct TrustedContainmentPolicy {
     pub profile_sha256: String,
 }
 
-impl TrustedContainmentPolicy {
+impl ContainmentPolicy {
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         self.validate()?;
         Ok(serde_json::to_vec(self)?)
@@ -40,11 +39,26 @@ impl TrustedContainmentPolicy {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.schema != TRUSTED_CONTAINMENT_POLICY_SCHEMA_V2
-            || self.protocol != SEALED_ATTESTATION_PROTOCOL_V2
-            || self.issuer_identity.trim().is_empty()
-        {
-            bail!("unsupported or incomplete trusted containment policy");
+        if self.schema != CONTAINMENT_POLICY_SCHEMA_V3 {
+            return Err(crate::schema_ids::schema_refusal(
+                "containment policy",
+                &self.schema,
+                CONTAINMENT_POLICY_SCHEMA_V3,
+                "reissue the operator-owned containment policy file with schema papertiger-mise.containment_policy.v3 and protocol papertiger-mise.ed25519_sealed.v3",
+            ));
+        }
+        if self.protocol != SEALED_ATTESTATION_PROTOCOL_V3 {
+            return Err(crate::schema_ids::schema_refusal(
+                "containment policy protocol",
+                &self.protocol,
+                SEALED_ATTESTATION_PROTOCOL_V3,
+                "reissue the operator-owned containment policy file with protocol papertiger-mise.ed25519_sealed.v3",
+            ));
+        }
+        if self.issuer_identity.trim().is_empty() {
+            bail!(
+                "containment policy issuer_identity must be nonblank; reissue the policy file with its issuer"
+            );
         }
         decode_fixed_hex::<32>(&self.public_key_ed25519, "policy public key")?;
         decode_fixed_hex::<32>(&self.executor_sha256, "policy executor SHA-256")?;
@@ -75,7 +89,7 @@ pub struct SealedAttestationPayload {
     pub fixture_sha256: String,
     pub executor_sha256: String,
     pub profile_sha256: String,
-    pub trusted_policy_sha256: String,
+    pub containment_policy_sha256: String,
     pub issuer_identity: String,
     pub invocation_sha256: String,
     pub execution_limits_sha256: String,
@@ -113,7 +127,7 @@ pub fn record_sealed_attestation(
     object_root: &Path,
     trial_id: &str,
     evidence: &PreservedObject,
-    trusted_policy: &TrustedContainmentPolicy,
+    containment_policy: &ContainmentPolicy,
 ) -> Result<bool> {
     if actor.trim().is_empty() || trial_id.trim().is_empty() {
         bail!("attestation actor and trial_id must be nonblank");
@@ -128,14 +142,14 @@ pub fn record_sealed_attestation(
         .with_context(|| format!("unknown trial '{trial_id}'"))?;
     let campaign_record = campaign(connection, &trial.campaign_id)?
         .with_context(|| format!("unknown campaign '{}'", trial.campaign_id))?;
-    let manifest: CampaignManifest = serde_json::from_str(&campaign_record.manifest_json)?;
+    let manifest = CampaignManifest::from_stored_json(&campaign_record.manifest_json)?;
     verify_signed_attestation(
         connection,
         &signed,
         &trial,
         &manifest,
         &campaign_record.manifest_sha256,
-        trusted_policy,
+        containment_policy,
     )?;
 
     let role = attestation_role(trial_id);
@@ -187,7 +201,7 @@ pub(crate) fn require_sealed_attestation(
     trial_id: &str,
     manifest: &CampaignManifest,
     manifest_sha256: &str,
-    trusted_policy: &TrustedContainmentPolicy,
+    containment_policy: &ContainmentPolicy,
 ) -> Result<String> {
     let trial = crate::lifecycle::trial(connection, trial_id)?
         .with_context(|| format!("unknown relied-upon trial '{trial_id}'"))?;
@@ -227,7 +241,7 @@ pub(crate) fn require_sealed_attestation(
         &trial,
         manifest,
         manifest_sha256,
-        trusted_policy,
+        containment_policy,
     )?;
     Ok(object.sha256)
 }
@@ -238,19 +252,19 @@ fn verify_signed_attestation(
     trial: &crate::lifecycle::TrialRecord,
     manifest: &CampaignManifest,
     manifest_sha256: &str,
-    trusted_policy: &TrustedContainmentPolicy,
+    containment_policy: &ContainmentPolicy,
 ) -> Result<()> {
     if manifest.containment != ContainmentGrade::Sealed {
         bail!("sealed attestation is only valid for a sealed admitted campaign");
     }
-    trusted_policy.validate()?;
+    containment_policy.validate()?;
     let requirement = manifest
         .containment_requirement
         .as_ref()
         .context("sealed campaign has no admitted containment requirement")?;
-    if requirement.protocol != trusted_policy.protocol
-        || requirement.executor_sha256.0 != trusted_policy.executor_sha256
-        || requirement.profile_sha256.0 != trusted_policy.profile_sha256
+    if requirement.protocol != containment_policy.protocol
+        || requirement.executor_sha256.0 != containment_policy.executor_sha256
+        || requirement.profile_sha256.0 != containment_policy.profile_sha256
     {
         bail!("operator trust policy does not authorize the campaign's frozen executor/profile");
     }
@@ -285,11 +299,11 @@ fn verify_signed_attestation(
         });
     if confirmation {
         bail!(
-            "sealed confirmation attestation v1 is unavailable until the trial receipt and durable outcome are genuinely verdict-only"
+            "sealed confirmation attestation is unavailable until the trial receipt and durable outcome are genuinely verdict-only"
         );
     }
     if trial.status != crate::state::TrialStatus::Succeeded
-        || payload.schema != SEALED_ATTESTATION_SCHEMA_V2
+        || payload.schema != SEALED_ATTESTATION_SCHEMA_V3
         || payload.campaign_id != trial.campaign_id
         || payload.manifest_sha256 != manifest_sha256
         || payload.candidate_id != trial.candidate_id
@@ -307,10 +321,10 @@ fn verify_signed_attestation(
         || payload.evaluator_sha256 != manifest.evaluator.evaluator_sha256.0
         || payload.fixture_locator != fixture_locator
         || payload.fixture_sha256 != fixture_sha256
-        || payload.executor_sha256 != trusted_policy.executor_sha256
-        || payload.profile_sha256 != trusted_policy.profile_sha256
-        || payload.trusted_policy_sha256 != trusted_policy.sha256()?
-        || payload.issuer_identity != trusted_policy.issuer_identity
+        || payload.executor_sha256 != containment_policy.executor_sha256
+        || payload.profile_sha256 != containment_policy.profile_sha256
+        || payload.containment_policy_sha256 != containment_policy.sha256()?
+        || payload.issuer_identity != containment_policy.issuer_identity
         || payload.invocation_sha256 != invocation_sha256
         || payload.execution_limits_sha256 != execution_limits_sha256
         || payload.actual_grade != "sealed"
@@ -330,7 +344,7 @@ fn verify_signed_attestation(
     {
         bail!("sealed attestation does not bind the exact completed trial and trusted executor");
     }
-    let key_bytes = decode_fixed_hex::<32>(&trusted_policy.public_key_ed25519, "public key")?;
+    let key_bytes = decode_fixed_hex::<32>(&containment_policy.public_key_ed25519, "public key")?;
     let signature_bytes = decode_fixed_hex::<64>(&signed.signature_ed25519, "signature")?;
     let key = VerifyingKey::from_bytes(&key_bytes).context("invalid trusted Ed25519 public key")?;
     let signature = Signature::from_bytes(&signature_bytes);

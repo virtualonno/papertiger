@@ -12,7 +12,7 @@ const TRIAL_PATH_IDENTITY_HEX_LENGTH: usize = 32;
 /// use this 128-bit domain-separated identity so caller-chosen names cannot
 /// exhaust host path limits.
 pub(crate) fn trial_path_identity(campaign_id: &str, trial_id: &str) -> String {
-    let mut bytes = b"papertiger-mise.trial-path.v1\0".to_vec();
+    let mut bytes = b"papertiger-mise.trial_path.v2\0".to_vec();
     bytes.extend_from_slice(campaign_id.as_bytes());
     bytes.push(0);
     bytes.extend_from_slice(trial_id.as_bytes());

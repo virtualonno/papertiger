@@ -60,6 +60,56 @@ verified release binary so the project skill and reference match.
 - The project skill and reference are shorter. `commit add` omits `--repo`
   unless the commit belongs to a nested or external repository.
 
+- Mise commands are renamed without aliases; the old spellings are
+  refused. `paired run-next`, `show-run` and `list-runs` become
+  `execute-next`, `show-execution` and `list-executions`; `improvement verify
+  <FILE>` becomes `verify-registry`; `improvement brief-verify` becomes
+  `verify-brief`; `promotion inspect` becomes `promotion rederive`;
+  `projection inspect` becomes `projection export`. Update scripts and
+  agent instructions that call them.
+- Mise rationale flags are `--why <TEXT>` or `--why-file <PATH|->` (stdin
+  with `-`) instead of `--reason` on `budget release`, `candidate
+  abandon-materialization`, `trial cancel`, `trial abandon` and `paired
+  cancel`. Cancellation requests report the rationale as `why`, and their
+  JSON `target` for a paired execution is `paired_execution`.
+- Mise authority schema v10 renames the recorded cancellation rationale to
+  `why`. Run `papertiger-mise --db <database> init` once after upgrading;
+  read commands refuse a v9 authority and name that command.
+- Every Mise schema, protocol and domain-separation id is
+  `papertiger-mise.<snake_case_name>.v<N>` with its version advanced, and
+  the improvement formats move from the `papertiger.` prefix to
+  `papertiger-mise.`. Operator-authored inputs must be reissued under the
+  new ids: campaign manifests `papertiger-mise.campaign.v4` (measurement
+  contracts `measurement_contract.v2`), adapter bindings
+  `paired_adapter_binding.v2` and `domain_shadow_adapter_binding.v2`, fixture
+  bundles `fixture_bundle.v2` (regenerate with `campaign fixture-bundle`),
+  briefs `project_improvement_brief.v3`, approvals
+  `project_improvement_brief_approval.v2` and registries
+  `improvement_paradigm_registry.v2`. Deterministic evaluators must read
+  `deterministic_evaluator_request.v3` and emit
+  `deterministic_evaluator_output.v3`; paired adapters receive
+  `paired_trial_request.v4`. Rerun `campaign source-binding`, because the
+  repository identity digest changed with its domain-separation id. The
+  complete retired-to-current table is
+  `papertiger_mise::schema_ids::RETIRED_SCHEMA_IDS`.
+- Mise containment policies are `ContainmentPolicy` with schema
+  `papertiger-mise.containment_policy.v3` and protocol
+  `papertiger-mise.ed25519_sealed.v3`, replacing `TrustedContainmentPolicy`
+  and `papertiger-mise.trusted-containment-policy.v2`. Reissue existing policy
+  files; a retired policy is refused with that instruction. Promotion proofs
+  and sealed attestations name the policy digest `containment_policy_sha256`.
+- Mise refuses campaigns, receipts and shadow evidence recorded before this
+  release instead of reading them. Each refusal names the replacement id; reopen
+  frozen evidence with a 0.17.x `papertiger-mise`, or admit a new campaign.
+- Mise `--papertiger-db` defaults to `state/papertiger.sqlite`, resolved from
+  `--project-root`, for `campaign admit-successor`, `promotion verify-parent`
+  and `promotion verify`. `promotion verify` previously required it.
+- Mise `promotion derive` and `promotion verify` help states that both always
+  refuse until sealed confirmation attestation lands.
+- Planner Mise projections require candidate material
+  `papertiger-mise.candidate_material.v2`; export them with this release's
+  `papertiger-mise projection export`.
+
 ### Removed
 
 - `inspect-project-guidance` and the `project_guidance` field of the setup

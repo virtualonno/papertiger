@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::attestation::TrustedContainmentPolicy;
+use crate::attestation::ContainmentPolicy;
 use crate::digest::{sha256, validate_sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ pub struct PromotionProof {
     pub candidate_result_sha256: String,
     pub trial_receipts: Vec<PromotionEvidenceDigest>,
     pub sealed_attestations: Vec<PromotionEvidenceDigest>,
-    pub trusted_containment_policy_sha256: String,
+    pub containment_policy_sha256: String,
 }
 
 impl PromotionProof {
@@ -66,7 +66,7 @@ pub struct VerifiedPromotionGate {
     evidence_locator: String,
     evidence_sha256: String,
     promotion_proof_sha256: String,
-    trusted_containment_policy_sha256: String,
+    containment_policy_sha256: String,
     closed_at: String,
 }
 
@@ -90,13 +90,13 @@ pub(crate) struct VerifiedPapertigerGate {
 pub fn derive_promotion_proof(
     mise_database: &Path,
     object_root: &Path,
-    trusted_policy: &TrustedContainmentPolicy,
+    containment_policy: &ContainmentPolicy,
     nomination_id: &str,
 ) -> Result<PromotionProof> {
     if nomination_id.trim().is_empty() {
         bail!("promotion nomination_id must be nonblank");
     }
-    trusted_policy.validate()?;
+    containment_policy.validate()?;
     let mise = crate::store::open_existing_read_only(mise_database)?;
     let verified =
         crate::lifecycle::verify_nomination_integrity(&mise, object_root, nomination_id)?;
@@ -139,12 +139,12 @@ pub fn derive_promotion_proof(
                 trial_id,
                 &verified.manifest,
                 &verified.manifest_sha256,
-                trusted_policy,
+                containment_policy,
             )?,
         });
     }
     Ok(PromotionProof {
-        schema: "papertiger-mise.promotion-proof.v1".to_owned(),
+        schema: "papertiger-mise.promotion_proof.v2".to_owned(),
         nomination_sha256: verified.nomination.receipt_sha256,
         manifest_sha256: verified.manifest_sha256,
         campaign_id: verified.nomination.campaign_id,
@@ -152,7 +152,7 @@ pub fn derive_promotion_proof(
         candidate_result_sha256: sha256(&serde_json::to_vec(&verified.candidate_result)?),
         trial_receipts,
         sealed_attestations,
-        trusted_containment_policy_sha256: trusted_policy.sha256()?,
+        containment_policy_sha256: containment_policy.sha256()?,
     })
 }
 
@@ -162,14 +162,19 @@ pub fn derive_promotion_proof(
 pub fn verify_promotion_gate(
     mise_database: &Path,
     object_root: &Path,
-    trusted_policy: &TrustedContainmentPolicy,
+    containment_policy: &ContainmentPolicy,
     papertiger_database: &Path,
     nomination_id: &str,
     binding: &PromotionGateBinding,
 ) -> Result<VerifiedPromotionGate> {
-    let proof = derive_promotion_proof(mise_database, object_root, trusted_policy, nomination_id)?;
+    let proof = derive_promotion_proof(
+        mise_database,
+        object_root,
+        containment_policy,
+        nomination_id,
+    )?;
     let promotion_proof_sha256 = proof.sha256()?;
-    let policy_sha256 = proof.trusted_containment_policy_sha256.clone();
+    let policy_sha256 = proof.containment_policy_sha256.clone();
     let exact_locator = proof.evidence_locator()?;
     let gate = verify_papertiger_gate(
         papertiger_database,
@@ -191,7 +196,7 @@ pub fn verify_promotion_gate(
         evidence_locator: gate.evidence_locator,
         evidence_sha256: gate.evidence_sha256,
         promotion_proof_sha256,
-        trusted_containment_policy_sha256: policy_sha256,
+        containment_policy_sha256: policy_sha256,
         closed_at: gate.closed_at,
     })
 }
@@ -383,9 +388,9 @@ mod tests {
             evidence_locator,
             evidence_sha256: digest,
         };
-        let policy = TrustedContainmentPolicy {
-            schema: crate::attestation::TRUSTED_CONTAINMENT_POLICY_SCHEMA_V2.to_owned(),
-            protocol: crate::attestation::SEALED_ATTESTATION_PROTOCOL_V2.to_owned(),
+        let policy = ContainmentPolicy {
+            schema: crate::attestation::CONTAINMENT_POLICY_SCHEMA_V3.to_owned(),
+            protocol: crate::attestation::SEALED_ATTESTATION_PROTOCOL_V3.to_owned(),
             issuer_identity: "fixture-independent-issuer".to_owned(),
             public_key_ed25519: "1".repeat(64),
             executor_sha256: "4".repeat(64),

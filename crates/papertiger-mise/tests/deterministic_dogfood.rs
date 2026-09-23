@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use papertiger_mise::manifest::{
-    AdapterBinding, CAMPAIGN_SCHEMA_V2, CalibrationRequirements, CampaignManifest,
+    AdapterBinding, CAMPAIGN_SCHEMA_V4, CalibrationRequirements, CampaignManifest,
     CandidateMaterialContract, ContainmentGrade, CumulativeBudgetCaps, EvaluatorBinding,
     ExecutionLimits, GenerationBinding, HoldoutDisclosure, HoldoutPolicy, HoldoutTier,
     HoldoutTierKind, JudgeBuildBinding, KnownBadCalibration, MutationScope, NetworkPolicy,
@@ -14,20 +14,19 @@ use papertiger_mise::manifest::{
     Sha256Digest, StopRules,
 };
 use papertiger_mise::{
-    AdmissionOutcome, BudgetLimit, BudgetRequest, BudgetResource, CandidateDisposition,
-    CandidateMaterial, CandidateProposal, ColdRecoveryOutcome, FixtureBundleDescriptor,
-    FixtureBundleEntry, GIT_CHANGE_SET_MEDIA_TYPE, GIT_CHANGE_SET_PROTOCOL_V1, GitChangeOperation,
-    Hypothesis, NominationRecord, PromotionGateBinding, ReservationOutcome,
-    SEALED_ATTESTATION_PROTOCOL_V2, SupervisedTrialSpec, TRUSTED_CONTAINMENT_POLICY_SCHEMA_V2,
-    TrustedContainmentPolicy, adjudicate_deterministic_candidate, admit_verified_campaign,
-    admit_verified_successor, bind_candidate, budget_balances, build_git_change_set_material,
-    campaign, campaign_events, derive_candidate_planner_projection,
-    derive_nomination_planner_projection, derive_parent_promotion_proof, derive_promotion_proof,
-    execute_workspace_trial, init, inspect_source_binding, negative_fingerprint_candidates,
-    open_existing, open_for_init, preserve_object, preserve_parent_promotion_proof, read_object,
-    record_candidate, recover_workspace_trial, reserve_budget, successor_admission, trial,
-    verify_campaign_admission, verify_nomination_integrity, verify_parent_promotion_gate,
-    verify_successor_admission,
+    AdmissionOutcome, BudgetLimit, BudgetRequest, BudgetResource, CONTAINMENT_POLICY_SCHEMA_V3,
+    CandidateDisposition, CandidateMaterial, CandidateProposal, ColdRecoveryOutcome,
+    ContainmentPolicy, FixtureBundleDescriptor, FixtureBundleEntry, GIT_CHANGE_SET_MEDIA_TYPE,
+    GIT_CHANGE_SET_PROTOCOL_V2, GitChangeOperation, Hypothesis, NominationRecord,
+    PromotionGateBinding, ReservationOutcome, SEALED_ATTESTATION_PROTOCOL_V3, SupervisedTrialSpec,
+    adjudicate_deterministic_candidate, admit_verified_campaign, admit_verified_successor,
+    bind_candidate, budget_balances, build_git_change_set_material, campaign, campaign_events,
+    derive_candidate_planner_projection, derive_nomination_planner_projection,
+    derive_parent_promotion_proof, derive_promotion_proof, execute_workspace_trial, init,
+    inspect_source_binding, negative_fingerprint_candidates, open_existing, open_for_init,
+    preserve_object, preserve_parent_promotion_proof, read_object, record_candidate,
+    recover_workspace_trial, reserve_budget, successor_admission, trial, verify_campaign_admission,
+    verify_nomination_integrity, verify_parent_promotion_gate, verify_successor_admission,
 };
 use tempfile::TempDir;
 
@@ -281,7 +280,7 @@ fn deterministic_public_api_campaign_preserves_every_outcome() {
             .any(|value| value == "nomination-is-evidence-not-integration-or-promotion")
     );
 
-    let policy = trusted_policy();
+    let policy = containment_policy();
     let error = derive_promotion_proof(
         &fixture.database,
         &fixture.objects,
@@ -561,7 +560,7 @@ impl DogfoodFixture {
             &evaluator,
         )
         .expect("evaluator implementation");
-        let adapter = br#"{"schema":"papertiger-mise.dogfood-adapter.v1"}"#;
+        let adapter = br#"{"schema":"papertiger-mise.dogfood_adapter.v2"}"#;
         std::fs::write(source.join("fixtures/mise/adapter.json"), adapter).expect("adapter");
         let no_op_fixture = br#"{"calibration":"no-op"}"#;
         let known_bad_fixture = br#"{"calibration":"known-bad"}"#;
@@ -583,7 +582,7 @@ impl DogfoodFixture {
         .expect("exploration fixture");
 
         let bundle = FixtureBundleDescriptor {
-            schema: papertiger_mise::FIXTURE_BUNDLE_SCHEMA_V1.to_owned(),
+            schema: papertiger_mise::FIXTURE_BUNDLE_SCHEMA_V2.to_owned(),
             fixtures: vec![
                 fixture_entry(
                     "calibration.known_bad",
@@ -609,7 +608,7 @@ impl DogfoodFixture {
         let source_binding = inspect_source_binding(&source).expect("source binding");
 
         let policy_bytes =
-            br#"{"schema":"papertiger-mise.proposal-policy.v1","maximum_candidates":12}"#;
+            br#"{"schema":"papertiger-mise.proposal_policy.v2","maximum_candidates":12}"#;
         std::fs::write(control.join("policy.json"), policy_bytes).expect("proposal policy");
         let launcher_directory = temporary.path().join("launcher");
         std::fs::create_dir(&launcher_directory).expect("launcher directory");
@@ -668,7 +667,7 @@ impl DogfoodFixture {
             &known_bad_patch,
         );
         let manifest = CampaignManifest {
-            schema: CAMPAIGN_SCHEMA_V2.to_owned(),
+            schema: CAMPAIGN_SCHEMA_V4.to_owned(),
             campaign_id: CAMPAIGN_ID.to_owned(),
             source: source_binding,
             mutation_scope: MutationScope {
@@ -677,12 +676,12 @@ impl DogfoodFixture {
             },
             candidate_material: Some(CandidateMaterialContract {
                 kind: "git_change_set".to_owned(),
-                protocol: GIT_CHANGE_SET_PROTOCOL_V1.to_owned(),
+                protocol: GIT_CHANGE_SET_PROTOCOL_V2.to_owned(),
                 media_type: GIT_CHANGE_SET_MEDIA_TYPE.to_owned(),
             }),
             adapter: AdapterBinding {
                 name: "deterministic-dogfood".to_owned(),
-                protocol: "papertiger-mise.adapter.v1".to_owned(),
+                protocol: "papertiger-mise.adapter.v2".to_owned(),
                 implementation_locator: "fixtures/mise/adapter.json".to_owned(),
                 implementation_sha256: digest(adapter),
             },
@@ -702,7 +701,7 @@ impl DogfoodFixture {
                 evaluator_sha256: digest(&evaluator),
                 fixture_bundle_locator: "fixtures/mise/bundle.json".to_owned(),
                 fixture_bundle_sha256: digest(&bundle_bytes),
-                protocol: "papertiger-mise.measurement.v1".to_owned(),
+                protocol: "papertiger-mise.measurement.v2".to_owned(),
                 rust_build_environment: None,
                 judge_build: Some(JudgeBuildBinding {
                     argv: vec![
@@ -1165,7 +1164,7 @@ impl DogfoodFixture {
         std::fs::create_dir_all(&child_control).expect("successor control root");
         std::fs::write(
             child_control.join("policy.json"),
-            br#"{"schema":"papertiger-mise.proposal-policy.v1","maximum_candidates":12}"#,
+            br#"{"schema":"papertiger-mise.proposal_policy.v2","maximum_candidates":12}"#,
         )
         .expect("successor proposal policy");
         let manifest_path = child_control.join("campaign.json");
@@ -1599,7 +1598,7 @@ impl DogfoodFixture {
         .expect("absence evidence JSON");
         assert_eq!(
             absence["schema"],
-            "papertiger-mise.process-absence-evidence.v1"
+            "papertiger-mise.process_absence_evidence.v2"
         );
         assert_eq!(absence["expected_process_birth_identity"], expected_birth);
         assert!(matches!(
@@ -1784,11 +1783,11 @@ fn git_text(repository: &Path, arguments: &[&str]) -> String {
         .to_owned()
 }
 
-fn trusted_policy() -> TrustedContainmentPolicy {
+fn containment_policy() -> ContainmentPolicy {
     let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
-    TrustedContainmentPolicy {
-        schema: TRUSTED_CONTAINMENT_POLICY_SCHEMA_V2.to_owned(),
-        protocol: SEALED_ATTESTATION_PROTOCOL_V2.to_owned(),
+    ContainmentPolicy {
+        schema: CONTAINMENT_POLICY_SCHEMA_V3.to_owned(),
+        protocol: SEALED_ATTESTATION_PROTOCOL_V3.to_owned(),
         issuer_identity: "dogfood-operator".to_owned(),
         public_key_ed25519: lower_hex(&signing_key.verifying_key().to_bytes()),
         executor_sha256: "a".repeat(64),

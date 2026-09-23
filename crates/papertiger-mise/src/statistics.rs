@@ -12,9 +12,9 @@ use crate::manifest::{ObjectiveDirection, ObjectiveRole, ObjectiveSpec, Sha256Di
 use crate::store::{begin_mutation, campaign, now, record_event_in_mutation};
 use crate::validation::validate_ascii_token as validate_token;
 
-pub const PAIRED_ANALYSIS_SCHEMA_V1: &str = "papertiger-mise.paired-analysis.v1";
-pub const PAIRED_ANALYSIS_SCHEMA_V2: &str = "papertiger-mise.paired-analysis.v2";
-pub const PAIRED_MEASUREMENT_PROTOCOL_V1: &str = "papertiger-mise.paired-measurement.v1";
+pub const PAIRED_ANALYSIS_SCHEMA_V2: &str = "papertiger-mise.paired_analysis.v2";
+pub const PAIRED_ANALYSIS_SCHEMA_V3: &str = "papertiger-mise.paired_analysis.v3";
+pub const PAIRED_MEASUREMENT_PROTOCOL_V2: &str = "papertiger-mise.paired_measurement.v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -308,15 +308,15 @@ impl PairedAnalysisPlan {
     pub fn validate(&self, objectives: &[ObjectiveSpec]) -> Result<()> {
         if !matches!(
             self.schema.as_str(),
-            PAIRED_ANALYSIS_SCHEMA_V1 | PAIRED_ANALYSIS_SCHEMA_V2
+            PAIRED_ANALYSIS_SCHEMA_V2 | PAIRED_ANALYSIS_SCHEMA_V3
         ) {
             bail!("unsupported paired analysis schema '{}'", self.schema);
         }
         match (self.schema.as_str(), &self.trial_adapter) {
-            (PAIRED_ANALYSIS_SCHEMA_V1, Some(_)) => {
+            (PAIRED_ANALYSIS_SCHEMA_V2, Some(_)) => {
                 bail!("paired analysis v1 cannot claim a frozen trial adapter")
             }
-            (PAIRED_ANALYSIS_SCHEMA_V2, None) => {
+            (PAIRED_ANALYSIS_SCHEMA_V3, None) => {
                 bail!("paired analysis v2 requires an exact frozen trial adapter")
             }
             _ => {}
@@ -594,7 +594,7 @@ impl PairedAnalysisPlan {
             .collect::<Vec<_>>();
         objective_identities.sort_by(|left, right| left.key.cmp(right.key));
         Ok(serde_json::to_vec(&PairedPlanIdentity {
-            schema: "papertiger-mise.paired-plan-identity.v1",
+            schema: "papertiger-mise.paired_plan_identity.v2",
             plan: canonical,
             objectives: objective_identities,
         })?)
@@ -659,7 +659,7 @@ pub fn paired_run_order(
     let mut ranked = stratum_blocks
         .iter()
         .map(|block| {
-            let mut identity = b"papertiger-mise.paired-order.v1\0".to_vec();
+            let mut identity = b"papertiger-mise.paired_order.v2\0".to_vec();
             identity.extend_from_slice(plan.sha256(objectives)?.as_bytes());
             identity.push(0);
             identity.extend_from_slice(candidate.candidate_identity_sha256.0.as_bytes());
@@ -704,7 +704,7 @@ pub fn paired_schedule_sha256(
     let mut identity = Vec::new();
     let cohort_label = candidate.cohort.label();
     let research_slot = candidate.cohort.research_slot().unwrap_or(0);
-    identity.extend_from_slice(b"papertiger-mise.paired-schedule.v1\0");
+    identity.extend_from_slice(b"papertiger-mise.paired_schedule.v2\0");
     identity.extend_from_slice(plan.sha256(objectives)?.as_bytes());
     identity.push(0);
     identity.extend_from_slice(cohort_label.as_bytes());
@@ -756,7 +756,7 @@ pub fn paired_observations_sha256(
             .observations
             .sort_by(|left, right| left.objective.cmp(&right.objective));
     }
-    let mut identity = b"papertiger-mise.paired-observations.v1\0".to_vec();
+    let mut identity = b"papertiger-mise.paired_observations.v2\0".to_vec();
     identity.extend_from_slice(&serde_json::to_vec(&canonical)?);
     Ok(Sha256Digest(sha256(&identity)))
 }
@@ -1109,8 +1109,7 @@ pub fn reserve_paired_analysis_slot(
     validate_sha256(candidate_id, "paired candidate identity")?;
     let campaign = campaign(connection, campaign_id)?
         .with_context(|| format!("unknown campaign '{campaign_id}'"))?;
-    let manifest: crate::manifest::CampaignManifest = serde_json::from_str(&campaign.manifest_json)
-        .context("durable campaign manifest is not valid typed JSON")?;
+    let manifest = crate::manifest::CampaignManifest::from_stored_json(&campaign.manifest_json)?;
     manifest.validate()?;
     let plan = manifest
         .paired_analysis
@@ -1711,7 +1710,7 @@ pub(crate) mod tests {
     pub(crate) fn plan() -> PairedAnalysisPlan {
         let order_seed_commitment_sha256 = Sha256Digest(sha256(order_seed()));
         PairedAnalysisPlan {
-            schema: PAIRED_ANALYSIS_SCHEMA_V2.to_owned(),
+            schema: PAIRED_ANALYSIS_SCHEMA_V3.to_owned(),
             method: PairedAnalysisMethod::FixedSampleExactPairedBinomial,
             trial_adapter: Some(fixture_trial_adapter()),
             inference_scope: PairedInferenceScope::IndependentBlockPopulation {
@@ -1808,7 +1807,7 @@ pub(crate) mod tests {
                 .replace('\\', "/")
         };
         crate::adapter::PairedAdapterBinding {
-            schema: crate::adapter::PAIRED_ADAPTER_BINDING_SCHEMA_V1.to_owned(),
+            schema: crate::adapter::PAIRED_ADAPTER_BINDING_SCHEMA_V2.to_owned(),
             executable_sha256,
             argv: vec![executable_locator.clone()],
             executable_locator,
@@ -1926,7 +1925,7 @@ pub(crate) mod tests {
     fn admit_paired_fixture(connection: &Connection) {
         let mut manifest = crate::manifest::tests::valid_manifest();
         manifest.objectives = objectives();
-        manifest.evaluator.protocol = PAIRED_MEASUREMENT_PROTOCOL_V1.to_owned();
+        manifest.evaluator.protocol = PAIRED_MEASUREMENT_PROTOCOL_V2.to_owned();
         let paired = plan();
         manifest.calibration.no_op.fixture_locator =
             paired.calibration_fixtures.no_op.locator.clone();
@@ -2380,7 +2379,7 @@ pub(crate) mod tests {
     fn paired_v1_remains_readable_while_v2_requires_the_frozen_trial_adapter() {
         let objectives = objectives();
         let mut legacy = plan();
-        legacy.schema = PAIRED_ANALYSIS_SCHEMA_V1.to_owned();
+        legacy.schema = PAIRED_ANALYSIS_SCHEMA_V2.to_owned();
         legacy.trial_adapter = None;
         legacy.validate(&objectives).expect("legacy v1 plan");
         let bytes = serde_json::to_vec(&legacy).expect("legacy JSON");
@@ -2395,7 +2394,7 @@ pub(crate) mod tests {
         assert!(missing.validate(&objectives).is_err());
 
         let mut mislabelled = plan();
-        mislabelled.schema = PAIRED_ANALYSIS_SCHEMA_V1.to_owned();
+        mislabelled.schema = PAIRED_ANALYSIS_SCHEMA_V2.to_owned();
         assert!(mislabelled.validate(&objectives).is_err());
     }
 
