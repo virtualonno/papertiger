@@ -2461,15 +2461,6 @@ mod tests {
                 "{name} must name the skipped unit of work"
             );
         }
-        let contract = std::str::from_utf8(AGENT_INTEGRATION).expect("managed text is UTF-8");
-        assert!(
-            contract.contains("Before the first edit or commit")
-                && contract.contains("`<selected-skill-path>/papertiger/SKILL.md` completely")
-                && contract.contains("`.agents/skills`")
-                && contract.contains("`.claude/skills`")
-                && contract.contains("tools/papertiger/agent_integration.md"),
-            "repository guidance trigger must give exact pre-mutation ordering and harness-neutral routing"
-        );
         for (name, bytes) in [
             ("agent integration contract", AGENT_INTEGRATION),
             ("agent skill", AGENT_SKILL),
@@ -2478,7 +2469,7 @@ mod tests {
             assert!(
                 text.contains("--intent-source user")
                     && (text.contains("before task completion")
-                        || text.contains("Before completion, associate")),
+                        || text.contains("Before completion, record any commit")),
                 "{name} must preserve known user provenance and inward commit association ordering"
             );
         }

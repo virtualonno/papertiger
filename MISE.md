@@ -347,8 +347,8 @@ The live boundary is intentionally two-step and operator-controlled. First,
 `--candidate <id>` for terminal non-nominations) opens the Mise authority
 read-only, reopens the exact candidate material and relied-upon CAS evidence,
 rederives budget balances, and emits
-`papertiger.mise-planner-projection.v1`. Then
-`papertiger mise project <task> <projection.json>` validates the document again
+`papertiger.mise_planner_projection.v2`. Then
+`papertiger mise record <task> <projection.json>` validates the document again
 and records it immutably in the independent planning database. Repeating the
 same projection on the same task is a no-op; binding the candidate to another
 task or changing its projected payload is refused. `papertiger mise list
@@ -361,12 +361,12 @@ The projection argument may be `-`, so a shell may use a no-scratch-file path:
 
 ```text
 papertiger-mise projection inspect --nomination <id> --objects <root> |
-  papertiger mise project <task> -
+  papertiger mise record <task> -
 ```
 
 On shells whose native pipeline does not preserve large JSON arguments, use
 `papertiger-mise projection inspect ... --output <new-file>` followed by
-`papertiger mise project <task> <file>`. The inspector refuses to overwrite an
+`papertiger mise record <task> <file>`. The inspector refuses to overwrite an
 existing output.
 
 Generic improvement guidance is separately content-addressed by

@@ -2693,7 +2693,7 @@ pub fn resolve_blocker(
 ) -> Result<()> {
     validate_new_evidence_locator(evidence)?;
     validate_optional_sha256(sha256)?;
-    resolve_open_task_blocker(
+    resolve_open_blocker(
         conn,
         actor,
         seq,
@@ -2717,7 +2717,7 @@ pub fn waive_blocker(
     if why.trim().is_empty() {
         bail!("waiving a blocker requires a nonblank reason");
     }
-    resolve_open_task_blocker(
+    resolve_open_blocker(
         conn,
         actor,
         seq,
@@ -2792,7 +2792,7 @@ struct BlockerResolution<'a> {
     note: Option<&'a str>,
 }
 
-fn resolve_open_task_blocker(
+fn resolve_open_blocker(
     conn: &Connection,
     actor: &str,
     seq: i64,

@@ -101,7 +101,7 @@ No database or planning configuration is created in consuming projects.
 
 Use `setup-project` below only for explicit shared repository adoption, pinned
 project runtimes, or repository-owned policy. Existing project receipt choices
-remain intact. Project guidance triggers are optional for skills-capable agents.
+remain intact. Skill descriptions route agents; no project guidance edit is needed.
 
 
 ## What the planner enforces
@@ -120,7 +120,7 @@ remain intact. Project guidance triggers are optional for skills-capable agents.
   currently done. Their actor fields record transition authorship, not task
   ownership. `list --sort activity` orders work by the latest meaningful event
   without inventing time tracking.
-- `show --json` is the task work record. Task context v7 includes full details
+- `show --json` is the task work record. Task context v8 includes full details
   for the selected task and compact identity/status summaries for related
   tasks; read a related task explicitly for its full context. `schema` prints
   the bundled JSON Schema for context, status, task lists, history, recovery,
@@ -156,7 +156,7 @@ remain intact. Project guidance triggers are optional for skills-capable agents.
   event rationale. It includes done, retired, and rejected history by default
   and needs no external or separately synchronized index.
 - Probe and decision tasks require `--result` or `--result-file` before they can
-  close.
+  complete.
 - Open dependencies, blockers, gates, and child tasks prevent completion.
 - Every change records an actor and an event; idempotent identified pickup emits none. Actor labels are provenance,
   never assignees, leases, session handles, or liveness signals; unfinished
@@ -183,8 +183,9 @@ remain intact. Project guidance triggers are optional for skills-capable agents.
   Papertiger never replays a command; a longer lock is refused with
   an explicit retry instruction. Independent authorities are never merged or
   synchronized.
-- Export and import preserve task identity, graph structure, evidence pointers,
-  and history without creating a second live authority. `export --output`
+- Export and import preserve task identity, graph structure, gates, blockers,
+  evidence pointers, events and Mise projections without creating a second live
+  authority. `export --output`
   atomically writes a canonical recovery file and returns its SHA-256 receipt.
 - `evidence verify` reports full-scope integrity counts before a bounded detail
   projection. It resolves stored `file:` bindings beneath the project root,
@@ -269,10 +270,9 @@ deliberately omits platform-specific binary bytes so clones stay portable.
 Instead, the ignored sibling
 `tools/papertiger/bin/papertiger[.exe].runtime-install.json` records the exact
 installed path, byte count, and SHA-256. `setup-project --dry-run --json`
-exposes that identity in `runtime_install` without an ad hoc hash command. Its
-`papertiger.project_setup.v5` result also includes `project_guidance`, a bounded
-read-only observation of repository-root `AGENTS.md` and `CLAUDE.md`; setup
-still never edits or owns either file. The host receipt is written atomically
+exposes that identity in `runtime_install` of its
+`papertiger.project_install_result.v6` result without an ad hoc hash command.
+Setup never edits or owns `AGENTS.md` or `CLAUDE.md`. The host receipt is written atomically
 as the final installation commit marker.
 Ordinary receipt discovery refuses a missing, malformed, or mismatched host
 receipt with the repair command. This identity is an observable local fact,
@@ -310,26 +310,6 @@ file.
 This source repository retains one skill template. Setup generates the same
 complete short body under `.agents/skills` and, when selected, `.claude/skills`.
 Either discovered path is usable immediately; no second skill read is required.
-Harnesses that do not load either skill location can use the canonical contract through concise
-repository-owned guidance without installing a generic resident skill.
-
-After installation, inspect that repository-owned discovery surface from the
-project root or any nested directory:
-
-```bash
-tools/papertiger/bin/papertiger inspect-project-guidance --json
-papertiger --project-root /path/to/project inspect-project-guidance --json
-```
-
-The command validates the project receipt and host runtime but never opens the
-planning authority. It reads only regular, non-symlink repository-root
-`AGENTS.md` and `CLAUDE.md`, with a fixed 64 KiB cap per file. Deterministic JSON
-distinguishes an exact selected-skill trigger, a generic Papertiger-skill
-trigger, `CLAUDE.md` indirection to `AGENTS.md`, an integration pointer, a bare
-mention, stale positive shell-launcher wording, absence, and bounded refusal.
-It also reports exact byte identity when both files were read. These are lexical
-observations, not proof that a harness discovers or follows the guidance;
-nested guidance and imported semantics remain outside the result.
 
 To remove the integration, use the same verified release from outside the
 consuming project:
@@ -350,11 +330,10 @@ retained authority is a separate data-lifecycle decision.
 
 ## Start planning
 
-Resolve and invoke the installed native binary directly. If `papertiger` is on
-`PATH`, use that name. Otherwise select the release-managed binary at
+Invoke the project's installed native binary directly:
 `tools/papertiger/bin/papertiger` on POSIX or
 `tools\papertiger\bin\papertiger.exe` on Windows. The following examples use
-`papertiger` for that resolved executable:
+`papertiger` for that executable:
 
 ```bash
 papertiger status
@@ -391,16 +370,15 @@ so an explicitly selected database can resolve `file:` locators beneath the
 supplied root. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 
-The current planner authority schema is v12. Before migrating an older authority,
-archive its export with the matching Papertiger release and use the new release's
-`--db <source> backup --output <new-path> --json` to create a standalone SQLite
-recovery file. Current import
-accepts only `papertiger.dump.v9`; restore an older dump with the release that
-produced it, migrate that temporary authority, and re-export it. Migration preserves
-old in-progress tasks without inventing session identities. Exported pickup context
-remains advisory after recovery; it never becomes a lock. Schema v12 requires
-explicit public mutation API entry before a connection can write any planner
-table. Ordinary SQLite writers fail with `papertiger_write_requires_executable`:
+The current planner authority schema is v13. Before migrating an older authority,
+use the new release's `--db <source> backup --output <new-path> --json` to create
+a standalone SQLite recovery file, then run `init`. Import reads
+`papertiger.dump.v10` and converts `papertiger.dump.v9`; restore an older dump
+with the release that produced it, migrate that temporary authority, and
+re-export it. Migration never rewrites stored events. Exported pickup context
+remains advisory after recovery; it never becomes a lock. A connection must
+enter through the public mutation API before it can write any planner table.
+Ordinary SQLite writers fail with `papertiger_write_requires_public_api`:
 use the project's installed Papertiger executable. Stored events and recovery
 mappings are append-only. Any trigger the executable did not install counts as
 drift, because it would run inside admitted mutations. Missing, altered or
@@ -423,7 +401,7 @@ and import preserve the envelope. Missing timezones and associations remain
 unknown, and no task state is inferred. Quarantine never accepts structurally
 valid history as a substitute for recording a disagreement.
 
-`backup` preserves planner schemas 1–12 and committed WAL data through SQLite's
+`backup` preserves planner schemas 1–13 and committed WAL data through SQLite's
 [online backup API](https://www.sqlite.org/backup.html). It publishes one recovery
 file after SQLite integrity verification and returns its SHA-256, byte count,
 original schema, and task/event counts. It refuses foreign authorities, newer
@@ -448,19 +426,19 @@ Verify retained local evidence without mutating the authority:
 ```bash
 papertiger evidence verify --project-root /path/to/project --json
 papertiger evidence verify --task <task.seq> --project-root /path/to/project
-papertiger evidence verify --outcome failed --task-state open --limit 50 --json
-papertiger evidence verify --outcome unsupported --task-state terminal --json
+papertiger evidence verify --classification failed --task-state open --limit 50 --json
+papertiger evidence verify --classification unsupported --task-state terminal --json
 ```
 
 When receipt discovery can identify the project root, `--project-root` is
 optional. The global option both selects that receipt's authority and supplies
 the evidence root. With an explicit `--db`, it supplies only the evidence root.
 A failed binding reports ordered `program` and `arguments` arrays for the
-explicit reopen, close or resolve, and re-completion workflow. Version 2 JSON
+explicit reopen, resolve, and re-completion workflow. Version 3 JSON
 always reports counts for the complete task scope in `summary`; filtering and
 `--limit` affect only `projection`. The summary also breaks results down by
 exact status and unsupported scheme, so resolver gaps are visible without
-paging through every binding. The default projection is `--outcome incomplete`,
+paging through every binding. The default projection is `--classification incomplete`,
 which includes failed and unsupported bindings without repeating verified
 detail. Every projection states eligible, returned, omitted, and remaining
 counts. When `has_more` is true, execute the exact structured
@@ -474,12 +452,8 @@ the immutable audit receipt as evidence, then record the full commit object ID
 separately with `commit add`. Neither identity substitutes for the other.
 
 The installer copies [agent_integration.md](agent_integration.md) into the
-project. After reviewing it, incorporate its concise repository-guidance
-discovery trigger into the project's existing agent guidance. A bare link is
-not equivalent: the trigger names both the multi-outcome/exact-resume cases and
-the bounded/read-only/domain-lifecycle skips. Setup never edits repository-owned
-guidance itself. Use `inspect-project-guidance --json` to audit the bounded
-repository-root surface without transferring ownership to setup.
+project as the reference the skill links to for installation, migration and
+recovery. No repository guidance edit is required.
 
 ## Add Mise when a campaign is warranted
 
@@ -546,11 +520,12 @@ files. The archive manifest identifies the source commit used for verification.
 
 ### Progressive structured reads
 
-Use `search "terms" --compact --json` for ranked task identities and bounded
-matched excerpts. Its `papertiger.search_compact.v1` projection preserves totals,
-truncation, ranking and match provenance. Follow with `show N --no-history --json`
+Use `search "terms" --compact` for ranked task identities and bounded
+matched excerpts. Its `papertiger.search_compact.v2` projection returns 5 results
+by default and preserves totals, truncation, ranking and match provenance, with a
+`continuation_command` when more match. Follow with `show N --no-history`
 for the full current task, relationships and obligations without historical
-payloads (`papertiger.task_current.v1`). The returned `history_command` retrieves
+payloads (`papertiger.task_current.v3`). The returned `history_command` retrieves
 the event history; read it before interpreting a rejected proposal or a prior
 decision. Ordinary `search --json` and `show --json` retain their full contracts.
 
@@ -559,10 +534,11 @@ full orientation; `plan list --plan SLUG --json` retrieves one known plan.
 `list --all-plans --status unfinished --json` inventories proposed and in-progress
 tasks across **every** plan state, independently of readiness. Each row identifies
 its plan and plan state. The default page is 100 rows (`--limit 1..500`). Continue
-with the same filters, returned `next_after_seq` as `--after-seq`, and `--snapshot`.
-`total` counts all matching tasks; `remaining` counts matching tasks after this
-page. A changed event history refuses continuation: restart the inventory rather
-than combining different snapshots. These reads neither resume plans nor change
+with the returned `continuation_command`, whose `--after-cursor` is bound to the
+same filters and the authority snapshot. `total` counts all matching tasks;
+`remaining` counts matching tasks after this page. A changed event history
+refuses the cursor: restart the inventory rather than combining different
+snapshots. These reads neither resume plans nor change
 mutation authority. Ordinary plan-selected `list` is unchanged.
 
 ## License

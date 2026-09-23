@@ -6,6 +6,67 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+This release renames planner storage, commands, flags and JSON identifiers
+with no compatibility aliases. To upgrade an authority, run
+`papertiger --db <authority> backup --output <new-path>` with the new binary,
+then `papertiger init` to migrate it from schema v12 to v13. Until then
+commands that open the authority, other than `init` and `backup`, refuse it
+and name that command. Then
+update scripts for the renames below and rerun `setup-project` from the
+verified release binary so the project skill and reference match.
+
+### Changed
+
+- Blockers record a `condition`: `blocker add <task> <name> --condition <text>`
+  replaces `--reason`, and JSON, dumps and the database column use `condition`.
+- Gates use the blockers' vocabulary: `gate resolve` replaces `gate close`, and
+  status `resolved` with `resolved_at` replaces `closed` and `closed_at`. The
+  migration converts stored gates. Stored history keeps its original event
+  kinds, so gate resolutions recorded before the upgrade still read `closed` in
+  `log`.
+- Exports are `papertiger.dump.v10`. `import` also accepts
+  `papertiger.dump.v9` and converts it; older dumps still need their matching
+  release to migrate and re-export.
+- A raw SQLite writer now fails with `papertiger_write_requires_public_api`
+  (was `papertiger_write_requires_executable`). The migration reinstalls every
+  guard.
+- `list --all-plans` pages with one opaque `--after-cursor` taken from the
+  previous page's `next_cursor` or `continuation_command`; `--after-seq` and
+  `--snapshot` are removed. A cursor from different `--status`/`--tag` filters
+  or from a changed authority is refused with the restart command.
+- Renamed flags and commands: `focus --include-blocked` (was `--all`),
+  `evidence verify --classification` (was `--outcome`), and
+  `papertiger mise record` (was `papertiger mise project`).
+- `search --compact` and `show --no-history` print JSON without `--json`;
+  both are JSON-only projections and previously refused the command.
+- `search --compact` returns 5 results by default (full `search` keeps 20) and
+  includes a `continuation_command` when more results match.
+- JSON ids are snake_case, with their version raised where the id or shape
+  changed: `papertiger.task_context.v8`, `papertiger.task_current.v3`,
+  `papertiger.task_inventory.v2` (`next_cursor` and `continuation_command`
+  replace `snapshot` and `next_after_seq`), `papertiger.search_compact.v2`,
+  `papertiger.evidence_verification.v3` (`projection.classification` replaces
+  `projection.outcome`), `papertiger.history_inspection.v2`,
+  `papertiger.history_quarantine.v2`, `papertiger.mise_planner_projection.v2`
+  and `papertiger.project_install_result.v6` (was `papertiger.project_setup.v5`).
+  Quarantine envelopes and Mise projections recorded before this release keep
+  their original ids and stay readable, exportable and importable;
+  `papertiger mise record` refuses a new projection with the retired id and
+  names the command that regenerates it.
+- Help text names task arguments "Task number (N or #N)", no longer claims that
+  `reject` prevents re-litigation (`reopen` accepts rejected tasks), states
+  that `export` carries events and Mise projections, and documents the
+  `reference`, `history` and personal setup arguments.
+- The project skill and reference are shorter. `commit add` omits `--repo`
+  unless the commit belongs to a nested or external repository.
+
+### Removed
+
+- `inspect-project-guidance` and the `project_guidance` field of the setup
+  result. Papertiger no longer recommends trigger text for a project's
+  `AGENTS.md` or `CLAUDE.md`; installed skills route agents by their own
+  descriptions. Delete any Papertiger trigger text you added for it.
+
 ### Fixed
 
 - A trigger added by direct SQLite access is write-guard drift. Previously it
@@ -17,11 +78,6 @@ All notable user-visible changes are documented here. Papertiger follows
   after upgrading until `repair-guards` runs; reads, export and backup continue.
 - `repair-guards --json` reports each entry's `state` as `missing`, `altered`
   or `foreign`.
-
-### Changed
-
-- `search --compact` and `show --no-history` print JSON without `--json`;
-  both are JSON-only projections and previously refused the command.
 
 ## [0.17.1] - 2026-09-22
 

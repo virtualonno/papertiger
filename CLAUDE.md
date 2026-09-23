@@ -10,8 +10,7 @@ This file is the always-loaded contract. Load operational detail only when
 needed:
 
 - **Planner usage**: `agent_integration.md` (the vendored operating contract).
-- **Human changelogs**: `.agents/skills/changelog-writing/SKILL.md` (source,
-  reader, compatibility, and deletion standard).
+- **Human changelogs**: the `changelog` skill.
 - **Mise campaigns**: `MISE.md` (generational model, evidence contract,
   promotion boundary). Ordinary planning work never needs it.
 - **Live truth**: `papertiger status` / `focus` / `show <N> --json`, never
@@ -46,17 +45,9 @@ each under 32 KiB.
 
 ## Planning Use in This Repository
 
-- Before the first edit or commit on multi-outcome or separate-commit work, or
-  work matching an existing durable task, read
-  `.agents/skills/papertiger/SKILL.md` completely and follow it. Skip one
-  bounded edit, read-only review, intermediate steps inside one independently
-  reviewable outcome, and domain-owned or shared-team lifecycle. Resume an
-  existing durable task even when its next step is a bounded edit or read-only.
 - Invoke the receipt-bound `tools/papertiger/bin/papertiger[.exe]`; a build in
   `target/` is a development artifact, never this repository's planner.
-- The skill owns entry, search, `--why`, completion refusals, commit
-  association and task-number hygiene; this file does not restate them.
-  Roadmap prose, handoff notes, and memories are orientation only: when they
+- Roadmap prose, handoff notes, and memories are orientation only: when they
   disagree with the DB, the DB wins and the prose gets corrected. Markdown
   carries doctrine, never task status.
 
@@ -64,10 +55,8 @@ Before broad or potentially high-output file, text, structured-data, or command-
 
 ## Coding Contract
 
-- Toolchain is pinned by `rust-toolchain.toml`. Gates before claiming done:
-  `cargo fmt --check`, `cargo clippy --workspace --all-targets` (warnings are
-  defects), `cargo test --workspace`, and for Mise changes
-  `cargo test -p papertiger-mise --test deterministic_dogfood -- --ignored --test-threads=1`.
+- Toolchain is pinned by `rust-toolchain.toml`. Run the `## Verification`
+  gates before claiming done; clippy warnings are defects.
 - **Fail-closed is the project standard.** No error swallowing, no optimistic
   defaults, no converting an integrity failure into a score or a skipped
   check. A refusal path is a feature with tests, not dead weight.
@@ -112,4 +101,4 @@ Before broad or potentially high-output file, text, structured-data, or command-
     cargo clippy --workspace --all-targets
     cargo test --workspace
     cargo test -p papertiger-mise --test deterministic_dogfood -- --ignored --test-threads=1
-    papertiger audit
+    tools/papertiger/bin/papertiger audit
