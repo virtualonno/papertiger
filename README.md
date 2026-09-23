@@ -337,7 +337,9 @@ papertiger log --json
 
 The binary walks upward from the current directory to the nearest tracked
 `tools/papertiger/project-install.json` or release `tools/papertiger/manifest.json`,
-refuses one that names another Papertiger release with the corrective command,
+refuses one that names another Papertiger release with the corrective command
+(a manifest naming the running release takes precedence over an older receipt's
+recorded version; the receipt still selects the authority path),
 then resolves its authority against that project root. This works from nested directories without a
 launcher or shell wrapper.
 For an intentional command issued from a different repository, select the

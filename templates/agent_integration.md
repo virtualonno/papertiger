@@ -46,7 +46,9 @@ upward from the current directory to the nearest project-install receipt
 (`tools/papertiger/project-install.json`) or release manifest
 (`tools/papertiger/manifest.json`), refuses one that names another Papertiger
 release (the refusal names the corrective command), and resolves the selected
-authority against that project root.
+authority against that project root. A manifest naming the running release
+takes precedence over an older receipt's recorded version; the receipt still
+selects the authority path.
 When an intentional command runs from another repository, pass the global
 `--project-root <canonical-project-root>` option. At that exact root it selects
 the receipt's authority; without a receipt, the release bundle's or an
