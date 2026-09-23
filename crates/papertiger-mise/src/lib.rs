@@ -97,10 +97,11 @@ pub use paired_evidence::{
 pub use paired_runtime::{
     DerivePairedNominationSpec, PAIRED_COHORT_RECEIPT_SCHEMA_V1,
     PAIRED_EXECUTION_RECEIPT_SCHEMA_V1, PAIRED_NOMINATION_RECEIPT_SCHEMA_V1,
-    PairedCohortAdjudication, PairedCohortReceipt, PairedCohortRecord, PairedPreparationOutcome,
-    PairedRunOutcome, PairedRunRecord, PreparePairedCohortSpec, VerifiedPairedCohortEvidence,
-    adjudicate_paired_cohort, derive_paired_nomination, execute_next_paired_run, paired_cohort,
-    paired_cohorts, paired_run, paired_runs, prepare_paired_cohort, recover_paired_run,
+    PairedCohortAdjudication, PairedCohortReceipt, PairedCohortRecord, PairedExecutionOutcome,
+    PairedExecutionRecord, PairedPreparationOutcome, PreparePairedCohortSpec,
+    VerifiedPairedCohortEvidence, adjudicate_paired_cohort, derive_paired_nomination,
+    execute_next_paired_execution, paired_cohort, paired_cohorts, paired_execution,
+    paired_executions, prepare_paired_cohort, recover_paired_execution,
     verify_paired_cohort_integrity,
 };
 pub use path_identity::portable_absolute;
@@ -113,7 +114,7 @@ pub use promotion::{
 };
 pub use state::{
     BudgetReservationStatus, EvidenceGrade, PairedCohortReasonCode, PairedCohortStatus,
-    PairedRunStatus, TrialStatus,
+    PairedExecutionStatus, TrialStatus,
 };
 pub use statistics::{
     ExactPValue, MedianOrderStatistics, NoOpCalibrationResult, PAIRED_ANALYSIS_SCHEMA_V1,

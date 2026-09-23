@@ -907,12 +907,12 @@ pub fn abandon_materialization_attempt(
     actor: &str,
     candidate_id: &str,
     reservation_id: &str,
-    reason: &str,
+    why: &str,
 ) -> Result<SettlementOutcome> {
     validate_nonblank("actor", actor)?;
     validate_nonblank("candidate_id", candidate_id)?;
     validate_nonblank("reservation_id", reservation_id)?;
-    validate_nonblank("reason", reason)?;
+    validate_nonblank("materialization abandonment rationale (--why)", why)?;
     let transaction = begin_mutation(connection)?;
     let candidate = candidate_in(&transaction, candidate_id)?
         .with_context(|| format!("unknown candidate '{candidate_id}'"))?;
@@ -949,7 +949,7 @@ pub fn abandon_materialization_attempt(
             "candidate",
             candidate_id,
             "materialization-abandoned",
-            Some(reason),
+            Some(why),
             Some(&json!({
                 "reservation_id": reservation_id,
                 "reservation_charged": true,
@@ -1037,7 +1037,7 @@ fn bind_or_require_reservation_use(
         )?;
         if active != 0 {
             bail!(
-                "prior {use_kind} reservation '{prior}' remains active; run `papertiger-mise candidate abandon-materialization {entity_key} --reservation {prior} --reason <reason>` before retrying"
+                "prior {use_kind} reservation '{prior}' remains active; run `papertiger-mise candidate abandon-materialization {entity_key} --reservation {prior} --why <rationale>` before retrying"
             );
         }
     }

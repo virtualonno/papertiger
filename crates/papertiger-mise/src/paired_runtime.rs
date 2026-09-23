@@ -24,7 +24,9 @@ use crate::object::{
     record_indexed_object,
 };
 use crate::process_identity::{ProcessObservation, observe_process};
-use crate::state::{EvidenceGrade, PairedCohortReasonCode, PairedCohortStatus, PairedRunStatus};
+use crate::state::{
+    EvidenceGrade, PairedCohortReasonCode, PairedCohortStatus, PairedExecutionStatus,
+};
 use crate::statistics::{
     NoOpCalibrationResult, PairedCandidateContext, PairedClassification, PairedCohort,
     PairedDisposition, assess_known_bad_cohort, assess_no_op_cohort, classify_paired_fixed,
@@ -84,14 +86,14 @@ pub struct PairedCohortRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PairedRunRecord {
+pub struct PairedExecutionRecord {
     pub execution_id: String,
     pub cohort_id: String,
     pub ordinal: u32,
     pub block_index: u32,
     pub participant: PairedParticipantRole,
     pub request_sha256: String,
-    pub status: PairedRunStatus,
+    pub status: PairedExecutionStatus,
     pub pid: Option<u32>,
     pub process_birth_identity: Option<String>,
     pub adapter_result_sha256: Option<String>,
@@ -103,8 +105,8 @@ pub struct PairedRunRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PairedRunOutcome {
-    Completed(Box<PairedRunRecord>),
+pub enum PairedExecutionOutcome {
+    Completed(Box<PairedExecutionRecord>),
     ReadyForAdjudication,
 }
 
@@ -205,20 +207,20 @@ struct CompletedRunEvidence<'a> {
     capabilities: &'a ExecutionCapabilities,
 }
 
-struct ReopenedPairedRun {
+struct ReopenedPairedExecution {
     result: DomainTrialResult,
     execution_receipt: PreservedObject,
     elapsed_ms: u64,
 }
 
-fn reopen_paired_run(
+fn reopen_paired_execution(
     connection: &Connection,
     object_root: &Path,
     plan: &crate::statistics::PairedAnalysisPlan,
     durable: &DurableCohort,
-    run: &PairedRunRecord,
+    run: &PairedExecutionRecord,
     expected_request: &PairedTrialRequest,
-) -> Result<ReopenedPairedRun> {
+) -> Result<ReopenedPairedExecution> {
     let request_object = indexed_object(connection, &run.request_sha256)?;
     let (request, _): (PairedTrialRequest, Vec<u8>) =
         read_verified_json(object_root, &request_object, "paired run request")?;
@@ -267,7 +269,7 @@ fn reopen_paired_run(
     {
         bail!("Mise paired execution receipt failed exact replay verification");
     }
-    Ok(ReopenedPairedRun {
+    Ok(ReopenedPairedExecution {
         result,
         execution_receipt: execution_object,
         elapsed_ms: receipt.elapsed_ms,
@@ -366,12 +368,12 @@ fn classify_replayed_cohort(
 mod preparation;
 pub use preparation::prepare_paired_cohort;
 
-pub fn execute_next_paired_run(
+pub fn execute_next_paired_execution(
     connection: &Connection,
     actor: &str,
     object_root: &Path,
     cohort_id: &str,
-) -> Result<PairedRunOutcome> {
+) -> Result<PairedExecutionOutcome> {
     validate_token("paired cohort actor", actor)?;
     let durable = durable_cohort(connection, cohort_id)?
         .with_context(|| format!("unknown paired cohort '{cohort_id}'"))?;
@@ -381,7 +383,8 @@ pub fn execute_next_paired_run(
             durable.record.status
         );
     }
-    if let Some(launched) = next_run_with_status(connection, cohort_id, PairedRunStatus::Launched)?
+    if let Some(launched) =
+        next_run_with_status(connection, cohort_id, PairedExecutionStatus::Launched)?
     {
         bail!(
             "paired run '{}' has durable live ownership; run `papertiger-mise paired recover {}` before continuing",
@@ -389,8 +392,9 @@ pub fn execute_next_paired_run(
             launched.execution_id
         );
     }
-    let Some(run) = next_run_with_status(connection, cohort_id, PairedRunStatus::Prepared)? else {
-        return Ok(PairedRunOutcome::ReadyForAdjudication);
+    let Some(run) = next_run_with_status(connection, cohort_id, PairedExecutionStatus::Prepared)?
+    else {
+        return Ok(PairedExecutionOutcome::ReadyForAdjudication);
     };
     let manifest = load_manifest(connection, &durable.record.campaign_id)?;
     let binding = manifest
@@ -409,7 +413,7 @@ pub fn execute_next_paired_run(
             object_root,
             &durable.record,
             &run,
-            PairedRunStatus::IntegrityFailed,
+            PairedExecutionStatus::IntegrityFailed,
             "prepared-request-integrity-failed",
             "prepared paired request failed exact CAS replay",
             None,
@@ -425,7 +429,7 @@ pub fn execute_next_paired_run(
             object_root,
             &durable.record,
             &run,
-            PairedRunStatus::IntegrityFailed,
+            PairedExecutionStatus::IntegrityFailed,
             "adapter-binding-drift",
             &format!("{error:#}"),
             None,
@@ -435,7 +439,7 @@ pub fn execute_next_paired_run(
         );
     }
     let mut launched = |pid, process_birth_identity: &str| {
-        mark_paired_run_launched(
+        mark_paired_execution_launched(
             connection,
             actor,
             cohort_id,
@@ -444,7 +448,7 @@ pub fn execute_next_paired_run(
             process_birth_identity,
         )
     };
-    let mut heartbeat = || heartbeat_paired_run(connection, actor, &run.execution_id);
+    let mut heartbeat = || heartbeat_paired_execution(connection, actor, &run.execution_id);
     let execution = execute_supervised(
         &binding.argv,
         Path::new(&binding.working_directory),
@@ -458,7 +462,7 @@ pub fn execute_next_paired_run(
             cancellation_requested: &mut || {
                 Ok(crate::cancellation::cancellation_request(
                     connection,
-                    crate::cancellation::CancellationTarget::PairedRun,
+                    crate::cancellation::CancellationTarget::PairedExecution,
                     &run.execution_id,
                 )?
                 .is_some())
@@ -474,7 +478,7 @@ pub fn execute_next_paired_run(
                 object_root,
                 &durable.record,
                 &run,
-                PairedRunStatus::InfrastructureFailed,
+                PairedExecutionStatus::InfrastructureFailed,
                 failure.reason,
                 &failure.detail,
                 failure.process_birth_identity.as_deref(),
@@ -491,7 +495,7 @@ pub fn execute_next_paired_run(
             object_root,
             &durable.record,
             &run,
-            PairedRunStatus::IntegrityFailed,
+            PairedExecutionStatus::IntegrityFailed,
             "adapter-binding-drift",
             &format!("{error:#}"),
             Some(&execution.process_birth_identity),
@@ -507,7 +511,7 @@ pub fn execute_next_paired_run(
             object_root,
             &durable.record,
             &run,
-            PairedRunStatus::InfrastructureFailed,
+            PairedExecutionStatus::InfrastructureFailed,
             "unexpected-adapter-stderr",
             "successful paired adapter wrote to stderr",
             Some(&execution.process_birth_identity),
@@ -526,7 +530,7 @@ pub fn execute_next_paired_run(
                     object_root,
                     &durable.record,
                     &run,
-                    PairedRunStatus::IntegrityFailed,
+                    PairedExecutionStatus::IntegrityFailed,
                     "adapter-result-integrity-failed",
                     &format!("{error:#}"),
                     Some(&execution.process_birth_identity),
@@ -536,7 +540,7 @@ pub fn execute_next_paired_run(
                 );
             }
         };
-    if let Err(error) = complete_paired_run(
+    if let Err(error) = complete_paired_execution(
         connection,
         actor,
         object_root,
@@ -559,9 +563,9 @@ pub fn execute_next_paired_run(
             &durable.record,
             &run,
             if cancelled {
-                PairedRunStatus::InfrastructureFailed
+                PairedExecutionStatus::InfrastructureFailed
             } else {
-                PairedRunStatus::IntegrityFailed
+                PairedExecutionStatus::IntegrityFailed
             },
             if cancelled {
                 "operator-cancelled"
@@ -575,8 +579,9 @@ pub fn execute_next_paired_run(
             &execution.stderr,
         );
     }
-    Ok(PairedRunOutcome::Completed(Box::new(
-        paired_run(connection, &run.execution_id)?.context("completed paired run disappeared")?,
+    Ok(PairedExecutionOutcome::Completed(Box::new(
+        paired_execution(connection, &run.execution_id)?
+            .context("completed paired run disappeared")?,
     )))
 }
 
@@ -610,11 +615,11 @@ fn replay_paired_cohort(
     if prepared.schedule_sha256 != durable.record.schedule_sha256 {
         bail!("durable paired cohort schedule failed exact rederivation");
     }
-    let runs = paired_runs(connection, cohort_id)?;
+    let runs = paired_executions(connection, cohort_id)?;
     if runs.len() != prepared.requests.len()
         || runs
             .iter()
-            .any(|run| run.status != PairedRunStatus::Succeeded)
+            .any(|run| run.status != PairedExecutionStatus::Succeeded)
     {
         bail!("paired adjudication requires every predeclared run to have succeeded exactly once");
     }
@@ -627,7 +632,7 @@ fn replay_paired_cohort(
         {
             bail!("paired run order differs from the predeclared schedule");
         }
-        let reopened = reopen_paired_run(
+        let reopened = reopen_paired_execution(
             connection,
             object_root,
             plan,
@@ -1146,15 +1151,15 @@ pub(crate) fn verify_paired_nomination_evidence(
     })
 }
 
-pub fn recover_paired_run(
+pub fn recover_paired_execution(
     connection: &Connection,
     actor: &str,
     object_root: &Path,
     execution_id: &str,
-) -> Result<PairedRunRecord> {
-    let run = paired_run(connection, execution_id)?
+) -> Result<PairedExecutionRecord> {
+    let run = paired_execution(connection, execution_id)?
         .with_context(|| format!("unknown paired run '{execution_id}'"))?;
-    if run.status != PairedRunStatus::Launched {
+    if run.status != PairedExecutionStatus::Launched {
         bail!(
             "paired recovery requires a launched run, found '{}'",
             run.status
@@ -1189,7 +1194,7 @@ pub fn recover_paired_run(
         object_root,
         &durable,
         &run,
-        PairedRunStatus::InfrastructureFailed,
+        PairedExecutionStatus::InfrastructureFailed,
         "controller-interrupted",
         &detail,
         Some(birth),
@@ -1198,8 +1203,8 @@ pub fn recover_paired_run(
         &[],
     )?;
     match outcome {
-        PairedRunOutcome::Completed(record) => Ok(*record),
-        PairedRunOutcome::ReadyForAdjudication => unreachable!(),
+        PairedExecutionOutcome::Completed(record) => Ok(*record),
+        PairedExecutionOutcome::ReadyForAdjudication => unreachable!(),
     }
 }
 
@@ -1231,7 +1236,10 @@ pub fn paired_cohorts(
         .collect()
 }
 
-pub fn paired_run(connection: &Connection, execution_id: &str) -> Result<Option<PairedRunRecord>> {
+pub fn paired_execution(
+    connection: &Connection,
+    execution_id: &str,
+) -> Result<Option<PairedExecutionRecord>> {
     connection
         .query_row(
             "SELECT execution_id, cohort_id, ordinal, block_index, participant,
@@ -1246,7 +1254,10 @@ pub fn paired_run(connection: &Connection, execution_id: &str) -> Result<Option<
         .map_err(Into::into)
 }
 
-pub fn paired_runs(connection: &Connection, cohort_id: &str) -> Result<Vec<PairedRunRecord>> {
+pub fn paired_executions(
+    connection: &Connection,
+    cohort_id: &str,
+) -> Result<Vec<PairedExecutionRecord>> {
     validate_token("paired cohort id", cohort_id)?;
     let mut statement = connection.prepare(
         "SELECT execution_id, cohort_id, ordinal, block_index, participant,
@@ -1264,8 +1275,8 @@ pub fn paired_runs(connection: &Connection, cohort_id: &str) -> Result<Vec<Paire
 fn next_run_with_status(
     connection: &Connection,
     cohort_id: &str,
-    status: PairedRunStatus,
-) -> Result<Option<PairedRunRecord>> {
+    status: PairedExecutionStatus,
+) -> Result<Option<PairedExecutionRecord>> {
     connection
         .query_row(
             "SELECT execution_id, cohort_id, ordinal, block_index, participant,
@@ -1280,10 +1291,10 @@ fn next_run_with_status(
         .map_err(Into::into)
 }
 
-fn map_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairedRunRecord> {
+fn map_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairedExecutionRecord> {
     let participant: String = row.get(4)?;
     let status: String = row.get(6)?;
-    Ok(PairedRunRecord {
+    Ok(PairedExecutionRecord {
         execution_id: row.get(0)?,
         cohort_id: row.get(1)?,
         ordinal: u32::try_from(row.get::<_, i64>(2)?).map_err(sql_conversion)?,
@@ -1291,7 +1302,7 @@ fn map_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<PairedRunRecord> {
         participant: parse_participant(&participant)
             .map_err(|error| sql_conversion(std::io::Error::other(error.to_string())))?,
         request_sha256: row.get(5)?,
-        status: PairedRunStatus::parse_column("paired_runs.status", &status)
+        status: PairedExecutionStatus::parse_column("paired_runs.status", &status)
             .map_err(|error| sql_conversion(std::io::Error::other(error.to_string())))?,
         pid: row
             .get::<_, Option<i64>>(7)?
@@ -1403,7 +1414,7 @@ fn terminal_cohort_failure(
     result: &Value,
 ) -> Result<()> {
     let result_object = preserve_object(object_root, &serde_json::to_vec(result)?)?;
-    let runs = paired_runs(connection, &cohort.cohort_id)?;
+    let runs = paired_executions(connection, &cohort.cohort_id)?;
     let run_evidence = runs
         .iter()
         .map(|run| {
@@ -1471,12 +1482,12 @@ fn terminal_cohort_failure(
     Ok(())
 }
 
-fn complete_paired_run(
+fn complete_paired_execution(
     connection: &Connection,
     actor: &str,
     object_root: &Path,
     cohort: &PairedCohortRecord,
-    run: &PairedRunRecord,
+    run: &PairedExecutionRecord,
     evidence: &CompletedRunEvidence<'_>,
 ) -> Result<()> {
     let result_object = preserve_object(object_root, evidence.result_bytes)?;
@@ -1501,7 +1512,7 @@ fn complete_paired_run(
     let transaction = begin_mutation(connection)?;
     crate::cancellation::ensure_not_cancelled(
         &transaction,
-        crate::cancellation::CancellationTarget::PairedRun,
+        crate::cancellation::CancellationTarget::PairedExecution,
         &run.execution_id,
     )?;
     for object in [&result_object, &domain_object, &receipt_object] {
@@ -1553,18 +1564,18 @@ fn terminal_run_failure(
     actor: &str,
     object_root: &Path,
     cohort: &PairedCohortRecord,
-    run: &PairedRunRecord,
-    terminal_status: PairedRunStatus,
+    run: &PairedExecutionRecord,
+    terminal_status: PairedExecutionStatus,
     failure_code: &str,
     detail: &str,
     process_birth_identity: Option<&str>,
     elapsed_ms: u64,
     stdout: &[u8],
     stderr: &[u8],
-) -> Result<PairedRunOutcome> {
+) -> Result<PairedExecutionOutcome> {
     let cohort_terminal_status = match terminal_status {
-        PairedRunStatus::InfrastructureFailed => PairedCohortStatus::InfrastructureFailed,
-        PairedRunStatus::IntegrityFailed => PairedCohortStatus::IntegrityFailed,
+        PairedExecutionStatus::InfrastructureFailed => PairedCohortStatus::InfrastructureFailed,
+        PairedExecutionStatus::IntegrityFailed => PairedCohortStatus::IntegrityFailed,
         other => bail!("paired run failure cannot record nonterminal status '{other}'"),
     };
     let stdout_object = preserve_object(object_root, stdout)?;
@@ -1641,12 +1652,13 @@ fn terminal_run_failure(
         })),
     )?;
     transaction.commit()?;
-    Ok(PairedRunOutcome::Completed(Box::new(
-        paired_run(connection, &run.execution_id)?.context("failed paired run disappeared")?,
+    Ok(PairedExecutionOutcome::Completed(Box::new(
+        paired_execution(connection, &run.execution_id)?
+            .context("failed paired run disappeared")?,
     )))
 }
 
-fn mark_paired_run_launched(
+fn mark_paired_execution_launched(
     connection: &Connection,
     actor: &str,
     cohort_id: &str,
@@ -1686,7 +1698,11 @@ fn mark_paired_run_launched(
     Ok(())
 }
 
-fn heartbeat_paired_run(connection: &Connection, actor: &str, execution_id: &str) -> Result<()> {
+fn heartbeat_paired_execution(
+    connection: &Connection,
+    actor: &str,
+    execution_id: &str,
+) -> Result<()> {
     let transaction = begin_mutation(connection)?;
     let changed = transaction.execute(
         "UPDATE paired_runs SET heartbeat_at=?2

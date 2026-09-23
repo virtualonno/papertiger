@@ -23,13 +23,13 @@ use papertiger_mise::{
     GIT_CHANGE_SET_PROTOCOL_V1, Hypothesis, PAIRED_ADAPTER_BINDING_SCHEMA_V1,
     PAIRED_ANALYSIS_SCHEMA_V2, PAIRED_MEASUREMENT_PROTOCOL_V1, PairedAdapterBinding,
     PairedAnalysisMethod, PairedAnalysisPlan, PairedCalibrationFixtureBindings, PairedCohort,
-    PairedCohortAdjudication, PairedExecutionParticipant, PairedExecutionParticipants,
-    PairedFixtureBinding, PairedObjectivePolicy, PairedRunOutcome, PairedSlotSeedCommitment,
-    PreparePairedCohortSpec, RationalThreshold, adjudicate_paired_cohort, admit_verified_campaign,
-    bind_candidate, budget_balances, build_git_change_set_material, execute_next_paired_run,
-    git_worktree_add_without_hooks, init, inspect_source_binding, materialize_candidate,
-    open_for_init, prepare_paired_cohort, preserve_object, record_candidate, reserve_budget,
-    reserve_paired_analysis_slot, verify_campaign_admission,
+    PairedCohortAdjudication, PairedExecutionOutcome, PairedExecutionParticipant,
+    PairedExecutionParticipants, PairedFixtureBinding, PairedObjectivePolicy,
+    PairedSlotSeedCommitment, PreparePairedCohortSpec, RationalThreshold, adjudicate_paired_cohort,
+    admit_verified_campaign, bind_candidate, budget_balances, build_git_change_set_material,
+    execute_next_paired_execution, git_worktree_add_without_hooks, init, inspect_source_binding,
+    materialize_candidate, open_for_init, prepare_paired_cohort, preserve_object, record_candidate,
+    reserve_budget, reserve_paired_analysis_slot, verify_campaign_admission,
 };
 use serde_json::json;
 
@@ -813,8 +813,8 @@ fn run_cohort(
     prepare_paired_cohort(connection, ACTOR, objects, &spec)?;
     loop {
         if matches!(
-            execute_next_paired_run(connection, ACTOR, objects, cohort_id)?,
-            PairedRunOutcome::ReadyForAdjudication
+            execute_next_paired_execution(connection, ACTOR, objects, cohort_id)?,
+            PairedExecutionOutcome::ReadyForAdjudication
         ) {
             break;
         }

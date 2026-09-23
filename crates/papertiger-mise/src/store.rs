@@ -14,7 +14,7 @@ use crate::digest::{sha256, validate_sha256};
 use crate::manifest::CampaignManifest;
 use crate::validation::validate_nonblank;
 
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.mise";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
 
@@ -896,6 +896,7 @@ BEGIN SELECT RAISE(ABORT, 'nomination requires a qualified terminal candidate');
     transaction.execute_batch(PAIRED_RUNTIME_SCHEMA_V5)?;
     transaction.execute_batch(SUCCESSOR_SCHEMA_V6)?;
     transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V9)?;
+    transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V10)?;
     transaction.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
@@ -993,6 +994,16 @@ fn migrate(connection: &Connection, from: i64) -> Result<()> {
     if from == 8 {
         let transaction = begin_mutation(connection)?;
         transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V9)?;
+        transaction.execute(
+            "UPDATE meta SET value=?1 WHERE key='schema_version'",
+            params![9_i64.to_string()],
+        )?;
+        transaction.commit()?;
+        return migrate(connection, 9);
+    }
+    if from == 9 {
+        let transaction = begin_mutation(connection)?;
+        transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V10)?;
         transaction.execute(
             "UPDATE meta SET value=?1 WHERE key='schema_version'",
             params![SCHEMA_VERSION.to_string()],
@@ -1960,6 +1971,57 @@ mod tests {
                 .execute("CREATE TABLE forbidden_read_only_write (value TEXT)", [])
                 .is_err(),
             "read-only authority must reject mutation by construction"
+        );
+    }
+
+    #[test]
+    fn schema_nine_migrates_cancellation_rationale_to_why() {
+        fn cancellation_ddl(connection: &Connection) -> Vec<String> {
+            let mut statement = connection
+                .prepare(
+                    "SELECT sql FROM sqlite_schema
+                     WHERE tbl_name='cancellation_requests' AND sql IS NOT NULL ORDER BY name",
+                )
+                .expect("cancellation DDL query");
+            statement
+                .query_map([], |row| row.get(0))
+                .expect("cancellation DDL rows")
+                .collect::<rusqlite::Result<_>>()
+                .expect("cancellation DDL")
+        }
+        let fresh = Connection::open_in_memory().expect("fresh database");
+        init(&fresh).expect("initialize current schema");
+        let connection = Connection::open_in_memory().expect("database");
+        init(&connection).expect("initialize current schema");
+        connection
+            .execute_batch(&format!(
+                "DROP TRIGGER cancellation_request_launched_guard;
+                 DROP TRIGGER cancellation_requests_no_update;
+                 DROP TRIGGER cancellation_requests_no_delete;
+                 DROP TRIGGER trial_cancellation_success_guard;
+                 DROP TRIGGER paired_cancellation_success_guard;
+                 DROP TABLE cancellation_requests;
+                 {}
+                 UPDATE meta SET value='9' WHERE key='schema_version';",
+                crate::cancellation::CANCELLATION_SCHEMA_V9
+            ))
+            .expect("construct exact v9 cancellation boundary");
+        assert!(
+            cancellation_ddl(&connection)
+                .iter()
+                .any(|sql| sql.contains("paired show-run"))
+        );
+
+        init(&connection).expect("explicit migration");
+        assert_eq!(schema_version(&connection).unwrap(), SCHEMA_VERSION);
+        let migrated = cancellation_ddl(&connection);
+        assert_eq!(migrated, cancellation_ddl(&fresh));
+        assert!(migrated.iter().any(|sql| sql.contains("why TEXT NOT NULL")));
+        assert!(migrated.iter().all(|sql| !sql.contains("reason")));
+        assert!(
+            migrated
+                .iter()
+                .any(|sql| sql.contains("paired show-execution"))
         );
     }
 

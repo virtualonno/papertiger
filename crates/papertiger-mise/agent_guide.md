@@ -81,7 +81,7 @@ trees. Reserve finite resources, record and materialize the candidate, and use
 for a predeclared paired design. Command help names each required input.
 Calibrate and reopen results under the same frozen evaluator environment.
 
-Adjudicate from retained evidence, then use `projection inspect` to reopen a
+Adjudicate from retained evidence, then use `projection export` to reopen a
 terminal candidate or nomination. Attach that projection with `papertiger mise
 project` only when it informs a planning outcome. Rejections and infrastructure
 failures are useful retained results; neither should be disguised as a score.

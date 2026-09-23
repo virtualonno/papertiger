@@ -20,7 +20,7 @@ The generic registry uses schema
 `docs/mise_templates/v3/registry.json`. The content-addressed v1 and v2
 registries retain their original bytes for historical template verification,
 while new briefs bind the digest reported by
-`papertiger-mise improvement paradigms`. `papertiger-mise improvement verify <file>`
+`papertiger-mise improvement paradigms`. `papertiger-mise improvement verify-registry <file>`
 refuses missing canonical paradigms or project command, path,
 numeric-threshold, and verdict leakage. Project facts remain in a separately
 versioned project brief; the registry supplies question and objective shapes,
@@ -70,7 +70,7 @@ support a behavioral claim.
 checkout is marked dirty and its sealed fixture and native environment are
 unavailable. This lets tests prove that compilation refuses incomplete input.
 Validate it with `papertiger-mise improvement
-brief-verify <file>`; validation reads no planning or Mise authority.
+verify-brief <file>`; validation reads no planning or Mise authority.
 
 Compilation requires a separate
 `papertiger.project-improvement-brief-approval.v1` whose SHA-256 names the exact

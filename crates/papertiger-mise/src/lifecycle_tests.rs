@@ -787,7 +787,7 @@ fn cancellation_survives_reopen_stops_real_trial_and_charges_once() {
             "another-reader",
             CancellationTarget::Trial,
             "cancel-trial",
-            &request.reason
+            &request.why
         )
         .unwrap(),
         request

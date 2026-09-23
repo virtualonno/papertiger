@@ -19,18 +19,21 @@ use papertiger_mise::{
     adjudicate_paired_cohort, admit_verified_campaign, admit_verified_successor, authority_status,
     bind_candidate, budget_balances, build_git_change_set_material, campaign, candidate,
     derive_candidate_planner_projection, derive_nomination_planner_projection,
-    derive_paired_nomination, derive_promotion_proof, domain_shadow, execute_next_paired_run,
+    derive_paired_nomination, derive_promotion_proof, domain_shadow, execute_next_paired_execution,
     execute_workspace_trial, historical_shadow, host_execution_status, init_at,
     inspect_source_binding, materialize_candidate, nominations, object_locator, open_existing,
-    open_existing_read_only, open_for_init, paired_cohort, paired_cohorts, paired_run, paired_runs,
-    portable_absolute, preflight_campaign_admission, prepare_paired_cohort, preserve_object,
-    preserve_parent_promotion_proof, read_object, record_candidate, record_domain_shadow,
-    record_historical_shadow, recover_paired_run, recover_workspace_trial, reserve_budget,
-    reserve_paired_analysis_slot, settle_budget, sha256, successor_admission, trial,
-    verify_campaign_admission, verify_nomination_integrity, verify_parent_promotion_gate,
-    verify_promotion_gate, verify_successor_admission,
+    open_existing_read_only, open_for_init, paired_cohort, paired_cohorts, paired_execution,
+    paired_executions, portable_absolute, preflight_campaign_admission, prepare_paired_cohort,
+    preserve_object, preserve_parent_promotion_proof, read_object, record_candidate,
+    record_domain_shadow, record_historical_shadow, recover_paired_execution,
+    recover_workspace_trial, reserve_budget, reserve_paired_analysis_slot, settle_budget, sha256,
+    successor_admission, trial, verify_campaign_admission, verify_nomination_integrity,
+    verify_parent_promotion_gate, verify_promotion_gate, verify_successor_admission,
 };
 use serde::Serialize;
+
+mod why_input;
+use why_input::WhyArgs;
 
 #[derive(Parser)]
 #[command(
@@ -43,23 +46,33 @@ struct Cli {
     /// workspace path resolves from this directory.
     #[arg(long, global = true, value_name = "DIR")]
     project_root: Option<PathBuf>,
+    /// Mise authority database, relative to the project root.
     #[arg(long, default_value = "state/papertiger-mise.sqlite")]
     db: PathBuf,
+    /// Event author recorded on every mutation.
     #[arg(long, env = "PAPERTIGER_ACTOR", default_value = "operator")]
     actor: String,
     #[command(subcommand)]
     command: Command,
 }
 
+/// Content-addressed object root shared by every command that reads or writes CAS evidence.
+const OBJECTS_HELP: &str = "Content-addressed object root, relative to the project root";
+
+/// Independent Papertiger planning database whose closed gate is read, never written.
+const PAPERTIGER_DB_HELP: &str = "Papertiger planning database holding the independently closed gate; opened read-only. Relative paths resolve from the project root";
+
 #[derive(Subcommand)]
 enum Command {
-    /// Read the bundled agent workflow, or its complete operating reference.
+    /// Print the bundled agent workflow, or with --reference the complete MISE.md reference.
     Guide {
+        /// Print the complete MISE.md operating reference instead of the workflow.
         #[arg(long)]
         reference: bool,
     },
     /// Read-only orientation over the project-owned campaign authority.
     Status {
+        /// Emit the project status as JSON.
         #[arg(long)]
         json: bool,
         /// Object root to inspect. Required with a custom database; presence
@@ -67,7 +80,9 @@ enum Command {
         #[arg(long)]
         objects: Option<PathBuf>,
     },
-    /// Report portable supervision availability and non-authoritative native diagnostics.
+    /// Print host supervision capabilities as JSON: the portable local-supervision
+    /// contract, plus native cleanup-backend diagnostics that never affect admission,
+    /// classification, or nomination.
     ExecutionStatus,
     /// Explicitly create or migrate the independent Mise authority.
     Init,
@@ -77,28 +92,28 @@ enum Command {
     /// Admit and inspect immutable campaign definitions and successor lineage.
     #[command(subcommand)]
     Campaign(CampaignCommand),
-    /// Reserve, settle, and inspect finite campaign resources.
+    /// Reserve, settle, release, and inspect finite campaign resources.
     #[command(subcommand)]
     Budget(BudgetCommand),
     /// Record, materialize, adjudicate, and inspect exact candidate changes.
     #[command(subcommand)]
     Candidate(CandidateCommand),
-    /// Run, recover, abandon, and inspect deterministic candidate trials.
+    /// Run, cancel, recover, abandon, and inspect deterministic candidate trials.
     #[command(subcommand)]
     Trial(TrialCommand),
-    /// Execute and adjudicate predeclared paired-analysis cohorts.
+    /// Prepare, execute, cancel, recover, and adjudicate predeclared paired-analysis cohorts.
     #[command(subcommand)]
     Paired(PairedCommand),
-    /// Preserve and reopen content-addressed campaign objects.
+    /// Reverify and print one content-addressed campaign object.
     #[command(subcommand)]
     Object(ObjectCommand),
     /// Record and inspect decision-ineligible historical or domain observations.
     #[command(subcommand)]
     Evidence(EvidenceCommand),
-    /// Derive and verify operator-owned promotion proof inputs.
+    /// List and rederive nominations; derive and verify successor and promotion proofs.
     #[command(subcommand)]
     Promotion(PromotionCommand),
-    /// Reopen terminal campaign evidence as planner-safe projection documents.
+    /// Export terminal candidate or nomination evidence as a planner projection document.
     #[command(subcommand)]
     Projection(ProjectionCommand),
 }
@@ -107,21 +122,34 @@ enum Command {
 enum ImprovementCommand {
     /// List the built-in versioned paradigm registry.
     Paradigms {
+        /// Emit the registry schema, digest, and templates as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Show one exact built-in paradigm template.
-    Show { key: String },
-    /// Validate an external registry without mutating campaign state.
-    Verify { file: PathBuf },
+    Show {
+        /// Paradigm key, as listed by `improvement paradigms`.
+        key: String,
+    },
+    /// Validate an external paradigm registry file without mutating campaign state.
+    VerifyRegistry {
+        /// Registry JSON file to validate.
+        file: PathBuf,
+    },
     /// Validate a read-first project improvement brief as planning input only.
-    BriefVerify { file: PathBuf },
+    VerifyBrief {
+        /// Brief JSON file to validate.
+        file: PathBuf,
+    },
     /// Compile an approved brief into a non-admitted campaign draft.
     Compile {
+        /// Project improvement brief JSON file.
         #[arg(long)]
         brief: PathBuf,
+        /// Operator approval JSON binding the exact brief bytes.
         #[arg(long)]
         approval: PathBuf,
+        /// New draft file to write; an existing path is refused.
         #[arg(long)]
         output: PathBuf,
     },
@@ -143,21 +171,24 @@ struct ProjectStatus {
 
 #[derive(Subcommand)]
 enum ProjectionCommand {
-    /// Reopen terminal authority and CAS evidence into a planner-safe projection document.
-    Inspect {
+    /// Open the authority read-only, reopen the exact candidate material and relied-upon
+    /// CAS evidence, rederive budgets, and emit one planner projection document.
+    Export {
+        /// Nomination to export.
         #[arg(
             long,
             required_unless_present = "candidate",
             conflicts_with = "candidate"
         )]
         nomination: Option<String>,
+        /// Terminal non-nominated candidate to export.
         #[arg(
             long,
             required_unless_present = "nomination",
             conflicts_with = "nomination"
         )]
         candidate: Option<String>,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
         /// Write the exact projection to a new file instead of emitting it on stdout.
         #[arg(long)]
@@ -169,40 +200,65 @@ enum ProjectionCommand {
 enum CampaignCommand {
     /// Discover recorded work in bounded live pages; does not reverify CAS or execution readiness.
     Inspect {
+        /// Admitted campaign ID.
         campaign_id: String,
+        /// Page section: candidates, trials, cohorts, or reservations.
         #[arg(long, default_value = "candidates")]
         section: papertiger_mise::inspection::InspectionSection,
+        /// Page size, 1-100.
         #[arg(long, default_value_t = 20)]
         limit: u64,
+        /// Entities to skip; use the emitted continuation arguments instead of computing it.
         #[arg(long, default_value_t = 0)]
         offset: u64,
     },
     /// Inspect the exact clean Git source binding used to author a manifest.
-    SourceBinding { repository: PathBuf },
+    SourceBinding {
+        /// Clean Git repository to bind.
+        repository: PathBuf,
+    },
     /// Report every independently checkable admission defect without touching an authority.
-    Preflight { manifest: PathBuf },
+    Preflight {
+        /// Campaign manifest JSON file.
+        manifest: PathBuf,
+    },
     /// Validate, canonicalize, and immutably admit a tracked campaign manifest.
-    Admit { manifest: PathBuf },
+    Admit {
+        /// Campaign manifest JSON file.
+        manifest: PathBuf,
+    },
     /// Admit a descendant after rederiving its parent proof and independent gate.
     AdmitSuccessor {
+        /// Successor campaign manifest JSON file.
         manifest: PathBuf,
+        /// Parent nomination whose proof the successor relies on.
         #[arg(long)]
         parent_nomination: String,
+        /// JSON binding naming the closed Papertiger gate (task, gate, evidence, sha256).
         #[arg(long)]
         gate_binding: PathBuf,
-        #[arg(long, default_value = "state/papertiger.sqlite")]
+        #[arg(long, default_value = "state/papertiger.sqlite", help = PAPERTIGER_DB_HELP)]
         papertiger_db: PathBuf,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Read one exact admitted campaign.
-    Show { campaign_id: String },
+    Show {
+        /// Admitted campaign ID.
+        campaign_id: String,
+    },
     /// Read one immutable successor admission and parent-ledger receipt.
-    ShowSuccessor { campaign_id: String },
+    ShowSuccessor {
+        /// Admitted successor campaign ID.
+        campaign_id: String,
+    },
     /// Write an exact canonical fixture bundle from repository files.
     FixtureBundle {
+        /// Repository containing the fixture files.
         repository: PathBuf,
+        /// Bundle descriptor file to write.
         output: PathBuf,
+        /// Fixture as key=repository-relative-locator; repeat for each fixture.
         #[arg(long = "entry", required = true)]
         entries: Vec<String>,
     },
@@ -212,30 +268,46 @@ enum CampaignCommand {
 enum BudgetCommand {
     /// Reserve cumulative resources before any candidate side effect.
     Reserve {
+        /// Admitted campaign ID.
         campaign_id: String,
+        /// New reservation ID; released or settled IDs cannot be reused.
         reservation_id: String,
+        /// Resource amount as resource=integer; repeat per resource. Resources: candidates,
+        /// trials, failures, holdout_disclosures, wall_time_milliseconds, cpu_time_milliseconds,
+        /// gpu_time_milliseconds, disk_bytes_written, network_bytes, artifact_bytes,
+        /// model_tokens, cost_microunits.
         #[arg(long = "amount", required = true)]
         amounts: Vec<String>,
     },
     /// Settle measured use, or conservatively charge the full reservation.
     Settle {
+        /// Admitted campaign ID.
         campaign_id: String,
+        /// Reservation to settle.
         reservation_id: String,
+        /// Measured use as resource=integer; repeat per resource (same names as `budget reserve`).
         #[arg(long = "amount")]
         amounts: Vec<String>,
+        /// Charge every reserved amount in full instead of measured use.
         #[arg(long, conflicts_with = "amounts")]
         charge_reservation: bool,
+        /// Settlement note recorded with the ledger entry.
         #[arg(long)]
         note: Option<String>,
     },
     /// Display the cumulative ledger for one campaign.
-    Show { campaign_id: String },
+    Show {
+        /// Admitted campaign ID.
+        campaign_id: String,
+    },
     /// Release every resource at zero only if no lifecycle operation bound it.
     Release {
+        /// Admitted campaign ID.
         campaign_id: String,
+        /// Unbound reservation to release.
         reservation_id: String,
-        #[arg(long)]
-        reason: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
 }
 
@@ -243,93 +315,123 @@ enum BudgetCommand {
 enum CandidateCommand {
     /// Build canonical Git change-set material from two exact trees.
     BuildMaterial {
+        /// Git repository containing both trees.
         #[arg(long)]
         repository: PathBuf,
+        /// Base tree ID (the campaign's frozen base tree).
         #[arg(long)]
         base_tree: String,
+        /// Result tree ID containing the candidate change.
         #[arg(long)]
         result_tree: String,
+        /// Material file to write.
         #[arg(long)]
         output: PathBuf,
     },
     /// Bind and durably record one typed proposal plus exact candidate material.
     Record {
+        /// Candidate proposal JSON file.
         #[arg(long)]
         proposal: PathBuf,
+        /// Canonical material file from `candidate build-material`.
         #[arg(long)]
         material: PathBuf,
+        /// Reservation charged for the candidate.
         #[arg(long)]
         reservation: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Materialize one durable candidate into its exact confined worktree.
     Materialize {
+        /// Recorded candidate ID.
         candidate_id: String,
+        /// Reservation charged for materialization.
         #[arg(long)]
         reservation: String,
+        /// New detached worktree path.
         #[arg(long)]
         worktree: PathBuf,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Charge and close an interrupted materialization before retrying it.
     AbandonMaterialization {
+        /// Candidate whose interrupted materialization is closed.
         candidate_id: String,
+        /// Reservation bound by the interrupted attempt.
         #[arg(long)]
         reservation: String,
-        #[arg(long)]
-        reason: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Read one exact durable candidate.
-    Show { candidate_id: String },
+    Show {
+        /// Recorded candidate ID.
+        candidate_id: String,
+    },
     /// Derive a terminal deterministic result and optional nomination.
-    Adjudicate { candidate_id: String },
+    Adjudicate {
+        /// Recorded candidate ID.
+        candidate_id: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum TrialCommand {
     /// Ask the live supervisor to stop a launched trial and retain failure evidence.
     Cancel {
+        /// Launched trial ID.
         trial_id: String,
-        #[arg(long)]
-        reason: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Execute one typed deterministic trial through the owned supervisor.
     Run {
+        /// Supervised trial spec JSON file.
         #[arg(long)]
         spec: PathBuf,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
-    /// Heal a reverified succeeded settlement or reconcile an absent launched process.
+    /// Settle a succeeded trial whose CAS receipt reverifies but whose reservation is still
+    /// open, or record OS-observed absence of a launched trial's process and charge it.
     Recover {
+        /// Trial ID to recover.
         trial_id: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Charge and retire an ambiguous pre-launch trial intent without claiming process absence.
     Abandon {
+        /// Owned (never launched) trial ID.
         trial_id: String,
-        #[arg(long)]
-        reason: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Read one exact durable trial, including terminal evidence pointers.
-    Show { trial_id: String },
+    Show {
+        /// Trial ID.
+        trial_id: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum PairedCommand {
-    /// Ask the live supervisor to stop a launched run and conservatively settle its cohort.
+    /// Ask the live supervisor to stop a launched execution and conservatively settle its cohort.
     Cancel {
+        /// Launched paired execution ID.
         execution_id: String,
-        #[arg(long)]
-        reason: String,
+        #[command(flatten)]
+        why: WhyArgs,
     },
     /// Irrevocably bind one research candidate to a finite confirmation slot.
     ReserveSlot {
+        /// Admitted campaign ID.
         campaign_id: String,
+        /// Research candidate ID.
         candidate_id: String,
+        /// Research slot index.
         slot: u32,
         /// File containing the committed order-seed reveal bytes.
         #[arg(long)]
@@ -337,56 +439,78 @@ enum PairedCommand {
     },
     /// Freeze every ordered request and reserve the complete cohort before launch.
     Prepare {
+        /// Paired cohort spec JSON file.
         #[arg(long)]
         spec: PathBuf,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
-    /// Execute exactly the next predeclared run, or report adjudication readiness.
-    RunNext {
+    /// Execute exactly the next predeclared execution, or report adjudication readiness.
+    ExecuteNext {
+        /// Prepared cohort ID.
         cohort_id: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
-    /// Reopen every run from CAS and apply the sole fixed classifier.
+    /// Reopen every execution's request, result, and receipts from CAS, classify the cohort
+    /// under the admitted paired-analysis plan, and record its terminal result.
     Adjudicate {
+        /// Cohort whose every execution succeeded.
         cohort_id: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Derive one development nomination from exact CAS-reverified paired cohorts.
     DeriveNomination {
+        /// Qualified research cohort ID.
         research_cohort_id: String,
+        /// Adjudicated no-op calibration cohort ID.
         #[arg(long)]
         no_op: String,
+        /// Adjudicated known-bad calibration cohort ID.
         #[arg(long)]
         known_bad: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
-    /// Reconcile an exact launched run only after its birth-bound process is absent.
+    /// Record OS-observed absence of a launched execution's birth-bound process and fail its cohort.
     Recover {
+        /// Launched paired execution ID.
         execution_id: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Read one durable cohort and its terminal evidence pointers.
-    ShowCohort { cohort_id: String },
+    ShowCohort {
+        /// Cohort ID.
+        cohort_id: String,
+    },
     /// Enumerate every durable cohort in one campaign.
-    ListCohorts { campaign_id: String },
-    /// Read one durable paired run and its evidence pointers.
-    ShowRun { execution_id: String },
-    /// Enumerate every predeclared run in exact cohort order.
-    ListRuns { cohort_id: String },
+    ListCohorts {
+        /// Admitted campaign ID.
+        campaign_id: String,
+    },
+    /// Read one durable paired execution, its evidence pointers, and any cancellation request.
+    ShowExecution {
+        /// Paired execution ID.
+        execution_id: String,
+    },
+    /// Enumerate every predeclared execution in exact cohort order.
+    ListExecutions {
+        /// Cohort ID.
+        cohort_id: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum ObjectCommand {
     /// Reverify and emit exact CAS bytes for one typed object pointer.
     Read {
+        /// Object SHA-256.
         sha256: String,
+        /// Exact object length in bytes.
         bytes: u64,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
 }
@@ -396,35 +520,41 @@ enum EvidenceCommand {
     /// Execute and retain one read-only observation with unchanged domain state.
     #[command(name = "domain-shadow")]
     RecordDomain {
+        /// Domain-shadow adapter binding JSON file.
         #[arg(long)]
         binding: PathBuf,
+        /// Request JSON passed to the adapter on stdin.
         #[arg(long)]
         request: PathBuf,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Reopen one exact, permanently decision-ineligible domain shadow.
     #[command(name = "show-domain-shadow")]
     ReadDomain {
+        /// Domain-shadow evidence ID.
         evidence_id: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Execute and retain adapter-backed legacy evidence without decision authority.
     #[command(name = "historical-shadow")]
     RecordHistorical {
+        /// Paired adapter binding JSON file.
         #[arg(long)]
         binding: PathBuf,
+        /// Request JSON passed to the adapter on stdin.
         #[arg(long)]
         request: PathBuf,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Reopen one exact historical-shadow receipt and all of its CAS objects.
     #[command(name = "show-historical-shadow")]
     ReadHistorical {
+        /// Historical-shadow evidence ID.
         evidence_id: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
 }
@@ -433,69 +563,89 @@ enum EvidenceCommand {
 enum PromotionCommand {
     /// Enumerate durable nominations for operator review.
     List {
+        /// Restrict the list to one campaign.
         #[arg(long)]
         campaign: Option<String>,
     },
-    /// Rederive one nomination from its retained CAS evidence.
-    Inspect {
+    /// Rederive one nomination from its retained CAS evidence and print the verified result.
+    Rederive {
+        /// Nomination ID.
         nomination_id: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Preserve the successor-only parent promotion proof for independent gate review.
     DeriveParent {
+        /// Parent nomination ID.
         #[arg(long)]
         nomination: String,
+        /// Successor campaign manifest JSON file.
         #[arg(long)]
         successor_manifest: PathBuf,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
     /// Run a read-only parent promotion proof preflight against an independent gate.
     VerifyParent {
-        #[arg(long, default_value = "state/papertiger.sqlite")]
+        #[arg(long, default_value = "state/papertiger.sqlite", help = PAPERTIGER_DB_HELP)]
         papertiger_db: PathBuf,
+        /// Parent nomination ID.
         #[arg(long)]
         nomination: String,
+        /// Successor campaign manifest JSON file.
         #[arg(long)]
         successor_manifest: PathBuf,
+        /// Papertiger task number owning the gate.
         #[arg(long)]
         task: i64,
+        /// Closed gate name.
         #[arg(long)]
         gate: String,
+        /// Evidence locator recorded on the gate.
         #[arg(long)]
         evidence: String,
+        /// Evidence SHA-256 recorded on the gate.
         #[arg(long)]
         sha256: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
-    /// Attempt exact proof derivation; raw-observation confirmation fails closed.
+    /// Unavailable until sealed confirmation attestation lands: always refuses, because no
+    /// current trial receipt is genuinely verdict-only.
     Derive {
+        /// Nomination ID.
         #[arg(long)]
         nomination: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
+        /// Operator-owned canonical containment policy JSON.
         #[arg(long)]
         containment_policy: PathBuf,
     },
-    /// Verify a derivable proof against a separately closed Papertiger gate read-only.
+    /// Unavailable until sealed confirmation attestation lands: always refuses, because the
+    /// production proof it verifies cannot yet be derived.
     Verify {
-        #[arg(long)]
+        #[arg(long, default_value = "state/papertiger.sqlite", help = PAPERTIGER_DB_HELP)]
         papertiger_db: PathBuf,
+        /// Nomination ID.
         #[arg(long)]
         nomination: String,
+        /// Papertiger task number owning the gate.
         #[arg(long)]
         task: i64,
+        /// Closed gate name.
         #[arg(long)]
         gate: String,
+        /// Evidence locator recorded on the gate.
         #[arg(long)]
         evidence: String,
+        /// Evidence SHA-256 recorded on the gate.
         #[arg(long)]
         sha256: String,
-        #[arg(long, default_value = "state/papertiger-mise-objects")]
+        #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
-        /// Operator-owned trust policy; it must not come from the candidate repository.
+        /// Operator-owned canonical containment policy JSON; it must
+        /// not come from the candidate repository.
         #[arg(long)]
         containment_policy: PathBuf,
     },
@@ -595,7 +745,7 @@ fn run(cli: Cli) -> Result<()> {
                     }))?
                 );
             }
-            ImprovementCommand::Verify { file } => {
+            ImprovementCommand::VerifyRegistry { file } => {
                 let bytes = std::fs::read(&file)
                     .with_context(|| format!("read improvement registry {}", file.display()))?;
                 let registry = improvement::validate_paradigm_registry(&bytes)?;
@@ -609,7 +759,7 @@ fn run(cli: Cli) -> Result<()> {
                     }))?
                 );
             }
-            ImprovementCommand::BriefVerify { file } => {
+            ImprovementCommand::VerifyBrief { file } => {
                 let bytes = std::fs::read(&file).with_context(|| {
                     format!("read project improvement brief {}", file.display())
                 })?;
@@ -928,15 +1078,16 @@ fn run(cli: Cli) -> Result<()> {
         Command::Budget(BudgetCommand::Release {
             campaign_id,
             reservation_id,
-            reason,
+            why,
         }) => {
+            let why = why.required()?;
             let connection = open_existing(&cli.db)?;
             let outcome = papertiger_mise::budget::release_unused_budget(
                 &connection,
                 &cli.actor,
                 &campaign_id,
                 &reservation_id,
-                &reason,
+                &why,
             )?;
             println!("reservation {reservation_id} {outcome:?}");
         }
@@ -1014,15 +1165,16 @@ fn run(cli: Cli) -> Result<()> {
         Command::Candidate(CandidateCommand::AbandonMaterialization {
             candidate_id,
             reservation,
-            reason,
+            why,
         }) => {
+            let why = why.required()?;
             let connection = open_existing(&cli.db)?;
             let outcome = abandon_materialization_attempt(
                 &connection,
                 &cli.actor,
                 &candidate_id,
                 &reservation,
-                &reason,
+                &why,
             )?;
             println!("materialization {candidate_id} {outcome:?}");
         }
@@ -1057,19 +1209,21 @@ fn run(cli: Cli) -> Result<()> {
             let outcome = recover_workspace_trial(&connection, &cli.actor, &objects, &trial_id)?;
             println!("trial {trial_id} {outcome:?}");
         }
-        Command::Trial(TrialCommand::Abandon { trial_id, reason }) => {
+        Command::Trial(TrialCommand::Abandon { trial_id, why }) => {
+            let why = why.required()?;
             let connection = open_existing(&cli.db)?;
-            let outcome = abandon_owned_trial(&connection, &cli.actor, &trial_id, &reason)?;
+            let outcome = abandon_owned_trial(&connection, &cli.actor, &trial_id, &why)?;
             println!("trial {trial_id} {outcome:?}");
         }
-        Command::Trial(TrialCommand::Cancel { trial_id, reason }) => {
+        Command::Trial(TrialCommand::Cancel { trial_id, why }) => {
+            let why = why.required()?;
             let connection = open_existing(&cli.db)?;
             let request = request_cancellation(
                 &connection,
                 &cli.actor,
                 CancellationTarget::Trial,
                 &trial_id,
-                &reason,
+                &why,
             )?;
             println!("{}", serde_json::to_string_pretty(&request)?);
         }
@@ -1117,9 +1271,10 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             println!("{}", serde_json::to_string_pretty(&record)?);
         }
-        Command::Paired(PairedCommand::RunNext { cohort_id, objects }) => {
+        Command::Paired(PairedCommand::ExecuteNext { cohort_id, objects }) => {
             let connection = open_existing(&cli.db)?;
-            let outcome = execute_next_paired_run(&connection, &cli.actor, &objects, &cohort_id)?;
+            let outcome =
+                execute_next_paired_execution(&connection, &cli.actor, &objects, &cohort_id)?;
             println!("{}", serde_json::to_string_pretty(&outcome)?);
         }
         Command::Paired(PairedCommand::Adjudicate { cohort_id, objects }) => {
@@ -1166,7 +1321,8 @@ fn run(cli: Cli) -> Result<()> {
             objects,
         }) => {
             let connection = open_existing(&cli.db)?;
-            let record = recover_paired_run(&connection, &cli.actor, &objects, &execution_id)?;
+            let record =
+                recover_paired_execution(&connection, &cli.actor, &objects, &execution_id)?;
             println!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Paired(PairedCommand::ShowCohort { cohort_id }) => {
@@ -1182,37 +1338,35 @@ fn run(cli: Cli) -> Result<()> {
                 serde_json::to_string_pretty(&paired_cohorts(&connection, &campaign_id)?)?
             );
         }
-        Command::Paired(PairedCommand::Cancel {
-            execution_id,
-            reason,
-        }) => {
+        Command::Paired(PairedCommand::Cancel { execution_id, why }) => {
+            let why = why.required()?;
             let connection = open_existing(&cli.db)?;
             let request = request_cancellation(
                 &connection,
                 &cli.actor,
-                CancellationTarget::PairedRun,
+                CancellationTarget::PairedExecution,
                 &execution_id,
-                &reason,
+                &why,
             )?;
             println!("{}", serde_json::to_string_pretty(&request)?);
         }
-        Command::Paired(PairedCommand::ShowRun { execution_id }) => {
+        Command::Paired(PairedCommand::ShowExecution { execution_id }) => {
             let connection = open_existing(&cli.db)?;
-            let record = paired_run(&connection, &execution_id)?
-                .with_context(|| format!("unknown paired run '{execution_id}'"))?;
+            let record = paired_execution(&connection, &execution_id)?
+                .with_context(|| format!("unknown paired execution '{execution_id}'"))?;
             let mut value = serde_json::to_value(record)?;
             value["cancellation_request"] = serde_json::to_value(cancellation_request(
                 &connection,
-                CancellationTarget::PairedRun,
+                CancellationTarget::PairedExecution,
                 &execution_id,
             )?)?;
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
-        Command::Paired(PairedCommand::ListRuns { cohort_id }) => {
+        Command::Paired(PairedCommand::ListExecutions { cohort_id }) => {
             let connection = open_existing(&cli.db)?;
             println!(
                 "{}",
-                serde_json::to_string_pretty(&paired_runs(&connection, &cohort_id)?)?
+                serde_json::to_string_pretty(&paired_executions(&connection, &cohort_id)?)?
             );
         }
         Command::Object(ObjectCommand::Read {
@@ -1282,7 +1436,7 @@ fn run(cli: Cli) -> Result<()> {
                 .with_context(|| format!("unknown historical shadow '{evidence_id}'"))?;
             println!("{}", serde_json::to_string_pretty(&record)?);
         }
-        Command::Projection(ProjectionCommand::Inspect {
+        Command::Projection(ProjectionCommand::Export {
             nomination,
             candidate,
             objects,
@@ -1302,7 +1456,7 @@ fn run(cli: Cli) -> Result<()> {
                     derive_candidate_planner_projection(&connection, &objects, &candidate_id)?
                 }
                 _ => {
-                    bail!("projection inspect requires exactly one of --nomination or --candidate")
+                    bail!("projection export requires exactly one of --nomination or --candidate")
                 }
             };
             let projection_sha256 = projection.projection_sha256()?;
@@ -1356,7 +1510,7 @@ fn run(cli: Cli) -> Result<()> {
                 serde_json::to_string_pretty(&nominations(&connection, campaign.as_deref())?)?
             );
         }
-        Command::Promotion(PromotionCommand::Inspect {
+        Command::Promotion(PromotionCommand::Rederive {
             nomination_id,
             objects,
         }) => {

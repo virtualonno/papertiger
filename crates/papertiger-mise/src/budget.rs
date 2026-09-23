@@ -286,9 +286,9 @@ pub fn release_unused_budget(
     actor: &str,
     campaign_id: &str,
     reservation_id: &str,
-    reason: &str,
+    why: &str,
 ) -> Result<SettlementOutcome> {
-    crate::validation::validate_nonblank("release reason (--reason)", reason)?;
+    crate::validation::validate_nonblank("release rationale (--why)", why)?;
     let transaction = begin_mutation(connection)?;
     let rows = reservation_rows(&transaction, campaign_id, reservation_id)?;
     let settlements = rows
@@ -298,7 +298,7 @@ pub fn release_unused_budget(
             actual_amount: 0,
         })
         .collect::<Vec<_>>();
-    let note = format!("unused-reservation-released: {reason}");
+    let note = format!("unused-reservation-released: {why}");
     let outcome = settle_budget_in(
         &transaction,
         actor,
