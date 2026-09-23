@@ -160,7 +160,7 @@ jobs:
              LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
           cat > "${bundle}/manifest.json" <<EOF
           {
-            "schema": "papertiger.release-manifest.v1",
+            "schema": "papertiger.release_manifest.v1",
             "name": "papertiger",
             "version": "${VERSION}",
             "source_commit": "${GITHUB_SHA}",
@@ -193,7 +193,7 @@ jobs:
              LICENSE LICENSE-SSL LICENSE-VPL "$bundle/"
           cat > "$bundle/manifest.json" <<EOF
           {
-            "schema": "papertiger.release-manifest.v1",
+            "schema": "papertiger.release_manifest.v1",
             "name": "papertiger",
             "version": "${{ inputs.artifact_version }}",
             "source_commit": "${GITHUB_SHA}",
@@ -226,7 +226,7 @@ jobs:
           grep -q 'setup-project' < <("$bundle/bin/papertiger" --help)
           grep -q 'uninstall-project' < <("$bundle/bin/papertiger" --help)
           grep -q -- '--project-root' < <("$bundle/bin/papertiger-mise" --help)
-          grep -Fq '"schema": "papertiger.release-manifest.v2"' "$bundle/manifest.json"
+          grep -Fq '"schema": "papertiger.release_manifest.v3"' "$bundle/manifest.json"
           grep -Fq '"name": "papertiger"' "$bundle/manifest.json"
           grep -Fq "\"version\": \"${VERSION}\"" "$bundle/manifest.json"
           grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "$bundle/manifest.json"
@@ -315,7 +315,7 @@ jobs:
           grep -q 'setup-project' < <("$planner" --help)
           grep -q 'uninstall-project' < <("$planner" --help)
           grep -q -- '--project-root' < <("$mise" --help)
-          grep -Fq '"schema": "papertiger.release-manifest.v2"' "$bundle/manifest.json"
+          grep -Fq '"schema": "papertiger.release_manifest.v3"' "$bundle/manifest.json"
           grep -Fq '"name": "papertiger"' "$bundle/manifest.json"
           grep -Fq "\"version\": \"${VERSION}\"" "$bundle/manifest.json"
           grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "$bundle/manifest.json"

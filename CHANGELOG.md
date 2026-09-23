@@ -17,6 +17,7 @@ verified release binary so the project skill and reference match.
 
 ### Changed
 
+- Release archives carry `papertiger.release_manifest.v3` (was `papertiger.release-manifest.v2`); update any script that checks the manifest schema.
 - Blockers record a `condition`: `blocker add <task> <name> --condition <text>`
   replaces `--reason`, and JSON, dumps and the database column use `condition`.
 - Gates use the blockers' vocabulary: `gate resolve` replaces `gate close`, and

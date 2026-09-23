@@ -23,7 +23,7 @@ if manifest.get('bridge_binary'):
 for child in children:
     assert child.resolve().is_relative_to(stage)
     child.rename(owned / ('bin/' + child.name if child.name in names else child.name))
-manifest['schema'] = tool + '.release-manifest.v2'
+manifest['schema'] = tool + '.release_manifest.v3'
 manifest['layout'] = 'project-overlay'
 manifest['binary_sha256'] = {
     'bin/' + name: hashlib.sha256((owned / 'bin' / name).read_bytes()).hexdigest()

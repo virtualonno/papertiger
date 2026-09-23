@@ -13,7 +13,7 @@ tool = next((bundle / 'tools').iterdir()).name
 assert tool in ('papertiger', 'contextmink')
 owned = bundle / 'tools' / tool
 manifest = json.loads((owned / 'manifest.json').read_text())
-assert manifest['schema'] == tool + '.release-manifest.v2'
+assert manifest['schema'] == tool + '.release_manifest.v3'
 assert manifest['layout'] == 'project-overlay'
 for name, digest in manifest['binary_sha256'].items():
     assert (owned / name).resolve().is_relative_to(owned)

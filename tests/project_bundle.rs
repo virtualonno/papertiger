@@ -30,7 +30,7 @@ impl Fixture {
         fs::create_dir_all(binary.parent().unwrap()).unwrap();
         fs::copy(BINARY, &binary).unwrap();
         let key = format!("bin/papertiger{}", std::env::consts::EXE_SUFFIX);
-        let manifest = json!({"schema":"papertiger.release-manifest.v2", "name":"papertiger", "version":env!("CARGO_PKG_VERSION"), "binary_sha256":{key:papertiger::sha256(&fs::read(BINARY).unwrap())}});
+        let manifest = json!({"schema":"papertiger.release_manifest.v3", "name":"papertiger", "version":env!("CARGO_PKG_VERSION"), "binary_sha256":{key:papertiger::sha256(&fs::read(BINARY).unwrap())}});
         fs::write(
             self.0.join("tools/papertiger/manifest.json"),
             serde_json::to_vec(&manifest).unwrap(),

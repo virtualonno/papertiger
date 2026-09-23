@@ -20,7 +20,7 @@ pub(crate) fn verify(root: &Path) -> Result<bool> {
     let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
     let header: serde_json::Value = serde_json::from_slice(&bytes)
         .context("invalid bundle manifest; restore tools/papertiger from a verified release")?;
-    if header["schema"] == "papertiger.release-manifest.v1" {
+    if header["schema"] == "papertiger.release_manifest.v1" {
         return Ok(false);
     }
     let manifest: Manifest = serde_json::from_value(header)
@@ -28,7 +28,7 @@ pub(crate) fn verify(root: &Path) -> Result<bool> {
     let binary = format!("bin/papertiger{}", std::env::consts::EXE_SUFFIX);
     let expected = manifest.binary_sha256.get(&binary);
     let installed = root.join("tools/papertiger").join(&binary);
-    if manifest.schema != "papertiger.release-manifest.v2"
+    if manifest.schema != "papertiger.release_manifest.v3"
         || manifest.name != "papertiger"
         || manifest.version != env!("CARGO_PKG_VERSION")
         || expected
