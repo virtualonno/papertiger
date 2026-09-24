@@ -23,22 +23,60 @@ test "$planner_semver" = "${mise_version#papertiger-mise }"
 release_workflow="$root/.github/workflows/release-artifacts.yml"
 grep -Fq '"schema": "papertiger.project_uninstall.v3"' "$release_workflow"
 
-bash scripts/validate_release_dispatch.sh \
-  "$planner_semver" false refs/heads/codex/local-verification
-if release_error="$(bash scripts/validate_release_dispatch.sh \
-    999.0.0 false refs/heads/master 2>&1)"; then
+# Only a released version has a dated CHANGELOG section, so dispatch must
+# refuse a pre-release workspace; the dispatch checks then run against a
+# release fixture instead of the workspace.
+dispatch_root="$root"
+dispatch_version="$planner_semver"
+dispatch_fixture=""
+dispatch_cleanup() {
+  case "$dispatch_fixture" in
+    "") ;;
+    "${TMPDIR:-/tmp}"/papertiger-release-dispatch.*) rm -rf -- "$dispatch_fixture" ;;
+    *) echo "refusing to remove unexpected release-dispatch fixture: $dispatch_fixture" >&2 ;;
+  esac
+}
+if [[ "$planner_semver" == *-* ]]; then
+  echo "notice: ${planner_semver} is a pre-release without a dated CHANGELOG section; checking that release dispatch refuses it, then checking dispatch validation against a release fixture"
+  if release_error="$(bash scripts/validate_release_dispatch.sh \
+      "$planner_semver" false refs/heads/codex/local-verification 2>&1)"; then
+    echo "release dispatch validation accepted pre-release ${planner_semver} without a dated CHANGELOG section" >&2
+    exit 1
+  fi
+  case "$release_error" in
+    *"CHANGELOG.md has no dated ${planner_semver} section"*) ;;
+    *)
+      echo "pre-release dispatch refusal did not name the missing dated section: ${release_error}" >&2
+      exit 1
+      ;;
+  esac
+  dispatch_fixture="$(mktemp -d "${TMPDIR:-/tmp}/papertiger-release-dispatch.XXXXXX")"
+  trap dispatch_cleanup EXIT
+  dispatch_root="$dispatch_fixture"
+  dispatch_version="1.2.3"
+  printf '[workspace.package]\nversion = "%s"\n' "$dispatch_version" \
+    > "$dispatch_root/Cargo.toml"
+  printf '# Changelog\n\n## [%s] - 2026-08-13\n' "$dispatch_version" \
+    > "$dispatch_root/CHANGELOG.md"
+fi
+validate_dispatch() {
+  (cd "$dispatch_root" && bash "$root/scripts/validate_release_dispatch.sh" "$@")
+}
+
+validate_dispatch "$dispatch_version" false refs/heads/codex/local-verification
+if release_error="$(validate_dispatch 999.0.0 false refs/heads/master 2>&1)"; then
   echo "release dispatch validation accepted a mismatched artifact version" >&2
   exit 1
 fi
 case "$release_error" in
-  *"dispatch the workflow with artifact_version=${planner_semver}"*) ;;
+  *"dispatch the workflow with artifact_version=${dispatch_version}"*) ;;
   *)
     echo "release dispatch mismatch did not name the corrective artifact_version" >&2
     exit 1
     ;;
 esac
-if release_error="$(bash scripts/validate_release_dispatch.sh \
-    "$planner_semver" true refs/heads/codex/local-verification 2>&1)"; then
+if release_error="$(validate_dispatch \
+    "$dispatch_version" true refs/heads/codex/local-verification 2>&1)"; then
   echo "release dispatch validation accepted publication from a non-master ref" >&2
   exit 1
 fi
@@ -49,6 +87,8 @@ case "$release_error" in
     exit 1
     ;;
 esac
+dispatch_cleanup
+trap - EXIT
 
 notes_fixture="$(mktemp -d "${TMPDIR:-/tmp}/papertiger-release-notes.XXXXXX")"
 notes_cleanup() {
