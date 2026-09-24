@@ -14,45 +14,116 @@ if [[ ! -f "$changelog" ]]; then
   exit 1
 fi
 
-# Preserve the authored Markdown; release rendering must not reinterpret lists,
-# tables, code blocks or sentence boundaries. Changelog sections use ## [version].
-body="$(awk -v heading="## [${version}]" '
-  {
-    sub(/\r$/, "")
-    # A heading inside a fenced sample belongs to the notes, not the changelog.
-    if (match($0, /^ {0,3}(`{3,}|~{3,})/)) {
-      marker = substr($0, RSTART, RLENGTH)
-      sub(/^ */, "", marker)
-      if (fence == "") {
-        fence = substr(marker, 1, 1)
-        fence_length = length(marker)
-      } else if (substr(marker, 1, 1) == fence && length(marker) >= fence_length &&
-                 substr($0, RSTART + RLENGTH) ~ /^[[:space:]]*$/) {
-        fence = ""
+body="$({
+  awk -v heading="## [${version}]" '
+    { sub(/\r$/, "") }
+    # A heading inside a fenced sample belongs to the notes; fences use the
+    # same column-0 rule as the reflow below.
+    /^```/ || /^~~~/ { in_fence = !in_fence; if (found) print; next }
+    in_fence { if (found) print; next }
+    $0 == heading || index($0, heading " - ") == 1 { found = 1; next }
+    /^## / { if (found) exit }
+    found { print }
+    END {
+      if (!found) {
+        print "CHANGELOG has no release section for " heading > "/dev/stderr"
+        exit 1
       }
-      if (found) { print; printed = 1 }
-      next
     }
-    if (fence != "") { if (found) print; next }
-  }
-  $0 == heading || index($0, heading " - ") == 1 { found = 1; next }
-  /^## \[/ { if (found) exit }
-  found {
-    if (!printed && $0 ~ /^[[:space:]]*$/) next
-    print
-    printed = 1
-  }
-  END {
-    if (!found) {
-      print "CHANGELOG has no release section for " heading > "/dev/stderr"
-      exit 1
+  ' "$changelog" |
+  awk '
+    function spaces(count, output) {
+      output = ""
+      while (length(output) < count) output = output " "
+      return output
     }
-    if (fence != "") {
-      print "release notes contain an unterminated fenced code block; close it in the changelog" > "/dev/stderr"
-      exit 1
+    function emit_sentences(text, prefix, continuation, matched, sentence) {
+      prefix = ""
+      continuation = ""
+      if (text ~ /^[-*+][[:space:]]/) {
+        prefix = substr(text, 1, 2)
+        continuation = "  "
+        text = substr(text, 3)
+      } else if (match(text, /^[0-9]+[.)][[:space:]]/)) {
+        prefix = substr(text, 1, RLENGTH)
+        continuation = spaces(RLENGTH)
+        text = substr(text, RLENGTH + 1)
+      }
+      while (match(text, /[.!?][[:space:]]+[[:upper:][:digit:]`]/)) {
+        sentence = substr(text, 1, RSTART)
+        print prefix sentence
+        prefix = continuation
+        matched = substr(text, RSTART, RLENGTH)
+        text = substr(matched, length(matched), 1) substr(text, RSTART + RLENGTH)
+      }
+      if (text != "") print prefix text
     }
-  }
-' "$changelog")"
+    function start_output() {
+      if (printed && pending_blank) print ""
+      pending_blank = 0
+    }
+    function emit_block() {
+      if (block == "") return
+      start_output()
+      emit_sentences(block)
+      printed = 1
+      block = ""
+    }
+    {
+      sub(/\r$/, "")
+      if (in_fence) {
+        print
+        if ($0 ~ /^```[[:space:]]*$/ || $0 ~ /^~~~[[:space:]]*$/) in_fence = 0
+        next
+      }
+      if ($0 ~ /^```/ || $0 ~ /^~~~/) {
+        emit_block()
+        start_output()
+        print
+        printed = 1
+        in_fence = 1
+        next
+      }
+      if ($0 ~ /^[[:space:]]*$/) {
+        emit_block()
+        pending_blank = 1
+        next
+      }
+      if ($0 ~ /^#{1,6}[[:space:]]/) {
+        emit_block()
+        start_output()
+        print
+        printed = 1
+        next
+      }
+      # Quotations and table rows keep their authored lines.
+      if ($0 ~ /^[>|]/) {
+        emit_block()
+        start_output()
+        print
+        printed = 1
+        next
+      }
+      if ($0 ~ /^[-*+][[:space:]]/ || $0 ~ /^[0-9]+[.)][[:space:]]/) {
+        emit_block()
+        block = $0
+        next
+      }
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (block == "") block = line
+      else block = block " " line
+    }
+    END {
+      if (in_fence) {
+        print "release notes contain an unterminated fenced code block" > "/dev/stderr"
+        exit 1
+      }
+      emit_block()
+    }
+  '
+})"
 
 if [[ ! "$body" =~ [^[:space:]] ]]; then
   echo "CHANGELOG.md has no release notes for ${version}" >&2

@@ -6,11 +6,6 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
-### Changed
-
-- Generated release notes preserve the changelog's Markdown instead of
-  rewriting line breaks and sentence boundaries.
-
 ## [0.20.0] - 2026-09-24
 
 Planner schema v13 and Mise schema v10 are unchanged; no `init` is needed.

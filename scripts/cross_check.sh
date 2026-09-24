@@ -80,17 +80,40 @@ EOF
 } > "$fixture/CHANGELOG.md"
 bash scripts/render_release_notes.sh 1.2.3 \
   "$fixture/CHANGELOG.md" > "$fixture/actual.md"
-# The body is an authored fixture, never captured from the renderer output.
-head -c "$(wc -c < "$fixture/body.md")" "$fixture/actual.md" > "$fixture/prefix.md"
-cmp "$fixture/body.md" "$fixture/prefix.md"
-if grep -Fq 'Older release marker' "$fixture/actual.md"; then
-  echo "release-note rendering leaked another release section" >&2
-  exit 1
-fi
-if ! grep -Fq 'Verify the adjacent SHA-256 asset before extraction.' "$fixture/actual.md"; then
-  echo "release notes omitted the archive checksum instruction" >&2
-  exit 1
-fi
+# GitHub renders single newlines in release bodies as line breaks, so prose is
+# reflowed to one sentence per line; quotations, tables and fenced samples
+# keep their authored lines, and a heading inside a fence does not end the
+# section. The expectation is authored, never captured from the renderer.
+cat > "$fixture/expected.md" <<'EOF'
+This sentence was wrapped in the middle.
+This sentence was not.
+
+### Fixed
+
+- One release-note item was wrapped at an arbitrary source column.
+  Its second sentence is semantic.
+- Another item stayed on one line.
+
+> A quotation
+> keeps its structure.
+
+| Item | Value |
+| --- | --- |
+| Example | 3 |
+
+```text
+## This is a code sample
+## [9.9.9] - 2026-01-01
+  indentation stays
+```
+
+Notes continue after the sample.
+
+Prebuilt archives are attached for Windows x64, Linux x64, Intel macOS, and Apple Silicon macOS.
+Merge `.agents`, `.claude`, and `tools` into the project root. Skills are ready to discover; executables, documentation, licenses and the source manifest live under `tools/papertiger`.
+Verify the adjacent SHA-256 asset before extraction.
+EOF
+diff -u "$fixture/expected.md" "$fixture/actual.md"
 if notes_error="$(bash scripts/render_release_notes.sh \
     9.9.9 "$fixture/CHANGELOG.md" 2>&1)"; then
   echo "release-note rendering accepted a missing changelog section" >&2
