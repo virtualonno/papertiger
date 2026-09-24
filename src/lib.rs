@@ -1653,6 +1653,14 @@ pub fn edit_task(
                         .join(" -> ")
                 );
             }
+            if let (Some(parent_id), Some(parent_seq)) = (parent_id, parent_seq)
+                && matches!(task.status.as_str(), "proposed" | "in_progress")
+                && waits_for(&tx, task.task_id, parent_id)?
+            {
+                bail!(
+                    "parent change would deadlock: #{seq} finishes only after its new parent #{parent_seq} through dependencies or unfinished child tasks"
+                );
+            }
             changed.push("parent");
             changes.insert(
                 "parent".into(),
@@ -1824,6 +1832,12 @@ fn add_dep_inner(
             .collect::<rusqlite::Result<_>>()?;
         stack.extend(next);
     }
+    // Import restores edges that earlier releases admitted; it never adds new waits.
+    if event && waits_for(tx, on.task_id, task.task_id)? {
+        bail!(
+            "dependency #{seq} -> #{on_seq} would deadlock: #{on_seq} finishes only after #{seq} through dependencies or unfinished child tasks"
+        );
+    }
     tx.execute(
         "INSERT INTO deps (task_id, depends_on) VALUES (?1, ?2)",
         params![task.task_id, on.task_id],
@@ -1840,6 +1854,33 @@ fn add_dep_inner(
         )?;
     }
     Ok(())
+}
+
+/// Whether task `from` can finish only after task `target`: `target` is
+/// reachable through dependencies or through unfinished children, which a
+/// task's completion waits for. A task waits for itself.
+pub(crate) fn waits_for(conn: &Connection, from: i64, target: i64) -> Result<bool> {
+    let mut dependencies = conn.prepare("SELECT depends_on FROM deps WHERE task_id=?1")?;
+    let mut children = conn.prepare(
+        "SELECT task_id FROM tasks WHERE parent_id=?1 AND status IN ('proposed','in_progress')",
+    )?;
+    let mut stack = vec![from];
+    let mut seen = HashSet::new();
+    while let Some(current) = stack.pop() {
+        if current == target {
+            return Ok(true);
+        }
+        if !seen.insert(current) {
+            continue;
+        }
+        for statement in [&mut dependencies, &mut children] {
+            let next = statement
+                .query_map(params![current], |row| row.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            stack.extend(next);
+        }
+    }
+    Ok(false)
 }
 
 pub fn remove_dep(conn: &Connection, actor: &str, seq: i64, on_seq: i64, why: &str) -> Result<()> {

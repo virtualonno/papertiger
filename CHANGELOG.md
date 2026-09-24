@@ -6,6 +6,15 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `add --dep`, `dep add` and `edit --parent` refuse an edge that would leave
+  tasks waiting on each other forever: a dependency on the task's own parent,
+  on an ancestor of that parent, or on any task that depends on one of them,
+  and a new parent whose completion the task already waits for. Previously
+  these were accepted, and neither the child nor the parent could ever start
+  or complete until the edge was removed by hand.
+
 ## [0.19.0] - 2026-09-23
 
 Planner schema v13 and Mise schema v10 are unchanged; no `init` is needed.

@@ -924,6 +924,79 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
 }
 
 #[test]
+fn dependencies_that_finish_only_after_their_dependent_are_refused() {
+    let db = TestDatabase::new("wait-for-deadlock");
+    assert_success(&papertiger(&db.0, &["init"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
+    assert_success(&papertiger(&db.0, &["add", "Grandparent"]));
+    assert_success(&papertiger(&db.0, &["add", "Parent", "--parent", "1"]));
+    assert_success(&papertiger(&db.0, &["add", "Downstream", "--dep", "2"]));
+    assert_success(&papertiger(&db.0, &["add", "Child", "--parent", "2"]));
+    assert_success(&papertiger(&db.0, &["add", "Independent"]));
+    let head = |db: &TestDatabase| {
+        let log = papertiger(&db.0, &["log", "--json"]);
+        assert_success(&log);
+        serde_json::from_slice::<serde_json::Value>(&log.stdout).unwrap()["head"].clone()
+    };
+    let before = head(&db);
+    for (args, expected) in [
+        (
+            vec!["add", "New child", "--parent", "2", "--dep", "1"],
+            "dependency #6 -> #1 would deadlock: #1 finishes only after #6",
+        ),
+        (
+            vec!["add", "New child", "--parent", "2", "--dep", "3"],
+            "dependency #6 -> #3 would deadlock: #3 finishes only after #6",
+        ),
+        (
+            vec!["add", "New child", "--parent", "2", "--dep", "2"],
+            "dependency #6 -> #2 would deadlock: #2 finishes only after #6",
+        ),
+        (
+            vec!["dep", "add", "4", "1", "--why", "ancestor"],
+            "dependency #4 -> #1 would deadlock: #1 finishes only after #4",
+        ),
+        (
+            vec!["dep", "add", "4", "3", "--why", "downstream"],
+            "dependency #4 -> #3 would deadlock: #3 finishes only after #4",
+        ),
+        (
+            vec!["dep", "add", "4", "2", "--why", "direct parent"],
+            "dependency #4 -> #2 would deadlock: #2 finishes only after #4",
+        ),
+        (
+            vec!["edit", "3", "--parent", "4", "--why", "nest downstream"],
+            "parent change would deadlock: #3 finishes only after its new parent #4",
+        ),
+    ] {
+        let refused = papertiger(&db.0, &args);
+        assert!(!refused.status.success(), "{args:?} was accepted");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+    }
+    assert_eq!(head(&db), before);
+    assert_success(&papertiger(
+        &db.0,
+        &["dep", "add", "4", "5", "--why", "independent prerequisite"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &[
+            "dep",
+            "add",
+            "2",
+            "4",
+            "--why",
+            "parent already waits for its child",
+        ],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "Sibling", "--parent", "2", "--dep", "4"],
+    ));
+}
+
+#[test]
 fn meaning_provenance_is_correctable_visible_and_transferable() {
     let db = TestDatabase::new("meaning-provenance");
     assert_success(&papertiger(&db.0, &["init"]));
