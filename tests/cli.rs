@@ -252,7 +252,13 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     assert!(current.get("recent_events").is_none());
     assert_eq!(current["history_command"], "papertiger log --task 1 --json");
     assert_eq!(read(&next_args)["tasks"], next["tasks"]);
-    assert_success(&invoke(&["note", "authority changed", "--task", "1"]));
+    assert_success(&invoke(&[
+        "note",
+        "--text",
+        "authority changed",
+        "--task",
+        "1",
+    ]));
     let stale = invoke(&next_args);
     assert!(!stale.status.success());
     assert!(
@@ -1118,6 +1124,7 @@ fn meaning_provenance_is_correctable_visible_and_transferable() {
         &db.0,
         &[
             "note",
+            "--text",
             "operator confirmed the boundary",
             "--task",
             "1",
@@ -2219,7 +2226,7 @@ fn status_show_and_log_do_not_panic_on_noncanonical_short_or_multibyte_timestamp
     assert_success(&papertiger(&db.0, &["add", "task", "--plan", "campaign"]));
     assert_success(&papertiger(
         &db.0,
-        &["note", "historical timestamp", "--task", "1"],
+        &["note", "--text", "historical timestamp", "--task", "1"],
     ));
     let connection = rusqlite::Connection::open(&db.0).expect("open test authority");
     // Explicit API admission for intentional disposable-fixture construction.
@@ -2397,7 +2404,26 @@ fn long_text_files_and_stdin_round_trip_without_losing_intent_clear() {
         &db.0,
         &["done", "1", "--result-file", &result_path],
     ));
-    assert_success(&papertiger(&db.0, &["note", "positional note"]));
+    assert_success(&papertiger(&db.0, &["note", "--text", "inline note"]));
+    let positional = papertiger(&db.0, &["note", "positional note"]);
+    assert!(!positional.status.success());
+    assert!(
+        String::from_utf8_lossy(&positional.stderr).contains("unexpected argument"),
+        "{}",
+        String::from_utf8_lossy(&positional.stderr)
+    );
+    let missing_text = papertiger(&db.0, &["note", "--task", "1"]);
+    assert!(!missing_text.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_text.stderr)
+            .contains("pass --text or --text-file with nonblank text")
+    );
+    let both = papertiger(
+        &db.0,
+        &["note", "--text", "inline", "--text-file", &note_path],
+    );
+    assert!(!both.status.success());
+    assert!(String::from_utf8_lossy(&both.stderr).contains("cannot be used with"));
     assert_success(&papertiger(
         &db.0,
         &["note", "--text-file", &note_path, "--task", "1"],
@@ -2523,6 +2549,7 @@ fn long_text_help_names_utf8_files_and_stdin() {
         .unwrap();
     assert_success(&note);
     let note = String::from_utf8(note.stdout).unwrap();
+    assert!(note.contains("--text <TEXT>"), "{note}");
     assert!(note.contains("--text-file <PATH|->"), "{note}");
     assert!(
         note.contains("Read the note as UTF-8 from PATH, or stdin with '-'"),
@@ -2718,6 +2745,7 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
             "--actor",
             "fresh-session",
             "note",
+            "--text",
             "continued from live state",
             "--task",
             "2",
@@ -2778,7 +2806,7 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     let head_cursor = latest["head"]["token"].as_str().unwrap().to_owned();
     assert_success(&papertiger(
         &db.0,
-        &["note", "event after cursor", "--task", "1"],
+        &["note", "--text", "event after cursor", "--task", "1"],
     ));
     let incremental = papertiger(&db.0, &["log", "--after-cursor", &head_cursor, "--json"]);
     assert_success(&incremental);
@@ -2863,7 +2891,7 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
     }
     for index in 1..=4 {
         let note = format!("note {index}");
-        assert_success(&papertiger(&db.0, &["note", &note]));
+        assert_success(&papertiger(&db.0, &["note", "--text", &note]));
     }
 
     let status = papertiger(&db.0, &["status", "--json"]);

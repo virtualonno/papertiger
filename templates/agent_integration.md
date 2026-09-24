@@ -264,7 +264,8 @@ fails after a successful write, inspect the retained receipt and use read-only
 `changed=false` are distinct from a failed command with no success receipt.
 
 For multi-paragraph text, use the same `<field>-file <path|->` pattern:
-`--intent-file`, `--why-file`, `--result-file`, or `note --text-file`. `-` reads
+`--intent-file`, `--why-file`, `--result-file`, or `note --text-file`; note
+text is inline only as `note --text "..."`, never positional. `-` reads
 stdin. One command may consume stdin for only one field; inline and file forms
 for the same field are mutually exclusive. Explicit empty intent remains the
 way to clear optional orientation; rationale, results, and notes must be

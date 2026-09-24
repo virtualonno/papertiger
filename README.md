@@ -186,6 +186,9 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   and needs no external or separately synchronized index.
 - Probe and decision tasks require `--result` or `--result-file` before they can
   complete.
+- `note --text <text>` or `note --text-file <path|->` records a free-standing
+  evented note, optionally on one task with `--task <N>`; the two text forms
+  are mutually exclusive and one is required.
 - Open dependencies, blockers, gates, and child tasks prevent completion.
 - Every change records an actor and an event; idempotent identified pickup emits none. Actor labels are provenance,
   never assignees, leases, session handles, or liveness signals; unfinished

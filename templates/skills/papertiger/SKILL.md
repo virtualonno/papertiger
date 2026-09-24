@@ -54,7 +54,8 @@ Papertiger and by its outcome everywhere else.
 
 Read rejected history before reviving an approach. Choose `user`, `agent`, or
 `external` for the actual source of intent. Write `--why` for choices a cold
-reader could question. `--intent-file`, `--why-file`, and `--result-file` read
+reader could question. Record a decision with `note --text "..." --task <N>`.
+`--intent-file`, `--why-file`, `--result-file`, and `note --text-file` read
 UTF-8 text when shell quoting becomes awkward.
 
 Don't truncate JSON with head/tail; use `--compact`, `--no-history` or

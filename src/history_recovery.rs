@@ -192,7 +192,7 @@ pub fn quarantine(
     }
     if inspected.problems.is_empty() {
         bail!(
-            "event {event_id} has no supported structural defect; record disagreement with `papertiger note <explanation>` instead of quarantining valid history"
+            "event {event_id} has no supported structural defect; record disagreement with `papertiger note --text <explanation>` instead of quarantining valid history"
         );
     }
     let payload = serde_json::json!({

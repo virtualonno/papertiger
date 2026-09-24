@@ -20,6 +20,13 @@ All notable user-visible changes are documented here. Papertiger follows
   object, exceeds 1 MiB or 256 children, or targets a finished parent or plan
   is refused on its own, naming the command or limit that fixes it.
 
+### Changed
+
+- Breaking: `note` takes its inline text as `--text <text>`, paired with
+  `--text-file <path|->` like `--why`/`--why-file`; the positional text
+  argument is gone. Replace `papertiger note "text"` with
+  `papertiger note --text "text"`. `commit add --note` is unchanged.
+
 ### Fixed
 
 - `add --dep`, `dep add` and `edit --parent` refuse an edge that would leave

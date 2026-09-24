@@ -125,6 +125,16 @@ text_args!(
     "Read the rationale as UTF-8 from PATH, or stdin with '-'",
     required
 );
+text_args!(
+    NoteTextArgs,
+    text,
+    text_file,
+    "text",
+    false,
+    "Note text",
+    "Read the note as UTF-8 from PATH, or stdin with '-'",
+    required
+);
 
 impl IntentArgs {
     pub fn reads_stdin(&self) -> bool {
@@ -154,24 +164,4 @@ pub fn reject_multiple_stdin(fields: &[(&str, bool)]) -> Result<()> {
         );
     }
     Ok(())
-}
-
-#[derive(Debug, Args)]
-pub struct NoteTextArgs {
-    #[arg(value_name = "TEXT", conflicts_with = "text_file", help = "Note text")]
-    pub text: Option<String>,
-    #[arg(
-        long,
-        value_name = "PATH|-",
-        help = "Read the note as UTF-8 from PATH, or stdin with '-'"
-    )]
-    pub text_file: Option<String>,
-}
-
-impl NoteTextArgs {
-    pub fn required(self) -> Result<String> {
-        read_text("text", self.text, self.text_file, false)?.ok_or_else(|| {
-            anyhow::anyhow!("pass note TEXT or note --text-file <path|-> with nonblank text")
-        })
-    }
 }
