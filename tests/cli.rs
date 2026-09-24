@@ -956,11 +956,12 @@ fn dependencies_that_finish_only_after_their_dependent_are_refused() {
         ),
         (
             vec!["dep", "add", "4", "1", "--why", "ancestor"],
-            "dependency #4 -> #1 would deadlock: #1 finishes only after #4",
+            "dependency #4 -> #1 would deadlock: #1 finishes only after #4 (#1 waits for unfinished child #2, which waits for unfinished child #4); choose a prerequisite that does not wait for #4
+",
         ),
         (
             vec!["dep", "add", "4", "3", "--why", "downstream"],
-            "dependency #4 -> #3 would deadlock: #3 finishes only after #4",
+            "dependency #4 -> #3 would deadlock: #3 finishes only after #4 (#3 depends on #2, which waits for unfinished child #4); choose a prerequisite that does not wait for #4, or first remove a dependency in that chain with `papertiger dep remove 3 2 --why <reason>`",
         ),
         (
             vec!["dep", "add", "4", "2", "--why", "direct parent"],
@@ -968,7 +969,7 @@ fn dependencies_that_finish_only_after_their_dependent_are_refused() {
         ),
         (
             vec!["edit", "3", "--parent", "4", "--why", "nest downstream"],
-            "parent change would deadlock: #3 finishes only after its new parent #4",
+            "parent change would deadlock: #3 finishes only after its new parent #4 (#3 depends on #2, which waits for unfinished child #4); choose another parent, or first remove a dependency in that chain with `papertiger dep remove 3 2 --why <reason>`",
         ),
     ] {
         let refused = papertiger(&db.0, &args);

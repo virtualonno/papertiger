@@ -24,7 +24,9 @@ All notable user-visible changes are documented here. Papertiger follows
   on an ancestor of that parent, or on any task that depends on one of them,
   and a new parent whose completion the task already waits for. Previously
   these were accepted, and neither the child nor the parent could ever start
-  or complete until the edge was removed by hand.
+  or complete until the edge was removed by hand. The refusal shows the chain
+  of dependencies and unfinished children that makes the tasks wait, and names
+  the `dep remove` command for each dependency in it.
 
 ## [0.19.0] - 2026-09-23
 

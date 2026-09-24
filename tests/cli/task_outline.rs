@@ -227,7 +227,9 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         "child 7 (\"f\"): dependency #4 belongs to a different plan than parent #3",
         "child 7 (\"f\"): dependency #3 finishes only after parent #3, which waits for this child",
         "child 7 (\"f\"): dependency #2 finishes only after parent #3, which waits for this child",
-        "child 7 (\"f\"): dependency #5 finishes only after parent #3, which waits for this child",
+        "child 7 (\"f\"): dependency #5 finishes only after parent #3, which waits for this child (#5 depends on #3); depend on a task that does not wait for #3, or first remove a dependency in that chain with `papertiger dep remove 5 3 --why <reason>`",
+        "child 7 (\"f\"): dependency #2 finishes only after parent #3, which waits for this child (#2 waits for unfinished child #3); depend on a task that does not wait for #3
+",
         "child 7 (\"f\"): cannot depend on itself",
         "child 7 (\"f\"): dependency #99 does not exist",
         "child 7 (\"f\"): dependency true must be a sibling key string or an existing task number",

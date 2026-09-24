@@ -9,9 +9,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
+use crate::task_graph::{WaitGraph, describe_chain, or_remove_dependency};
 use crate::{
     begin_mutation, get_task, meaning_source_requires_text, parse_task_ref, plan_status,
-    validate_meaning_source, validate_tag, validate_task_kind, validate_task_title, waits_for,
+    validate_meaning_source, validate_tag, validate_task_kind, validate_task_title,
 };
 
 pub const TASK_OUTLINE_SCHEMA: &str = "papertiger.task_outline.v1";
@@ -248,6 +249,8 @@ pub fn decompose_task(
         }
     }
 
+    // Children do not exist yet, so one snapshot answers every wait check.
+    let waits = WaitGraph::load(&tx)?;
     let mut dependencies: Vec<Vec<Dependency>> = Vec::new();
     for (index, entry) in outline.children.iter().enumerate() {
         let label = name(index);
@@ -305,9 +308,15 @@ pub fn decompose_task(
                             "{label}: dependency #{seq} is {}; reopen it or choose a viable prerequisite",
                             task.status
                         ));
-                    } else if waits_for(&tx, task.task_id, parent.task_id)? {
+                    } else if let Some(steps) = waits.chain(seq, parent_seq) {
+                        let chain = if steps.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ({})", describe_chain(seq, &steps))
+                        };
                         problems.push(format!(
-                            "{label}: dependency #{seq} finishes only after parent #{parent_seq}, which waits for this child"
+                            "{label}: dependency #{seq} finishes only after parent #{parent_seq}, which waits for this child{chain}; depend on a task that does not wait for #{parent_seq}{}",
+                            or_remove_dependency(seq, &steps)
                         ));
                     } else {
                         resolved.push(Dependency::Existing(seq));
