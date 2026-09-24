@@ -17,7 +17,8 @@ existing team or domain lifecycle.
 
 Use `<project-root>/tools/papertiger/bin/papertiger[.exe]` in the native
 shell. Keep work in the canonical project that owns the outcome, including
-cross-repository work; from elsewhere pass `--project-root <canonical-root>`.
+cross-repository work; from elsewhere pass `--project-root <canonical-root>` to
+that root's own launcher, since releases can differ during rollouts.
 The runtime selects the existing authority; do not guess `--db`, use PATH, or
 create a second store in a worktree. Without a project runtime, use the
 executable named by your personal Papertiger skill and put the consuming
@@ -45,11 +46,19 @@ to ask permission for requested work.
 papertiger start <N> --why "Why this work resumes" --json
 papertiger add "Outcome" --plan <slug> --start --intent "Standalone purpose" --intent-source user --why "Why now" --json
 papertiger done <N> --result "Outcome and verification" --result-source agent --json
+papertiger decompose <N> --outline-file outline.json --start-ready --json
 ```
 
+Split a multi-part outcome into child tasks with one `decompose` call instead
+of inventing section or phase labels. Refer to local work by task number inside
+Papertiger and by its outcome everywhere else.
+
 Read rejected history before reviving an approach. Choose `user`, `agent`, or
-`external` for the actual source of intent. Write `--why` for choices a cold
-reader could question. `--intent-file`, `--why-file`, and `--result-file` read
+`external` for the actual source of intent. An intent stands alone: fold a
+source plan's substance in (`--intent-file`) instead of citing a scratch file.
+Write `--why` for choices a cold
+reader could question. Record a decision with `note --text "..." --task <N>`.
+`--intent-file`, `--why-file`, `--result-file`, and `note --text-file` read
 UTF-8 text when shell quoting becomes awkward.
 
 Don't truncate JSON with head/tail; use `--compact`, `--no-history` or

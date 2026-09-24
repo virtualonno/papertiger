@@ -1,6 +1,6 @@
 {
   "schema": "papertiger.project_install.v3",
-  "papertiger_version": "0.19.0",
+  "papertiger_version": "0.20.0",
   "authority_path": "state/papertiger.sqlite",
   "skill_targets": [
     "agents",

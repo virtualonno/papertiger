@@ -55,15 +55,18 @@ the receipt's authority; without a receipt, the release bundle's or an
 existing `state/papertiger.sqlite`. It never walks upward or changes the process
 working directory. Without a receipt or bundle it selects only a database that
 already exists; `init` creates only the receipt- or bundle-selected authority. Discovery without
-`--project-root` uses only receipts and release bundles. `PAPERTIGER_DB` or an explicit global `--db`
+`--project-root` uses only receipts and release bundles. Operate each authority
+with its own project launcher, `<canonical-project-root>/tools/papertiger/bin/papertiger[.exe]`,
+because projects can pin different releases during a rollout; a receipt naming
+another release refuses and names that launcher. `PAPERTIGER_DB` or an explicit global `--db`
 deliberately overrides receipt discovery. The installed personal executable falls back to its private
 store only when no project receipt is discovered. It needs no `--db` argument.
 Do not use a raw database override for ordinary
 project selection or split ordinary planning
 across multiple authorities. Ordinary commands refuse combining the receipt
-selector with a database override. `evidence verify` retains that combination
-only so an explicitly selected database can resolve `file:` locators beneath a
-supplied project root.
+selector with a database override. `evidence verify`, `gate resolve` and
+`blocker resolve` retain that combination only so an explicitly selected
+database can verify or bind `file:` locators beneath a supplied project root.
 
 - Many agents and harnesses may use one canonical SQLite authority in its
   planning worktree. Every connection receives one fixed 500 ms SQLite lock
@@ -176,6 +179,13 @@ and fails closed on missing, unhashed, or mismatched bytes. Unsupported locator
 schemes are reported, never counted as verified. Failed bindings include exact
 corrective argument vectors for their evented reopen-and-rebind workflow.
 
+`gate resolve` and `blocker resolve` refuse a new `file:` locator unless it is
+relative to the project root, uses `/` separators, and names an existing
+regular file there whose bytes match any `--sha256` given. Evidence under
+ignored or temporary paths rots, so keep durable text in the authority with
+`note --text-file <path> --task <task>` and resolve with a non-file locator
+such as `note:<summary>`.
+
 A `file:` locator plus SHA-256 is the byte receipt for retained evidence, not a
 Git snapshot. For a commit-backed outcome, bind an immutable audit receipt as
 evidence and record the repository's full commit object ID separately with
@@ -264,7 +274,8 @@ fails after a successful write, inspect the retained receipt and use read-only
 `changed=false` are distinct from a failed command with no success receipt.
 
 For multi-paragraph text, use the same `<field>-file <path|->` pattern:
-`--intent-file`, `--why-file`, `--result-file`, or `note --text-file`. `-` reads
+`--intent-file`, `--why-file`, `--result-file`, or `note --text-file`; note
+text is inline only as `note --text "..."`, never positional. `-` reads
 stdin. One command may consume stdin for only one field; inline and file forms
 for the same field are mutually exclusive. Explicit empty intent remains the
 way to clear optional orientation; rationale, results, and notes must be
@@ -281,6 +292,18 @@ papertiger gate resolve <task.seq> <name> \
   --evidence file:path/to/receipt.json --sha256 <digest>
 papertiger done <task.seq>
 ```
+
+Decompose a multi-part outcome into child tasks with one
+`decompose <parent> --outline-file <path|->` call (`papertiger schema` defines
+`papertiger.task_outline.v1`); its receipt lists one task create event per child
+in outline order. A replay is refused only while the earlier children are still
+live, so check `show <parent>` before retrying. Refer to local work by task
+number inside Papertiger and by its outcome everywhere else; never invent
+section or phase labels for parts of the work.
+
+An intent stands alone: fold a source document's substance into it, for
+example with `--intent-file`, instead of citing a scratch or dated plan file
+that may not survive.
 
 Replacing intent that already has a source requires either a replacement
 `--intent-source` or `--clear-intent-source`; unchanged text keeps its stored
