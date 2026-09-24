@@ -6,6 +6,15 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-24
+
+Planner schema v13 and Mise schema v10 are unchanged; no `init` is needed.
+Upgrade as for 0.19.0: verify the archive against its published `.sha256`,
+then unpack it over the project root or run `setup-project` from the new
+binary. Scripts that call `note "text"` must switch to `note --text "text"`,
+and `file:` evidence passed to `gate resolve` or `blocker resolve` must now
+name an existing file beneath the project root.
+
 ### Added
 
 - `decompose <parent> --outline-file <path|->` creates all of a parent's child
@@ -22,6 +31,10 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Changed
 
+- The installed agent contract and skill teach splitting a multi-part outcome
+  with one `decompose` call instead of inventing section or phase labels,
+  writing intents that stand alone rather than citing scratch or dated plan
+  files, and operating each authority with its own project launcher.
 - Breaking: `note` takes its inline text as `--text <text>`, paired with
   `--text-file <path|->` like `--why`/`--why-file`; the positional text
   argument is gone. Replace `papertiger note "text"` with
@@ -789,7 +802,8 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/virtualonno/papertiger/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/virtualonno/papertiger/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/virtualonno/papertiger/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/virtualonno/papertiger/compare/v0.17.0...v0.17.1
