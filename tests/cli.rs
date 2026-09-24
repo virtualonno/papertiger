@@ -453,6 +453,45 @@ fn init_refuses_json_and_names_its_plain_text_report() {
 struct TestDatabase(PathBuf);
 
 #[test]
+fn orientation_reads_leave_the_authority_bytes_unchanged() {
+    let db = TestDatabase::new("orientation-reads");
+    assert_success(&papertiger(&db.0, &["init"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "Parent outcome", "--plan", "work"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "Child outcome", "--plan", "work", "--parent", "1"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "Later outcome", "--plan", "work", "--dep", "2"],
+    ));
+    let before = std::fs::read(&db.0).unwrap();
+    for args in [
+        &["status"][..],
+        &["status", "--json"],
+        &["focus", "--plan", "work", "--json"],
+        &["list", "--plan", "work", "--json"],
+        &["tree", "--plan", "work"],
+        &["show", "2"],
+        &["show", "2", "--json"],
+        &["search", "outcome", "--json"],
+        &["log", "--json"],
+        &["audit"],
+    ] {
+        assert_success(&papertiger(&db.0, args));
+        assert!(
+            std::fs::read(&db.0).unwrap() == before,
+            "`papertiger {}` changed the authority",
+            args.join(" ")
+        );
+    }
+}
+
+#[test]
 fn reasoning_effort_uses_environment_and_explicit_flags_without_inference() {
     let db = TestDatabase::new("reasoning-effort");
     assert_success(&papertiger(&db.0, &["init"]));
