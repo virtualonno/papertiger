@@ -529,11 +529,20 @@ The Rust toolchain is pinned in `rust-toolchain.toml`.
 cargo build --locked --release --workspace --bins
 ```
 
-Run the complete local verification lane with:
+Run formatting, strict Clippy, workspace tests and release-script checks with:
 
 ```bash
 bash scripts/cross_check.sh
 ```
+
+Run the deterministic Mise lifecycle separately:
+
+```bash
+cargo test -p papertiger-mise --test deterministic_dogfood -- --ignored --test-threads=1
+```
+
+The release workflow also tests installation and removal using the extracted
+archives on native runners. Source checks alone do not qualify an archive.
 
 Release archives are built for Windows x64, Linux x64, Intel macOS, and Apple
 Silicon macOS. Each archive has an adjacent `.sha256` file.
