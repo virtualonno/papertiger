@@ -1342,9 +1342,17 @@ fn run_planner(cli: Cli) -> Result<()> {
             cmd: EvidenceCmd::Verify { .. }
         }
     );
-    if project_root.is_some() && db_override.is_some() && !evidence_verify {
+    let evidence_resolve = matches!(
+        &cli.cmd,
+        Cmd::Gate {
+            cmd: GateCmd::Resolve { .. }
+        } | Cmd::Blocker {
+            cmd: BlockerCmd::Resolve { .. }
+        }
+    );
+    if project_root.is_some() && db_override.is_some() && !evidence_verify && !evidence_resolve {
         bail!(
-            "ordinary planner commands do not accept --project-root together with --db or PAPERTIGER_DB; remove the database override so --project-root selects one canonical authority. `evidence verify` alone retains this combination so an explicitly selected database can verify file: locators beneath a supplied project root"
+            "ordinary planner commands do not accept --project-root together with --db or PAPERTIGER_DB; remove the database override so --project-root selects one canonical authority. `evidence verify`, `gate resolve` and `blocker resolve` alone retain this combination so an explicitly selected database can verify or bind file: locators beneath a supplied project root"
         );
     }
     let db_path = match (db_override, project_root.as_deref()) {
@@ -1927,6 +1935,13 @@ fn run_planner(cli: Cli) -> Result<()> {
                 note,
             } => {
                 let seq = pt::parse_task_ref(&task)?;
+                validate_new_evidence(
+                    &evidence,
+                    sha256.as_deref(),
+                    project_root.as_deref(),
+                    evidence_db_override.is_some(),
+                    &db_path,
+                )?;
                 pt::resolve_gate(
                     &conn,
                     &actor,
@@ -1989,6 +2004,13 @@ fn run_planner(cli: Cli) -> Result<()> {
                 note,
             } => {
                 let seq = pt::parse_task_ref(&task)?;
+                validate_new_evidence(
+                    &evidence,
+                    sha256.as_deref(),
+                    project_root.as_deref(),
+                    evidence_db_override.is_some(),
+                    &db_path,
+                )?;
                 pt::resolve_blocker(
                     &conn,
                     &actor,
@@ -2571,6 +2593,28 @@ fn run_planner(cli: Cli) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&recorder.receipt()?)?);
     }
     Ok(())
+}
+
+/// A new `file:` gate or blocker locator resolves beneath the project root of
+/// the selected authority: the explicit --project-root, else the discovered
+/// project unless a database override bypassed discovery.
+fn validate_new_evidence(
+    evidence: &str,
+    sha256: Option<&str>,
+    project_root: Option<&std::path::Path>,
+    database_override: bool,
+    db_path: &str,
+) -> Result<()> {
+    let project_root = match project_root {
+        Some(root) => Some(root.to_path_buf()),
+        None if database_override => None,
+        None => project_setup::discover_project_root(&std::env::current_dir()?)?,
+    };
+    let authority = std::fs::canonicalize(db_path)
+        .ok()
+        .and_then(|path| pt::portable_absolute(&path).ok())
+        .unwrap_or_else(|| db_path.to_owned());
+    pt::validate_new_file_evidence(evidence, sha256, project_root.as_deref(), &authority)
 }
 
 /// Read a whole input file, or stdin for '-'.

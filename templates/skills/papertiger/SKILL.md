@@ -54,7 +54,9 @@ of inventing section or phase labels. Refer to local work by task number inside
 Papertiger and by its outcome everywhere else.
 
 Read rejected history before reviving an approach. Choose `user`, `agent`, or
-`external` for the actual source of intent. Write `--why` for choices a cold
+`external` for the actual source of intent. An intent stands alone: fold a
+source plan's substance in (`--intent-file`) instead of citing a scratch file.
+Write `--why` for choices a cold
 reader could question. Record a decision with `note --text "..." --task <N>`.
 `--intent-file`, `--why-file`, `--result-file`, and `note --text-file` read
 UTF-8 text when shell quoting becomes awkward.

@@ -226,6 +226,15 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   mismatched evidence. Failed bindings include exact corrective argument
   vectors. Other locator schemes remain explicitly unsupported until they have
   scheme-specific authority-backed verifiers.
+- `gate resolve` and `blocker resolve` refuse a new `file:` locator that is
+  absolute, leaves the project root, or does not name an existing regular file
+  beneath it, using the same path rules as `evidence verify`; with `--sha256`
+  they also refuse a digest that does not match the file's current bytes and
+  name the actual digest. The root is the
+  explicit `--project-root` or the discovered project; an authority selected by
+  `--db`, `PAPERTIGER_DB` or the personal store has none, so a `file:` locator
+  there needs `--project-root`. Import restores stored locators unchecked, and
+  other schemes are accepted as before.
 
 Papertiger is intended for independently reviewable outcomes, separate commits,
 or work with meaningful dependencies and proof obligations. That boundary can
@@ -389,9 +398,9 @@ who wrote an event, not who owns the task now. The native binary defaults to
 the receipt-selected database at the project root. `PAPERTIGER_DB`
 or an explicit global `--db` deliberately overrides that default for
 operational use. Ordinary commands refuse combining those raw database
-overrides with `--project-root`; `evidence verify` alone retains the combination
-so an explicitly selected database can resolve `file:` locators beneath the
-supplied root. Run `init` only when no prior authority should exist; on an
+overrides with `--project-root`; `evidence verify`, `gate resolve` and
+`blocker resolve` alone retain the combination so an explicitly selected
+database can verify or bind `file:` locators beneath the supplied root. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 
 The current planner authority schema is v13. Before migrating an older authority,

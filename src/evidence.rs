@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
@@ -189,66 +189,14 @@ fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerific
         ));
         return add_corrective_commands(result, &binding);
     }
-    let relative = Path::new(value);
-    if relative.as_os_str().is_empty() || relative.is_absolute() {
-        result.status = "invalid_path".into();
-        result.detail = Some(
-            "file: evidence must name a nonblank project-relative path under --project-root".into(),
-        );
-        return add_corrective_commands(result, &binding);
-    }
-    let mut path = root.to_path_buf();
-    for component in relative.components() {
-        match component {
-            Component::Normal(component) => path.push(component),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                result.status = "path_escape".into();
-                result.detail = Some(
-                    "file: evidence cannot contain parent, root, or platform-prefix components"
-                        .into(),
-                );
-                return add_corrective_commands(result, &binding);
-            }
-        }
-    }
-    result.resolved_path = portable_absolute(&path).ok();
-    let metadata = match std::fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            result.status = "missing".into();
-            result.detail = Some(format!("evidence file does not exist: {}", path.display()));
-            return add_corrective_commands(result, &binding);
-        }
-        Err(error) => {
-            result.status = "unreadable".into();
-            result.detail = Some(format!("inspect evidence file {}: {error}", path.display()));
-            return add_corrective_commands(result, &binding);
-        }
-    };
-    if metadata.file_type().is_symlink() {
-        result.status = "symlink".into();
-        result.detail = Some("file: evidence must be a regular file, not a symlink".into());
-        return add_corrective_commands(result, &binding);
-    }
-    if !metadata.is_file() {
-        result.status = "not_regular_file".into();
-        result.detail = Some("file: evidence must be a regular file".into());
-        return add_corrective_commands(result, &binding);
-    }
-    let canonical = match std::fs::canonicalize(&path) {
-        Ok(path) if path.starts_with(root) => path,
-        Ok(path) => {
-            result.status = "path_escape".into();
-            result.detail = Some(format!(
-                "resolved evidence path leaves the project root: {}",
-                path.display()
-            ));
-            return add_corrective_commands(result, &binding);
-        }
-        Err(error) => {
-            result.status = "unreadable".into();
-            result.detail = Some(format!("resolve evidence file {}: {error}", path.display()));
+    let canonical = match resolve_file_evidence(root, value) {
+        Ok(canonical) => canonical,
+        Err(problem) => {
+            result.status = problem.status.into();
+            result.detail = Some(problem.detail);
+            result.resolved_path = problem
+                .resolved_path
+                .and_then(|path| portable_absolute(&path).ok());
             return add_corrective_commands(result, &binding);
         }
     };
@@ -313,6 +261,149 @@ fn verify_binding(root: &Path, binding: StoredBinding) -> EvidenceBindingVerific
     }
     result.status = "verified".into();
     add_corrective_commands(result, &binding)
+}
+
+/// Why a `file:` locator value does not name a regular file beneath the
+/// project root, in `evidence verify` status vocabulary.
+struct FileEvidenceProblem {
+    status: &'static str,
+    detail: String,
+    resolved_path: Option<PathBuf>,
+}
+
+/// Resolve a `file:` locator value to its canonical regular file beneath an
+/// already canonical project root. `evidence verify` and new gate and blocker
+/// resolutions share this one path authority.
+fn resolve_file_evidence(root: &Path, value: &str) -> Result<PathBuf, FileEvidenceProblem> {
+    let problem = |status, detail: String, resolved_path| FileEvidenceProblem {
+        status,
+        detail,
+        resolved_path,
+    };
+    let shown =
+        |path: &Path| portable_absolute(path).unwrap_or_else(|_| path.display().to_string());
+    let relative = Path::new(value);
+    if relative.as_os_str().is_empty() || relative.is_absolute() {
+        return Err(problem(
+            "invalid_path",
+            "file: evidence must name a nonblank path relative to the project root".into(),
+            None,
+        ));
+    }
+    let mut path = root.to_path_buf();
+    for component in relative.components() {
+        match component {
+            Component::Normal(component) => path.push(component),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(problem(
+                    "path_escape",
+                    "file: evidence cannot contain parent, root, or platform-prefix components"
+                        .into(),
+                    None,
+                ));
+            }
+        }
+    }
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let detail = format!("evidence file does not exist: {}", shown(&path));
+            return Err(problem("missing", detail, Some(path)));
+        }
+        Err(error) => {
+            let detail = format!("inspect evidence file {}: {error}", shown(&path));
+            return Err(problem("unreadable", detail, Some(path)));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(problem(
+            "symlink",
+            "file: evidence must be a regular file, not a symlink".into(),
+            Some(path),
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(problem(
+            "not_regular_file",
+            "file: evidence must be a regular file".into(),
+            Some(path),
+        ));
+    }
+    match std::fs::canonicalize(&path) {
+        Ok(canonical) if canonical.starts_with(root) => Ok(canonical),
+        Ok(canonical) => {
+            let detail = format!(
+                "resolved evidence path leaves the project root: {}",
+                shown(&canonical)
+            );
+            Err(problem("path_escape", detail, Some(path)))
+        }
+        Err(error) => {
+            let detail = format!("resolve evidence file {}: {error}", shown(&path));
+            Err(problem("unreadable", detail, Some(path)))
+        }
+    }
+}
+
+/// Refuse a new `file:` evidence locator unless it names an existing regular
+/// file beneath the project root of the authority it is written to and, when a
+/// SHA-256 is supplied, the file's bytes match it. Other schemes pass unchanged. Import does not call this, so stored locators stay
+/// restorable whether or not their files survive.
+pub fn validate_new_file_evidence(
+    locator: &str,
+    sha256: Option<&str>,
+    project_root: Option<&Path>,
+    authority: &str,
+) -> Result<()> {
+    crate::validate_evidence_locator(locator)?;
+    let Some((scheme, value)) = locator.split_once(':') else {
+        return Ok(());
+    };
+    if !scheme.eq_ignore_ascii_case("file") {
+        return Ok(());
+    }
+    let keep_text = "or keep the evidence text in the authority with `done <task> --result-file <path>` or `note --text-file <path> --task <task>`";
+    let Some(project_root) = project_root else {
+        bail!(
+            "evidence {locator:?} names a file, but authority {authority} was selected without a project root (by --db, PAPERTIGER_DB, or the personal store), so the path cannot be checked; rerun with --db \"{authority}\" --project-root <project-root> for the project the path is relative to, {keep_text}"
+        );
+    };
+    let root = std::fs::canonicalize(project_root).with_context(|| {
+        format!(
+            "resolve evidence project root {}; pass --project-root with an existing directory",
+            project_root.display()
+        )
+    })?;
+    if !root.is_dir() {
+        bail!(
+            "evidence project root {} is not a directory; pass --project-root with the project directory",
+            project_root.display()
+        );
+    }
+    let canonical = match resolve_file_evidence(&root, value) {
+        Ok(canonical) => canonical,
+        Err(problem) => bail!(
+            "evidence {locator:?} is refused ({}): {}; pass --evidence file:<path> with a path relative to project root {} that names an existing regular file, {keep_text}",
+            problem.status,
+            problem.detail,
+            portable_absolute(&root)?
+        ),
+    };
+    let Some(expected) = sha256 else {
+        return Ok(());
+    };
+    validate_sha256(expected, "sha256")?;
+    let shown = portable_absolute(&canonical)?;
+    let mut file = File::open(&canonical).with_context(|| format!("open evidence file {shown}"))?;
+    let actual = crate::digest::sha256_reader(&mut file)
+        .with_context(|| format!("read evidence file {shown}"))?;
+    if actual != expected {
+        bail!(
+            "evidence {locator:?} is refused (digest_mismatch): the file's SHA-256 is {actual}, not {expected}; pass --sha256 {actual}, or omit --sha256"
+        );
+    }
+    Ok(())
 }
 
 fn add_corrective_commands(

@@ -1326,6 +1326,8 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
             "file:docs/evidence/proof.json",
             "--sha256",
             &digest,
+            "--project-root",
+            root.to_str().unwrap(),
         ],
     ));
     let root_text = root.to_str().unwrap();
@@ -1404,6 +1406,216 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
 }
 
 #[test]
+fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
+    let root = TestDirectory::new("file-evidence-write");
+    std::fs::create_dir_all(root.0.join("state")).unwrap();
+    std::fs::create_dir_all(root.0.join("docs")).unwrap();
+    std::fs::write(
+        root.0.join("docs/proof.txt"),
+        b"proof
+",
+    )
+    .unwrap();
+    let db = TestDatabase(root.0.join("state/papertiger.sqlite"));
+    let root_text = root.0.to_str().unwrap();
+    let in_project = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_papertiger"))
+            .args(["--project-root", root_text])
+            .args(args)
+            .output()
+            .expect("run papertiger")
+    };
+    let refusal = |output: &Output| {
+        assert!(!output.status.success());
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+    assert_success(&papertiger(&db.0, &["init"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
+    assert_success(&papertiger(&db.0, &["add", "bound", "--plan", "work"]));
+    for gate in ["proof", "commit"] {
+        assert_success(&papertiger(
+            &db.0,
+            &[
+                "gate",
+                "add",
+                "1",
+                gate,
+                "--kind",
+                "review",
+                "--requirement",
+                "retained evidence",
+            ],
+        ));
+    }
+    assert_success(&papertiger(
+        &db.0,
+        &[
+            "blocker",
+            "add",
+            "1",
+            "input",
+            "--condition",
+            "input exists",
+        ],
+    ));
+
+    let unrooted = refusal(&papertiger(
+        &db.0,
+        &[
+            "gate",
+            "resolve",
+            "1",
+            "proof",
+            "--evidence",
+            "file:docs/proof.txt",
+        ],
+    ));
+    assert!(
+        unrooted.contains("was selected without a project root")
+            && unrooted.contains("--project-root <project-root>")
+            && unrooted.contains("note --text-file"),
+        "{unrooted}"
+    );
+    let absolute = format!("file:{}", root.0.join("docs/proof.txt").display());
+    let absolute = refusal(&in_project(&[
+        "gate",
+        "resolve",
+        "1",
+        "proof",
+        "--evidence",
+        &absolute,
+    ]));
+    assert!(absolute.contains("(invalid_path)"), "{absolute}");
+    let escape = refusal(&in_project(&[
+        "gate",
+        "resolve",
+        "1",
+        "proof",
+        "--evidence",
+        "file:../outside.txt",
+    ]));
+    assert!(escape.contains("(path_escape)"), "{escape}");
+    let missing = refusal(&in_project(&[
+        "gate",
+        "resolve",
+        "1",
+        "proof",
+        "--evidence",
+        "file:target/missing.txt",
+    ]));
+    assert!(
+        missing.contains("(missing)")
+            && missing.contains("with a path relative to project root")
+            && missing.contains("--result-file"),
+        "{missing}"
+    );
+    let blocker_missing = refusal(&in_project(&[
+        "blocker",
+        "resolve",
+        "1",
+        "input",
+        "--evidence",
+        "file:docs/input.txt",
+    ]));
+    assert!(blocker_missing.contains("(missing)"), "{blocker_missing}");
+    let gates = in_project(&["gate", "list", "1"]);
+    assert_success(&gates);
+    assert!(!String::from_utf8_lossy(&gates.stdout).contains("[resolved]"));
+
+    let actual = papertiger::sha256(
+        b"proof
+",
+    );
+    let wrong = "a".repeat(64);
+    let mismatch = refusal(&in_project(&[
+        "gate",
+        "resolve",
+        "1",
+        "proof",
+        "--evidence",
+        "file:docs/proof.txt",
+        "--sha256",
+        &wrong,
+    ]));
+    assert!(
+        mismatch.contains("(digest_mismatch)")
+            && mismatch.contains(&format!("the file's SHA-256 is {actual}, not {wrong}"))
+            && mismatch.contains(&format!("pass --sha256 {actual}, or omit --sha256")),
+        "{mismatch}"
+    );
+    let blocker_mismatch = refusal(&in_project(&[
+        "blocker",
+        "resolve",
+        "1",
+        "input",
+        "--evidence",
+        "file:docs/proof.txt",
+        "--sha256",
+        &wrong,
+    ]));
+    assert!(
+        blocker_mismatch.contains("(digest_mismatch)"),
+        "{blocker_mismatch}"
+    );
+    assert_success(&in_project(&[
+        "gate",
+        "resolve",
+        "1",
+        "proof",
+        "--evidence",
+        "file:docs/proof.txt",
+        "--sha256",
+        &actual,
+    ]));
+    let verified = in_project(&[
+        "evidence",
+        "verify",
+        "--task",
+        "1",
+        "--classification",
+        "all",
+        "--json",
+    ]);
+    let verified: serde_json::Value = serde_json::from_slice(&verified.stdout).unwrap();
+    let proof = verified["projection"]["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|binding| binding["name"] == "proof")
+        .expect("proof binding");
+    assert_eq!(proof["status"], "verified");
+    assert_success(&papertiger(
+        &db.0,
+        &[
+            "blocker",
+            "resolve",
+            "1",
+            "input",
+            "--evidence",
+            "file:./docs/proof.txt",
+            "--project-root",
+            root_text,
+        ],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &[
+            "gate",
+            "resolve",
+            "1",
+            "commit",
+            "--evidence",
+            "commit:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
+    ));
+    let mixed = papertiger(&db.0, &["--project-root", root_text, "status"]);
+    assert!(
+        String::from_utf8_lossy(&mixed.stderr)
+            .contains("`evidence verify`, `gate resolve` and `blocker resolve` alone")
+    );
+}
+
+#[test]
 fn evidence_verification_json_is_summary_first_filtered_and_pageable() {
     let root = TestDirectory::new("evidence-pageable");
     std::fs::create_dir(root.0.join("state")).unwrap();
@@ -1414,6 +1626,17 @@ fn evidence_verification_json_is_summary_first_filtered_and_pageable() {
         &db.0,
         &["add", "mixed evidence", "--plan", "work"],
     ));
+    let root_text = root.0.to_str().unwrap();
+    // New file: bindings must name existing files; they go missing afterwards.
+    std::fs::create_dir(root.0.join("docs")).unwrap();
+    for missing in ["docs/missing-a.txt", "docs/missing-b.txt"] {
+        std::fs::write(
+            root.0.join(missing),
+            b"removed after binding
+",
+        )
+        .unwrap();
+    }
     for (name, locator) in [
         ("missing-a", "file:docs/missing-a.txt"),
         ("missing-b", "file:docs/missing-b.txt"),
@@ -1437,11 +1660,22 @@ fn evidence_verification_json_is_summary_first_filtered_and_pageable() {
         ));
         assert_success(&papertiger(
             &db.0,
-            &["gate", "resolve", "1", name, "--evidence", locator],
+            &[
+                "gate",
+                "resolve",
+                "1",
+                name,
+                "--evidence",
+                locator,
+                "--project-root",
+                root_text,
+            ],
         ));
     }
+    for missing in ["docs/missing-a.txt", "docs/missing-b.txt"] {
+        std::fs::remove_file(root.0.join(missing)).unwrap();
+    }
 
-    let root_text = root.0.to_str().unwrap();
     let first = papertiger(
         &db.0,
         &[

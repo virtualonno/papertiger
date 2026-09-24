@@ -17,7 +17,10 @@ pub use export_file::{ExportFileReceipt, write_export_file};
 mod backup;
 pub use backup::{BackupReceipt, backup_authority};
 mod evidence;
-pub use evidence::{CorrectiveCommand, EvidenceBindingVerification, EvidenceClassification};
+pub use evidence::{
+    CorrectiveCommand, EvidenceBindingVerification, EvidenceClassification,
+    validate_new_file_evidence,
+};
 mod evidence_projection;
 pub use evidence_projection::{
     DEFAULT_EVIDENCE_PAGE, EvidenceClassificationFilter, EvidenceTaskStateFilter,
@@ -2576,7 +2579,7 @@ fn resolve_open_gate_then(
     Ok(())
 }
 
-fn validate_evidence_locator(locator: &str) -> Result<()> {
+pub(crate) fn validate_evidence_locator(locator: &str) -> Result<()> {
     let Some((scheme, value)) = locator.split_once(':') else {
         bail!(
             "evidence locator '{locator}' must be scheme:value (e.g. file:runtime/evidence/x.json)"

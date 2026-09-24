@@ -26,6 +26,17 @@ All notable user-visible changes are documented here. Papertiger follows
   `--text-file <path|->` like `--why`/`--why-file`; the positional text
   argument is gone. Replace `papertiger note "text"` with
   `papertiger note --text "text"`. `commit add --note` is unchanged.
+- `gate resolve` and `blocker resolve` refuse a new `file:` evidence locator
+  that is absolute, leaves the project root, or does not name an existing
+  regular file beneath it, with the same path rules `evidence verify` applies,
+  and with `--sha256` they refuse a digest that does not match the file's
+  current bytes, naming the actual digest to pass instead.
+  The root is `--project-root` or the discovered project. With `--db`,
+  `PAPERTIGER_DB` or the personal store there is no root, so pass
+  `--project-root <root>` alongside the database override (now accepted for
+  these two commands, as for `evidence verify`), or keep the text in the
+  authority with `--result-file` or `note --text-file`. Stored locators and
+  import are unaffected; other schemes are accepted as before.
 
 ### Fixed
 

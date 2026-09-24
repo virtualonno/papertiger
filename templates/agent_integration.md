@@ -64,9 +64,9 @@ store only when no project receipt is discovered. It needs no `--db` argument.
 Do not use a raw database override for ordinary
 project selection or split ordinary planning
 across multiple authorities. Ordinary commands refuse combining the receipt
-selector with a database override. `evidence verify` retains that combination
-only so an explicitly selected database can resolve `file:` locators beneath a
-supplied project root.
+selector with a database override. `evidence verify`, `gate resolve` and
+`blocker resolve` retain that combination only so an explicitly selected
+database can verify or bind `file:` locators beneath a supplied project root.
 
 - Many agents and harnesses may use one canonical SQLite authority in its
   planning worktree. Every connection receives one fixed 500 ms SQLite lock
@@ -178,6 +178,12 @@ one stable byte read beneath the project root, rejects escapes and symlinks,
 and fails closed on missing, unhashed, or mismatched bytes. Unsupported locator
 schemes are reported, never counted as verified. Failed bindings include exact
 corrective argument vectors for their evented reopen-and-rebind workflow.
+
+`gate resolve` and `blocker resolve` refuse a new `file:` locator unless it is
+relative to the project root and names an existing regular file there whose
+bytes match any `--sha256` given; evidence
+under ignored or temporary paths rots, so keep durable text in the authority
+with `--result-file` or `note --text-file` instead.
 
 A `file:` locator plus SHA-256 is the byte receipt for retained evidence, not a
 Git snapshot. For a commit-backed outcome, bind an immutable audit receipt as
@@ -293,6 +299,10 @@ in outline order. A replay is refused only while the earlier children are still
 live, so check `show <parent>` before retrying. Refer to local work by task
 number inside Papertiger and by its outcome everywhere else; never invent
 section or phase labels for parts of the work.
+
+An intent stands alone: fold a source document's substance into it, for
+example with `--intent-file`, instead of citing a scratch or dated plan file
+that may not survive.
 
 Replacing intent that already has a source requires either a replacement
 `--intent-source` or `--clear-intent-source`; unchanged text keeps its stored
