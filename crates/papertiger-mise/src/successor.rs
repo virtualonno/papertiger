@@ -16,7 +16,6 @@ use crate::promotion::{PromotionGateBinding, VerifiedPapertigerGate, verify_pape
 use crate::state::EvidenceGrade;
 use crate::store::AdmissionOutcome;
 
-pub const PARENT_PROMOTION_PROOF_SCHEMA_V2: &str = "papertiger-mise.parent_promotion_proof.v2";
 pub const PARENT_PROMOTION_PROOF_SCHEMA_V3: &str = "papertiger-mise.parent_promotion_proof.v3";
 pub const SUCCESSOR_ADMISSION_SCOPE_V1: &str = "development_successor_admission_only";
 
@@ -79,14 +78,13 @@ impl ParentPromotionProof {
     }
 
     fn validate(&self) -> Result<()> {
-        if !matches!(
-            self.schema.as_str(),
-            PARENT_PROMOTION_PROOF_SCHEMA_V2 | PARENT_PROMOTION_PROOF_SCHEMA_V3
-        ) {
-            bail!(
-                "unsupported parent promotion proof schema '{}' (expected '{PARENT_PROMOTION_PROOF_SCHEMA_V2}' or '{PARENT_PROMOTION_PROOF_SCHEMA_V3}')",
-                self.schema
-            );
+        if self.schema != PARENT_PROMOTION_PROOF_SCHEMA_V3 {
+            return Err(crate::schema_ids::schema_refusal(
+                "parent promotion proof",
+                &self.schema,
+                PARENT_PROMOTION_PROOF_SCHEMA_V3,
+                "derive a new proof with `papertiger-mise promotion derive-parent --nomination <id> --successor-manifest <manifest.json>`",
+            ));
         }
         if self.scope != SUCCESSOR_ADMISSION_SCOPE_V1 {
             bail!("parent promotion proof is not scoped to successor admission only");
@@ -112,13 +110,6 @@ impl ParentPromotionProof {
             validate_sha256(digest, field)?;
         }
         match self.schema.as_str() {
-            PARENT_PROMOTION_PROOF_SCHEMA_V2 => {
-                if !self.promoted_judge_build_trial_receipts.is_empty()
-                    || self.promoted_judge_executable_sha256.is_some()
-                {
-                    bail!("historical v1 parent proof cannot claim a judge build receipt");
-                }
-            }
             PARENT_PROMOTION_PROOF_SCHEMA_V3 => {
                 if self.promoted_judge_build_trial_receipts.is_empty() {
                     bail!("v2 parent proof requires at least one judge-build trial receipt");
@@ -551,7 +542,7 @@ mod tests {
 
     fn proof_with_grade(grade: EvidenceGrade) -> ParentPromotionProof {
         ParentPromotionProof {
-            schema: PARENT_PROMOTION_PROOF_SCHEMA_V2.to_owned(),
+            schema: PARENT_PROMOTION_PROOF_SCHEMA_V3.to_owned(),
             scope: SUCCESSOR_ADMISSION_SCOPE_V1.to_owned(),
             parent_campaign_id: "parent-campaign".to_owned(),
             parent_manifest_sha256: "1".repeat(64),
@@ -572,8 +563,8 @@ mod tests {
             successor_recursion_depth: 1,
             successor_outer_judge_executable_locator: "C:/mise.exe".to_owned(),
             successor_outer_judge_executable_sha256: "8".repeat(64),
-            promoted_judge_build_trial_receipts: Vec::new(),
-            promoted_judge_executable_sha256: None,
+            promoted_judge_build_trial_receipts: vec!["9".repeat(64)],
+            promoted_judge_executable_sha256: Some("8".repeat(64)),
             successor_budget_debit: vec![BudgetLimit {
                 resource: BudgetResource::Trials,
                 hard_limit: 1,

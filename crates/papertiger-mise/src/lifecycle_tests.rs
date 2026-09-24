@@ -123,7 +123,8 @@ fn rust_trial_environment_is_fresh_offline_and_trial_scoped() {
     assert!(error.to_string().contains("already exists"), "{error:#}");
 }
 use crate::budget::{BudgetRequest, BudgetResource, BudgetSettlement, reserve_budget};
-use crate::candidate::{CandidateProposal, Hypothesis, bind_legacy_patch_candidate};
+use crate::candidate::tests::{empty_material, modify_regular_file};
+use crate::candidate::{CandidateProposal, Hypothesis, bind_candidate};
 use crate::object::preserve_object;
 use crate::store::{CampaignAdmission, admit_campaign, init};
 
@@ -271,7 +272,7 @@ fn prepared_with_evaluator_request_and_frozen_rust_inputs(
             minimum_practical_change: 0.0,
             regression_tolerance: 0.0,
             acceptance_threshold: None,
-            measurement: None,
+            measurement: Some(crate::measurement::tests::contract("padding")),
             target_value: None,
         });
     }
@@ -280,6 +281,7 @@ fn prepared_with_evaluator_request_and_frozen_rust_inputs(
             manifest.evaluator.environment.insert(key.to_owned(), value);
         }
     }
+    configure_lifecycle_evaluator_output(&mut manifest, extra_objectives == 0);
     manifest
         .holdouts
         .tiers
@@ -389,11 +391,11 @@ fn prepared_with_evaluator_request_and_frozen_rust_inputs(
         semantic_class: "fixture-change".to_owned(),
         differentiator: None,
     };
-    let candidate = bind_legacy_patch_candidate(
-            proposal,
-            b"diff --git a/src/fixture.rs b/src/fixture.rs\n--- a/src/fixture.rs\n+++ b/src/fixture.rs\n@@ -1 +1 @@\n-old\n+new\n".to_vec(),
-        )
-        .expect("candidate");
+    let candidate = bind_candidate(
+        proposal,
+        modify_regular_file("src/fixture.rs", b"old\n", b"new\n"),
+    )
+    .expect("candidate");
     reserve_budget(
         &connection,
         "test",
@@ -412,22 +414,101 @@ fn prepared_with_evaluator_request_and_frozen_rust_inputs(
     (connection, objects, candidate)
 }
 
-#[test]
-fn public_candidate_record_refuses_legacy_patch_writes() {
-    let (connection, objects, candidate) = prepared();
-    let object = preserve_object(objects.path(), &candidate.material_bytes).expect("legacy patch");
-    let error = record_candidate(
-        &connection,
-        "test",
-        objects.path(),
-        "candidate-budget",
-        &candidate,
-        &object,
-    )
-    .expect_err("public API must not mint new legacy patch candidates");
-    assert!(
-        error.to_string().contains("candidate build-material"),
-        "{error:#}"
+/// Attach fixture provenance to every observation of an admitted objective.
+fn with_fixture_provenance(
+    manifest: &CampaignManifest,
+    observations: &mut [DeterministicObservation],
+    revisions: (&str, &str),
+    fixture_sha256: &str,
+    environment_sha256: &str,
+) {
+    for observation in observations {
+        let contract = manifest
+            .objectives
+            .iter()
+            .find(|objective| objective.key == observation.objective)
+            .and_then(|objective| objective.measurement.as_ref())
+            .expect("admitted measurement contract");
+        observation.provenance = Some(crate::measurement::tests::provenance(
+            contract,
+            revisions,
+            fixture_sha256,
+            environment_sha256,
+            (observation.baseline, observation.candidate),
+        ));
+    }
+}
+
+/// Bind every objective's measurement to the lifecycle evaluator and give it
+/// the canonical v3 output it fills with per-trial runtime values.
+fn configure_lifecycle_evaluator_output(manifest: &mut CampaignManifest, render_output: bool) {
+    let executable_name = Path::new(&manifest.evaluator.launcher_locator)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("launcher filename")
+        .to_owned();
+    for objective in &mut manifest.objectives {
+        objective
+            .measurement
+            .as_mut()
+            .expect("objective measurement")
+            .executable_name
+            .clone_from(&executable_name);
+    }
+    if !render_output {
+        return;
+    }
+    let process = crate::measurement::MeasuredProcess {
+        pid: 4_242_424_242,
+        birth_identity: "lifecycle-fixture-self-reported".to_owned(),
+        executable_locator: "@@executable_locator@@".to_owned(),
+        executable_sha256: manifest.evaluator.launcher_sha256.0.clone(),
+    };
+    let mut objectives = manifest.objectives.clone();
+    objectives.sort_by(|left, right| left.key.cmp(&right.key));
+    let observations = objectives
+        .iter()
+        .map(|objective| {
+            let (baseline, candidate) = match objective.key.as_str() {
+                "latency-ms" => (10.0, 8.0),
+                "tests-pass" => (1.0, 1.0),
+                other => panic!("lifecycle evaluator has no value for objective '{other}'"),
+            };
+            let contract = objective.measurement.as_ref().expect("measurement");
+            DeterministicObservation {
+                objective: objective.key.clone(),
+                baseline,
+                candidate,
+                provenance: Some(crate::measurement::ObservationProvenance {
+                    baseline: crate::measurement::tests::fixture_sample(
+                        contract,
+                        &process,
+                        "@@baseline_result_tree@@",
+                        "@@fixture_sha256@@",
+                        "@@environment_sha256@@",
+                        baseline,
+                    ),
+                    candidate: crate::measurement::tests::fixture_sample(
+                        contract,
+                        &process,
+                        "@@candidate_result_tree@@",
+                        "@@fixture_sha256@@",
+                        "@@environment_sha256@@",
+                        candidate,
+                    ),
+                }),
+            }
+        })
+        .collect();
+    let output = DeterministicEvaluatorOutput {
+        schema: "papertiger-mise.deterministic_evaluator_output.v3".to_owned(),
+        observations,
+        reason_code: None,
+        judge_build: None,
+    };
+    manifest.evaluator.environment.insert(
+        "PAPERTIGER_MISE_LIFECYCLE_FIXTURE_OUTPUT_TEMPLATE".to_owned(),
+        serde_json::to_string(&output).expect("output template"),
     );
 }
 
@@ -486,28 +567,23 @@ fn fake_materialization(
         None,
     )
     .expect("fixture worktree");
-    if !candidate.material_bytes.is_empty() {
-        git_run(
-            &worktree,
-            &["apply", "--index", "--whitespace=nowarn", "-"],
-            None,
-            None,
-            Some(&candidate.material_bytes),
-        )
-        .expect("fixture patch");
-    }
+    crate::git_materialization::apply_candidate_material(
+        &manifest,
+        &candidate.material_bytes,
+        &worktree,
+    )
+    .expect("fixture material");
     let result_tree = git_text(&worktree, &["write-tree"])
         .expect("fixture result tree")
         .trim()
         .to_owned();
     let receipt = MaterializationReceipt {
-        schema: "papertiger-mise.materialization.v3".to_owned(),
+        schema: "papertiger-mise.materialization.v4".to_owned(),
         campaign_id: candidate.proposal.campaign_id.clone(),
         candidate_id: candidate.candidate_id.clone(),
         base_commit: manifest.source.base_commit,
         base_tree: manifest.source.base_tree,
-        patch_sha256: Some(candidate.material_sha256.clone()),
-        material_sha256: None,
+        material_sha256: candidate.material_sha256.clone(),
         result_tree: result_tree.clone(),
         worktree_locator: canonical_or_pending_absolute(&worktree).expect("worktree locator"),
         adapter_sha256: candidate.proposal.adapter_sha256.clone(),
@@ -622,14 +698,15 @@ fn prepared_trial_with_evaluator_request_and_frozen_rust_inputs(
         extra_objectives,
         freeze_rust_inputs,
     );
-    let patch = preserve_object(objects.path(), &candidate.material_bytes).expect("patch object");
-    record_legacy_candidate_for_test(
+    let material =
+        preserve_object(objects.path(), &candidate.material_bytes).expect("material object");
+    record_candidate(
         &connection,
         "test",
         objects.path(),
         "candidate-budget",
         &candidate,
-        &patch,
+        &material,
     )
     .expect("candidate");
     let candidate_materialization = fake_materialization(
@@ -640,9 +717,9 @@ fn prepared_trial_with_evaluator_request_and_frozen_rust_inputs(
     );
     let manifest =
         campaign_manifest(&connection, &candidate.proposal.campaign_id).expect("manifest");
-    let no_op = bind_legacy_patch_candidate(
+    let no_op = bind_candidate(
         proposal_for(&manifest, "calibration-no-op", BTreeSet::new()),
-        Vec::new(),
+        empty_material(),
     )
     .expect("no-op");
     reserve_budget(
@@ -652,12 +729,17 @@ fn prepared_trial_with_evaluator_request_and_frozen_rust_inputs(
         "baseline-candidate-budget",
         &[
             BudgetRequest::new(BudgetResource::Candidates, 1).expect("candidate"),
-            BudgetRequest::new(BudgetResource::ArtifactBytes, 1).expect("artifact"),
+            BudgetRequest::new(
+                BudgetResource::ArtifactBytes,
+                u64::try_from(no_op.material_bytes.len()).expect("no-op material size"),
+            )
+            .expect("artifact"),
         ],
     )
     .expect("baseline reserve");
-    let no_op_object = preserve_object(objects.path(), &[]).expect("no-op object");
-    record_legacy_candidate_for_test(
+    let no_op_object =
+        preserve_object(objects.path(), &no_op.material_bytes).expect("no-op object");
+    record_candidate(
         &connection,
         "test",
         objects.path(),
@@ -1035,16 +1117,15 @@ fn prepared_git_materialization() -> (
     let admission = CampaignAdmission::from_manifest(&manifest).expect("admission");
     admit_campaign(&connection, "test", &admission).expect("campaign");
 
-    let candidate = bind_legacy_patch_candidate(
-            proposal_for(
-                &manifest,
-                "fixture-change",
-                BTreeSet::from(["src/fixture.rs".to_owned()]),
-            ),
-            b"diff --git a/src/fixture.rs b/src/fixture.rs\n--- a/src/fixture.rs\n+++ b/src/fixture.rs\n@@ -1 +1 @@\n-old\n+new\n"
-                .to_vec(),
-        )
-        .expect("candidate");
+    let candidate = bind_candidate(
+        proposal_for(
+            &manifest,
+            "fixture-change",
+            BTreeSet::from(["src/fixture.rs".to_owned()]),
+        ),
+        modify_regular_file("src/fixture.rs", b"old\n", b"new\n"),
+    )
+    .expect("candidate");
     reserve_budget(
         &connection,
         "test",
@@ -1061,14 +1142,15 @@ fn prepared_git_materialization() -> (
     )
     .expect("candidate reservation");
     let objects = tempdir().expect("objects");
-    let patch = preserve_object(objects.path(), &candidate.material_bytes).expect("patch object");
-    record_legacy_candidate_for_test(
+    let material =
+        preserve_object(objects.path(), &candidate.material_bytes).expect("material object");
+    record_candidate(
         &connection,
         "test",
         objects.path(),
         "candidate-budget",
         &candidate,
-        &patch,
+        &material,
     )
     .expect("record candidate");
     reserve_budget(
@@ -1088,26 +1170,27 @@ fn prepared_git_materialization() -> (
 #[test]
 fn candidate_identity_and_budget_use_are_exactly_replayable() {
     let (connection, objects, candidate) = prepared();
-    let patch = preserve_object(objects.path(), &candidate.material_bytes).expect("patch object");
+    let material =
+        preserve_object(objects.path(), &candidate.material_bytes).expect("material object");
     assert!(
-        record_legacy_candidate_for_test(
+        record_candidate(
             &connection,
             "test",
             objects.path(),
             "candidate-budget",
             &candidate,
-            &patch,
+            &material,
         )
         .expect("record candidate")
     );
     assert!(
-        !record_legacy_candidate_for_test(
+        !record_candidate(
             &connection,
             "test",
             objects.path(),
             "candidate-budget",
             &candidate,
-            &patch,
+            &material,
         )
         .expect("record replay")
     );
@@ -1123,15 +1206,16 @@ fn candidate_identity_and_budget_use_are_exactly_replayable() {
 #[test]
 fn caller_constructed_candidate_fields_cannot_bypass_canonical_binding() {
     let (connection, objects, mut candidate) = prepared();
-    let patch = preserve_object(objects.path(), &candidate.material_bytes).expect("patch object");
+    let material =
+        preserve_object(objects.path(), &candidate.material_bytes).expect("material object");
     candidate.candidate_id = "f".repeat(64);
-    let error = record_legacy_candidate_for_test(
+    let error = record_candidate(
         &connection,
         "test",
         objects.path(),
         "candidate-budget",
         &candidate,
-        &patch,
+        &material,
     )
     .expect_err("forged public candidate fields must be refused");
     assert!(
@@ -1143,63 +1227,6 @@ fn caller_constructed_candidate_fields_cannot_bypass_canonical_binding() {
             .expect("candidate query")
             .is_none()
     );
-}
-
-#[test]
-fn candidate_mode_transitions_are_refused_before_materialization() {
-    let (connection, objects, candidate) = prepared();
-    let mode_patch = b"diff --git a/src/fixture.rs b/src/fixture.rs\nold mode 100644\nnew mode 120000\n--- a/src/fixture.rs\n+++ b/src/fixture.rs\n@@ -1 +1 @@\n-old\n+outside\n"
-            .to_vec();
-    let mode_candidate =
-        bind_legacy_patch_candidate(candidate.proposal, mode_patch).expect("mode candidate");
-    reserve_budget(
-        &connection,
-        "test",
-        &mode_candidate.proposal.campaign_id,
-        "mode-candidate-budget",
-        &[
-            BudgetRequest::new(BudgetResource::Candidates, 1).expect("candidate"),
-            BudgetRequest::new(
-                BudgetResource::ArtifactBytes,
-                u64::try_from(mode_candidate.material_bytes.len()).expect("patch size"),
-            )
-            .expect("artifact"),
-        ],
-    )
-    .expect("mode reservation");
-    let object = preserve_object(objects.path(), &mode_candidate.material_bytes).expect("patch");
-    let error = record_legacy_candidate_for_test(
-        &connection,
-        "test",
-        objects.path(),
-        "mode-candidate-budget",
-        &mode_candidate,
-        &object,
-    )
-    .expect_err("mode transition must be refused");
-    assert!(error.to_string().contains("mode records"), "{error:#}");
-}
-
-#[test]
-fn v1_patch_grammar_refuses_new_file_and_deletion_markers_directly() {
-    let (_, _, candidate) = prepared();
-    for (label, patch) in [
-        (
-            "new-file",
-            b"diff --git a/src/fixture.rs b/src/fixture.rs\n--- /dev/null\n+++ b/src/fixture.rs\n@@ -0,0 +1 @@\n+new\n"
-                .as_slice(),
-        ),
-        (
-            "deletion",
-            b"diff --git a/src/fixture.rs b/src/fixture.rs\n--- a/src/fixture.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n"
-                .as_slice(),
-        ),
-    ] {
-        let candidate =
-            bind_legacy_patch_candidate(candidate.proposal.clone(), patch.to_vec()).expect("candidate binding");
-        let error = exact_patch_paths(&candidate).expect_err("v1 /dev/null marker must fail");
-        assert!(error.to_string().contains("/dev/null"), "{label}: {error:#}");
-    }
 }
 
 #[test]
@@ -2728,16 +2755,15 @@ fn record_fixture_candidate(
     manifest: &CampaignManifest,
     reservation_id: &str,
     semantic_class: &str,
-    patch_bytes: Vec<u8>,
+    material_bytes: Vec<u8>,
 ) -> BoundCandidate {
-    let changed_paths = if patch_bytes.is_empty() {
-        BTreeSet::new()
-    } else {
-        BTreeSet::from(["src/fixture.rs".to_owned()])
-    };
-    let candidate = bind_legacy_patch_candidate(
+    let changed_paths = crate::candidate::CandidateMaterial::parse_canonical(&material_bytes)
+        .expect("fixture material")
+        .scope
+        .changed_paths;
+    let candidate = bind_candidate(
         proposal_for(manifest, semantic_class, changed_paths),
-        patch_bytes,
+        material_bytes,
     )
     .expect("bind fixture candidate");
     reserve_budget(
@@ -2749,16 +2775,14 @@ fn record_fixture_candidate(
             BudgetRequest::new(BudgetResource::Candidates, 1).expect("candidate request"),
             BudgetRequest::new(
                 BudgetResource::ArtifactBytes,
-                u64::try_from(candidate.material_bytes.len())
-                    .expect("patch size")
-                    .max(1),
+                u64::try_from(candidate.material_bytes.len()).expect("material size"),
             )
             .expect("patch artifact request"),
         ],
     )
     .expect("reserve fixture candidate");
     let object = preserve_object(objects, &candidate.material_bytes).expect("patch object");
-    record_legacy_candidate_for_test(
+    record_candidate(
         connection,
         "test",
         objects,
@@ -2793,7 +2817,7 @@ fn complete_fixture_trial(
         BudgetRequest::new(BudgetResource::Trials, 1).expect("trial request"),
         BudgetRequest::new(BudgetResource::Failures, 1).expect("failure request"),
         BudgetRequest::new(BudgetResource::WallTimeMilliseconds, 100).expect("wall request"),
-        BudgetRequest::new(BudgetResource::ArtifactBytes, 4_096).expect("artifact request"),
+        BudgetRequest::new(BudgetResource::ArtifactBytes, 64 * 1024).expect("artifact request"),
     ];
     if !calibration {
         requests.push(
@@ -2839,6 +2863,8 @@ fn complete_fixture_trial(
         owner_uuid: format!("owner-{trial_id}"),
         supervisor_identity: format!("supervisor-{trial_id}"),
     };
+    let environment_sha256 =
+        sha256(&serde_json::to_vec(&intent.environment).expect("environment bytes"));
     record_trial_intent(connection, "test", &intent).expect("trial intent");
     mark_trial_launched(
         connection,
@@ -2875,6 +2901,13 @@ fn complete_fixture_trial(
             .0
             .clone()
     };
+    with_fixture_provenance(
+        manifest,
+        &mut observations,
+        (&baseline.result_tree, &materialization.result_tree),
+        &fixture_sha256,
+        &environment_sha256,
+    );
     let mut measured_usage = vec![
         BudgetSettlement {
             resource: BudgetResource::Trials,
@@ -2896,8 +2929,8 @@ fn complete_fixture_trial(
         });
     }
     let receipt = TrialReceipt {
-        schema: "papertiger-mise.trial_receipt.v2".to_owned(),
-        environment_sha256: None,
+        schema: DETERMINISTIC_TRIAL_RECEIPT_SCHEMA.to_owned(),
+        environment_sha256: Some(environment_sha256),
         judge_build: None,
         trial_id: trial_id.to_owned(),
         campaign_id: manifest.campaign_id.clone(),
@@ -3098,8 +3131,8 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
     let mise_path = objects.path().join("mise.sqlite");
     let connection = Connection::open(&mise_path).expect("database");
     init(&connection).expect("schema");
-    let known_bad_patch = b"diff --git a/src/fixture.rs b/src/fixture.rs\n--- a/src/fixture.rs\n+++ b/src/fixture.rs\n@@ -1 +1 @@\n-old\n+known-bad\n".to_vec();
-    let improved_patch = b"diff --git a/src/fixture.rs b/src/fixture.rs\n--- a/src/fixture.rs\n+++ b/src/fixture.rs\n@@ -1 +1 @@\n-old\n+improved\n".to_vec();
+    let known_bad_material = modify_regular_file("src/fixture.rs", b"old\n", b"known-bad\n");
+    let improved_material = modify_regular_file("src/fixture.rs", b"old\n", b"improved\n");
     let mut manifest = crate::manifest::tests::valid_manifest();
     let source = objects.path().join("source");
     let runs = objects.path().join("runs");
@@ -3147,13 +3180,7 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
         canonical_or_pending_absolute(&runs).expect("runs locator");
     manifest.calibration.no_op.minimum_repetitions = 2;
     manifest.calibration.known_bad.minimum_repetitions = 1;
-    manifest
-        .calibration
-        .known_bad
-        .candidate_patch_sha256
-        .as_mut()
-        .expect("legacy known-bad patch")
-        .0 = sha256(&known_bad_patch);
+    manifest.calibration.known_bad.candidate_material_sha256.0 = sha256(&known_bad_material);
     let admission = CampaignAdmission::from_manifest(&manifest).expect("admission");
     admit_campaign(&connection, "test", &admission).expect("campaign");
 
@@ -3163,7 +3190,7 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
         &manifest,
         "candidate-no-op",
         "calibration-no-op",
-        Vec::new(),
+        empty_material(),
     );
     let known_bad = record_fixture_candidate(
         &connection,
@@ -3171,7 +3198,7 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
         &manifest,
         "candidate-known-bad",
         "calibration-known-bad",
-        known_bad_patch,
+        known_bad_material,
     );
     let improved = record_fixture_candidate(
         &connection,
@@ -3179,7 +3206,7 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
         &manifest,
         "candidate-improved",
         "bounded-improvement",
-        improved_patch,
+        improved_material,
     );
     let flat = vec![
         DeterministicObservation {

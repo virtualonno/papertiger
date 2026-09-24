@@ -213,11 +213,11 @@ fn main() -> Result<()> {
             allowlist: vec![SCORE_PATH.to_owned()],
             protected_paths: vec!["fixtures/mise".to_owned()],
         },
-        candidate_material: Some(CandidateMaterialContract {
+        candidate_material: CandidateMaterialContract {
             kind: "git_change_set".to_owned(),
             protocol: GIT_CHANGE_SET_PROTOCOL_V2.to_owned(),
             media_type: GIT_CHANGE_SET_MEDIA_TYPE.to_owned(),
-        }),
+        },
         adapter: AdapterBinding {
             name: "synthetic-score".to_owned(),
             protocol: "papertiger-mise.adapter.v2".to_owned(),
@@ -323,19 +323,15 @@ fn main() -> Result<()> {
         },
         calibration: CalibrationRequirements {
             no_op: NoOpCalibration {
-                candidate_patch_sha256: None,
-                candidate_material_sha256: Some(Sha256Digest(
-                    no_op.candidate.material_sha256.clone(),
-                )),
+                candidate_material_sha256: Sha256Digest(no_op.candidate.material_sha256.clone()),
                 fixture_locator: "fixtures/mise/calibration-no-op.json".to_owned(),
                 fixture_sha256: Sha256Digest(no_op_sha),
                 minimum_repetitions: 16,
             },
             known_bad: KnownBadCalibration {
-                candidate_patch_sha256: None,
-                candidate_material_sha256: Some(Sha256Digest(
+                candidate_material_sha256: Sha256Digest(
                     known_bad.candidate.material_sha256.clone(),
-                )),
+                ),
                 fixture_locator: "fixtures/mise/calibration-known-bad.json".to_owned(),
                 fixture_sha256: Sha256Digest(known_bad_fixture_sha),
                 minimum_repetitions: 16,

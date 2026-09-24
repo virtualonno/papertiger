@@ -674,11 +674,11 @@ impl DogfoodFixture {
                 allowlist: vec!["src".to_owned()],
                 protected_paths: vec!["fixtures/mise".to_owned()],
             },
-            candidate_material: Some(CandidateMaterialContract {
+            candidate_material: CandidateMaterialContract {
                 kind: "git_change_set".to_owned(),
                 protocol: GIT_CHANGE_SET_PROTOCOL_V2.to_owned(),
                 media_type: GIT_CHANGE_SET_MEDIA_TYPE.to_owned(),
-            }),
+            },
             adapter: AdapterBinding {
                 name: "deterministic-dogfood".to_owned(),
                 protocol: "papertiger-mise.adapter.v2".to_owned(),
@@ -799,15 +799,13 @@ impl DogfoodFixture {
             },
             calibration: CalibrationRequirements {
                 no_op: NoOpCalibration {
-                    candidate_patch_sha256: None,
-                    candidate_material_sha256: Some(digest(&no_op_material)),
+                    candidate_material_sha256: digest(&no_op_material),
                     fixture_locator: "fixtures/mise/calibration-no-op.json".to_owned(),
                     fixture_sha256: digest(no_op_fixture),
                     minimum_repetitions: 2,
                 },
                 known_bad: KnownBadCalibration {
-                    candidate_patch_sha256: None,
-                    candidate_material_sha256: Some(digest(&known_bad_material)),
+                    candidate_material_sha256: digest(&known_bad_material),
                     fixture_locator: "fixtures/mise/calibration-known-bad.json".to_owned(),
                     fixture_sha256: digest(known_bad_fixture),
                     minimum_repetitions: 1,

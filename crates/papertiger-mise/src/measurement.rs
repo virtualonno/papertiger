@@ -353,7 +353,6 @@ pub(crate) fn validate_deterministic_provenance(
     candidate: f64,
 ) -> Result<()> {
     match (contract, provenance) {
-        (None, None) => Ok(()), // Immutable historical evidence has no inferred provenance.
         (Some(contract), Some(provenance)) => {
             for (sample, expected) in [
                 (&provenance.baseline, baseline),
@@ -428,6 +427,68 @@ pub(crate) fn validate_resource_calibration<'a>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// Self-reported sample for a fixture observation. The runtime validates
+    /// its contract, revision, fixture and environment bindings.
+    pub(crate) fn fixture_sample(
+        contract: &MeasurementContract,
+        process: &MeasuredProcess,
+        participant_revision: &str,
+        fixture_sha256: &str,
+        environment_sha256: &str,
+        value: f64,
+    ) -> MeasurementSample {
+        MeasurementSample {
+            schema: MEASUREMENT_SAMPLE_SCHEMA_V2.to_owned(),
+            observed: contract.clone(),
+            process: process.clone(),
+            participant_revision: participant_revision.to_owned(),
+            fixture_sha256: fixture_sha256.to_owned(),
+            environment_sha256: environment_sha256.to_owned(),
+            value: Number::from_f64(value).expect("finite fixture value"),
+            scale10: 0,
+            evidence: serde_json::json!({"synthetic": true, "value": value}),
+        }
+    }
+
+    /// Fixture process named after the contract's measured executable.
+    pub(crate) fn process(contract: &MeasurementContract) -> MeasuredProcess {
+        MeasuredProcess {
+            pid: 42,
+            birth_identity: "fixture-birth".to_owned(),
+            executable_locator: format!("/fixture/{}", contract.executable_name),
+            executable_sha256: "f".repeat(64),
+        }
+    }
+
+    /// Baseline and candidate samples for one deterministic observation.
+    pub(crate) fn provenance(
+        contract: &MeasurementContract,
+        revisions: (&str, &str),
+        fixture_sha256: &str,
+        environment_sha256: &str,
+        values: (f64, f64),
+    ) -> ObservationProvenance {
+        let process = process(contract);
+        ObservationProvenance {
+            baseline: fixture_sample(
+                contract,
+                &process,
+                revisions.0,
+                fixture_sha256,
+                environment_sha256,
+                values.0,
+            ),
+            candidate: fixture_sample(
+                contract,
+                &process,
+                revisions.1,
+                fixture_sha256,
+                environment_sha256,
+                values.1,
+            ),
+        }
+    }
 
     pub(crate) fn contract(unit: &str) -> MeasurementContract {
         MeasurementContract {

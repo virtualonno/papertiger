@@ -12,7 +12,6 @@ use crate::manifest::{ObjectiveDirection, ObjectiveRole, ObjectiveSpec, Sha256Di
 use crate::store::{begin_mutation, campaign, now, record_event_in_mutation};
 use crate::validation::validate_ascii_token as validate_token;
 
-pub const PAIRED_ANALYSIS_SCHEMA_V2: &str = "papertiger-mise.paired_analysis.v2";
 pub const PAIRED_ANALYSIS_SCHEMA_V3: &str = "papertiger-mise.paired_analysis.v3";
 pub const PAIRED_MEASUREMENT_PROTOCOL_V2: &str = "papertiger-mise.paired_measurement.v2";
 
@@ -306,20 +305,18 @@ struct PairedObjectiveIdentity<'a> {
 
 impl PairedAnalysisPlan {
     pub fn validate(&self, objectives: &[ObjectiveSpec]) -> Result<()> {
-        if !matches!(
-            self.schema.as_str(),
-            PAIRED_ANALYSIS_SCHEMA_V2 | PAIRED_ANALYSIS_SCHEMA_V3
-        ) {
-            bail!("unsupported paired analysis schema '{}'", self.schema);
+        if self.schema != PAIRED_ANALYSIS_SCHEMA_V3 {
+            return Err(crate::schema_ids::schema_refusal(
+                "paired analysis",
+                &self.schema,
+                PAIRED_ANALYSIS_SCHEMA_V3,
+                "author paired_analysis with schema papertiger-mise.paired_analysis.v3 and its exact trial_adapter",
+            ));
         }
-        match (self.schema.as_str(), &self.trial_adapter) {
-            (PAIRED_ANALYSIS_SCHEMA_V2, Some(_)) => {
-                bail!("paired analysis v1 cannot claim a frozen trial adapter")
-            }
-            (PAIRED_ANALYSIS_SCHEMA_V3, None) => {
-                bail!("paired analysis v2 requires an exact frozen trial adapter")
-            }
-            _ => {}
+        if self.trial_adapter.is_none() {
+            bail!(
+                "paired analysis requires an exact frozen trial_adapter; bind the adapter executable, argv, working directory, environment, protocol and bounds"
+            );
         }
         if self.method != PairedAnalysisMethod::FixedSampleExactPairedBinomial {
             bail!("unsupported paired analysis method");
@@ -1925,6 +1922,9 @@ pub(crate) mod tests {
     fn admit_paired_fixture(connection: &Connection) {
         let mut manifest = crate::manifest::tests::valid_manifest();
         manifest.objectives = objectives();
+        for objective in &mut manifest.objectives {
+            objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
+        }
         manifest.evaluator.protocol = PAIRED_MEASUREMENT_PROTOCOL_V2.to_owned();
         let paired = plan();
         manifest.calibration.no_op.fixture_locator =
@@ -2376,26 +2376,26 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn paired_v1_remains_readable_while_v2_requires_the_frozen_trial_adapter() {
+    fn paired_analysis_requires_v3_and_the_frozen_trial_adapter() {
         let objectives = objectives();
-        let mut legacy = plan();
-        legacy.schema = PAIRED_ANALYSIS_SCHEMA_V2.to_owned();
-        legacy.trial_adapter = None;
-        legacy.validate(&objectives).expect("legacy v1 plan");
-        let bytes = serde_json::to_vec(&legacy).expect("legacy JSON");
-        assert!(!String::from_utf8_lossy(&bytes).contains("trial_adapter"));
-        let reopened: PairedAnalysisPlan = serde_json::from_slice(&bytes).expect("reopen v1");
-        reopened
-            .validate(&objectives)
-            .expect("validate reopened v1");
+        plan().validate(&objectives).expect("paired analysis v3");
 
         let mut missing = plan();
         missing.trial_adapter = None;
-        assert!(missing.validate(&objectives).is_err());
+        let error = missing.validate(&objectives).unwrap_err().to_string();
+        assert!(
+            error.contains("requires an exact frozen trial_adapter"),
+            "{error}"
+        );
 
-        let mut mislabelled = plan();
-        mislabelled.schema = PAIRED_ANALYSIS_SCHEMA_V2.to_owned();
-        assert!(mislabelled.validate(&objectives).is_err());
+        let mut retired = plan();
+        retired.schema = "papertiger-mise.paired_analysis.v2".to_owned();
+        retired.trial_adapter = None;
+        let error = retired.validate(&objectives).unwrap_err().to_string();
+        assert!(
+            error.contains("expected 'papertiger-mise.paired_analysis.v3'"),
+            "{error}"
+        );
     }
 
     #[test]

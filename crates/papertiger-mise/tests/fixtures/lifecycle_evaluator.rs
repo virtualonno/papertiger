@@ -5,7 +5,16 @@ use std::time::Duration;
 const CONTRACT: &[u8] = include_bytes!("lifecycle_evaluator.rs");
 const MODE: &str = "PAPERTIGER_MISE_LIFECYCLE_FIXTURE_MODE";
 const DESCENDANT: &str = "PAPERTIGER_MISE_LIFECYCLE_FIXTURE_DESCENDANT";
-const OUTPUT: &str = "{\"schema\":\"papertiger-mise.deterministic_evaluator_output.v2\",\"observations\":[{\"objective\":\"latency-ms\",\"baseline\":10.0,\"candidate\":8.0},{\"objective\":\"tests-pass\",\"baseline\":1.0,\"candidate\":1.0}],\"reason_code\":null}";
+/// Canonical `papertiger-mise.deterministic_evaluator_output.v3` rendered by
+/// the test harness from the admitted measurement contracts. It carries
+/// placeholders only for values the runtime selects per trial.
+const OUTPUT_TEMPLATE: &str = "PAPERTIGER_MISE_LIFECYCLE_FIXTURE_OUTPUT_TEMPLATE";
+const BASELINE_TREE: &str = "@@baseline_result_tree@@";
+const CANDIDATE_TREE: &str = "@@candidate_result_tree@@";
+const FIXTURE: &str = "@@fixture_sha256@@";
+const ENVIRONMENT: &str = "@@environment_sha256@@";
+const EXECUTABLE: &str = "@@executable_locator@@";
+const PID: &str = "4242424242";
 
 fn main() {
     if std::env::var_os(DESCENDANT).is_some() {
@@ -41,9 +50,10 @@ fn run() -> Result<(), String> {
     std::io::stdin()
         .read_to_end(&mut request)
         .map_err(|error| error.to_string())?;
-    if !request.starts_with(b"{\"schema\":\"papertiger-mise.deterministic_evaluator_request.v2\"") {
+    if !request.starts_with(b"{\"schema\":\"papertiger-mise.deterministic_evaluator_request.v3\"") {
         return Err("stdin is not a deterministic evaluator request".to_owned());
     }
+    let request = String::from_utf8(request).map_err(|error| error.to_string())?;
     match mode.as_str() {
         "cancellable" => std::thread::sleep(Duration::from_secs(30)),
         "success" => {}
@@ -61,8 +71,40 @@ fn run() -> Result<(), String> {
         }
         other => return Err(format!("unknown lifecycle fixture mode '{other}'")),
     }
+    let executable = std::env::current_exe()
+        .map_err(|error| error.to_string())?
+        .to_str()
+        .ok_or("evaluator path is not UTF-8")?
+        .replace('\\', "/");
+    let output = std::env::var(OUTPUT_TEMPLATE)
+        .map_err(|_| format!("missing {OUTPUT_TEMPLATE}"))?
+        .replace(BASELINE_TREE, request_field(&request, "baseline_result_tree")?)
+        .replace(CANDIDATE_TREE, request_field(&request, "candidate_result_tree")?)
+        .replace(FIXTURE, request_field(&request, "fixture_sha256")?)
+        .replace(ENVIRONMENT, request_field(&request, "environment_sha256")?)
+        .replace(EXECUTABLE, &executable)
+        .replace(PID, &std::process::id().to_string());
     std::io::stdout()
-        .write_all(OUTPUT.as_bytes())
+        .write_all(output.as_bytes())
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+/// First string value of a top-level request field. The requested fields are
+/// lowercase hex identities that precede the objectives, so no JSON escape
+/// can occur inside them.
+fn request_field<'a>(request: &'a str, key: &str) -> Result<&'a str, String> {
+    let marker = format!("\"{key}\":\"");
+    let start = request
+        .find(&marker)
+        .ok_or_else(|| format!("request omitted {key}"))?
+        + marker.len();
+    let length = request[start..]
+        .find('"')
+        .ok_or_else(|| format!("request {key} is unterminated"))?;
+    let value = &request[start..start + length];
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("request {key} is not a hex identity"));
+    }
+    Ok(value)
 }

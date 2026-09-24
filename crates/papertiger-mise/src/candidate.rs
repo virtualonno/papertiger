@@ -53,7 +53,6 @@ pub enum CandidateDisposition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CandidateMaterialFormat {
-    LegacyGitPatchV1,
     GitChangeSetV1,
 }
 
@@ -282,13 +281,6 @@ struct CandidateIdentity<'a> {
 }
 
 #[derive(Serialize)]
-struct LegacyCandidateIdentity<'a> {
-    schema: &'static str,
-    proposal: &'a CandidateProposal,
-    patch_sha256: &'a str,
-}
-
-#[derive(Serialize)]
 struct NegativeFingerprint<'a> {
     schema: &'static str,
     changed_paths: &'a BTreeSet<String>,
@@ -327,36 +319,6 @@ pub fn bind_candidate(
         negative_fingerprint: sha256(&negative),
         proposal,
         material_bytes,
-    })
-}
-
-pub(crate) fn bind_legacy_patch_candidate(
-    proposal: CandidateProposal,
-    patch_bytes: Vec<u8>,
-) -> Result<BoundCandidate> {
-    validate_proposal(&proposal)?;
-    if patch_bytes.is_empty() && proposal.semantic_class != "calibration-no-op" {
-        bail!("legacy candidate patch must not be empty");
-    }
-    let material_sha256 = sha256(&patch_bytes);
-    let identity = serde_json::to_vec(&LegacyCandidateIdentity {
-        schema: "papertiger-mise.candidate_identity.v2",
-        proposal: &proposal,
-        patch_sha256: &material_sha256,
-    })?;
-    let negative = serde_json::to_vec(&NegativeFingerprint {
-        schema: "papertiger-mise.negative_fingerprint.v2",
-        changed_paths: &proposal.changed_paths,
-        changed_symbols: &proposal.changed_symbols,
-        semantic_class: &proposal.semantic_class,
-    })?;
-    Ok(BoundCandidate {
-        candidate_id: sha256(&identity),
-        material_sha256,
-        material_format: CandidateMaterialFormat::LegacyGitPatchV1,
-        negative_fingerprint: sha256(&negative),
-        proposal,
-        material_bytes: patch_bytes,
     })
 }
 
@@ -474,8 +436,32 @@ fn decode_hex(value: &str, role: &str) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// Canonical typed material that modifies one existing regular file.
+    pub(crate) fn modify_regular_file(path: &str, old: &[u8], new: &[u8]) -> Vec<u8> {
+        CandidateMaterial::from_changes(vec![GitChange {
+            operation: GitChangeOperation::Modify,
+            path: path.to_owned(),
+            old: Some(GitFileIdentity {
+                mode: GitFileMode::Regular,
+                sha256: sha256(old),
+            }),
+            new: Some(GitFileContent::from_bytes(GitFileMode::Regular, new)),
+        }])
+        .expect("fixture change set")
+        .canonical_bytes()
+        .expect("canonical fixture change set")
+    }
+
+    /// Canonical empty material, the only admissible no-op calibration.
+    pub(crate) fn empty_material() -> Vec<u8> {
+        CandidateMaterial::from_changes(Vec::new())
+            .expect("empty change set")
+            .canonical_bytes()
+            .expect("canonical empty change set")
+    }
 
     fn proposal() -> CandidateProposal {
         CandidateProposal {
@@ -501,20 +487,7 @@ mod tests {
 
     #[test]
     fn identity_binds_exact_material_and_negative_semantics() {
-        let material = |body: &[u8]| {
-            CandidateMaterial::from_changes(vec![GitChange {
-                operation: GitChangeOperation::Modify,
-                path: "src/search.rs".to_owned(),
-                old: Some(GitFileIdentity {
-                    mode: GitFileMode::Regular,
-                    sha256: sha256(b"old"),
-                }),
-                new: Some(GitFileContent::from_bytes(GitFileMode::Regular, body)),
-            }])
-            .unwrap()
-            .canonical_bytes()
-            .unwrap()
-        };
+        let material = |body: &[u8]| modify_regular_file("src/search.rs", b"old", body);
         let first = bind_candidate(proposal(), material(b"new")).expect("first candidate");
         let same = bind_candidate(proposal(), material(b"new")).expect("same candidate");
         let changed =
@@ -529,11 +502,23 @@ mod tests {
     fn hypotheses_need_falsifiers_and_paths_are_confined() {
         let mut missing_falsifier = proposal();
         missing_falsifier.hypothesis.decisive_falsifiers.clear();
-        assert!(bind_legacy_patch_candidate(missing_falsifier, b"patch".to_vec()).is_err());
+        let error = bind_candidate(
+            missing_falsifier,
+            modify_regular_file("src/search.rs", b"old", b"new"),
+        )
+        .expect_err("a hypothesis without falsifiers must be refused")
+        .to_string();
+        assert!(error.contains("falsifier"), "{error}");
 
         let mut traversal = proposal();
         traversal.changed_paths = BTreeSet::from(["../evaluator.rs".to_owned()]);
-        assert!(bind_legacy_patch_candidate(traversal, b"patch".to_vec()).is_err());
+        assert!(
+            bind_candidate(
+                traversal,
+                modify_regular_file("src/search.rs", b"old", b"new"),
+            )
+            .is_err()
+        );
     }
 
     #[test]

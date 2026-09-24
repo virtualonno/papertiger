@@ -80,8 +80,9 @@ reproducible-build proof. It relies on the already-frozen evaluator to attest
 that it executed the declared argv, and on the operator-trusted host, compiler,
 filesystem, and CAS boundary. The supervisor proves that the exact retained
 bytes appeared in an empty trial-owned output root; it does not trace every
-compiler syscall. A `papertiger-mise.parent_promotion_proof.v2` proof, which
-carries no build binding, is not accepted for a new descendant.
+compiler syscall. Mise reads only `papertiger-mise.parent_promotion_proof.v3`,
+which requires at least one judge-build trial receipt; a proof under any other
+identifier is refused.
 
 ## Campaign identity and naming
 
@@ -195,12 +196,15 @@ evidence is never converted in place: a stored manifest or shadow observation
 under an unsupported identifier is refused, and its remedy is to restore the
 authority from verified recovery evidence or to record new evidence.
 
-The runtime also implements shapes without measurement provenance:
-`papertiger-mise.campaign.v3` (Git-patch material), deterministic evaluator
-request and output v2, trial receipts v2–v4, materialization v3, candidate
-identity v2, paired analysis v2, paired trial request v3, and parent promotion
-proof v2. Admission accepts only `papertiger-mise.campaign.v4`, so those shapes
-are reachable only from the crate's own tests until they are removed.
+Mise reads and writes only `papertiger-mise.campaign.v4` campaigns. Every
+objective binds a measurement contract, every campaign declares typed Git
+change-set candidate material, and every deterministic observation carries
+measurement provenance. The earlier provenance-free shapes (campaign v3 with
+Git-patch material, deterministic evaluator request and output v2, trial
+receipts v2–v4, materialization v3, candidate identity v2, paired analysis v2,
+paired trial request v3, and parent promotion proof v2) have no reader; a
+document under one of those identifiers is refused like any other unsupported
+identifier.
 
 A targeted structural campaign may use an exact target-module measurement as
 its primary objective, but it must retain the repository-wide largest-module
@@ -255,10 +259,9 @@ superiority, or safety outside the named objectives, population, hardware,
 fixtures, and environment profile.
 
 The current crate exposes the exact classifier and atomically reserves each
-research slot against its realized schedule. The
-`papertiger-mise.paired_analysis.v2` shape binds no trial adapter and is not
-executable.
-`papertiger-mise.paired_analysis.v3` freezes an
+research slot against its realized schedule.
+`papertiger-mise.paired_analysis.v3`, the only paired analysis Mise reads,
+freezes an
 exact trial adapter executable, argv, working directory, environment, protocol,
 and bounds. Before launch, the durable runner derives the complete AB/BA
 schedule, writes every measurement-free request to CAS, reserves all trials,
@@ -610,7 +613,7 @@ Textual similarity alone is not a contamination detector. Immutable exported
 fixtures can use the existing local-file contract with their inference scope
 limited to those snapshots.
 
-New campaigns use a CAS-bound candidate-material envelope. The manifest freezes
+Every campaign uses a CAS-bound candidate-material envelope. The manifest freezes
 its kind, protocol, and media type; the envelope binds its canonical typed
 payload SHA-256 and a scope rederived from that payload. The first writable
 format is `git_change_set`: uniquely path-sorted regular-file add, modify, and
@@ -622,11 +625,9 @@ other than the frozen base plus the retained records. The public constructor
 derives this material from two exact full Git trees; the record command accepts
 only its canonical bytes.
 
-`git_patch.v1` material belongs only to the `papertiger-mise.campaign.v3`
-shape described under Schema identifiers, and no public command records it:
-operator writes use `candidate build-material` and `--material`. A
-`papertiger-mise.campaign.v3` manifest refuses an allowlist entry absent from
-its base tree, while a typed Git change-set campaign may admit a new path. This contract does
+Operator writes use `candidate build-material` and `--material`; Mise has no
+other candidate-material format. Because the change set can add files, a
+campaign may admit an allowlist path absent from its base tree. This contract does
 not pretend every domain is Git. A future Ghidramink operation packet requires
 a separately named kind, protocol, scope validator, and materializer before it
 can become live decision evidence; existing Ghidramink runs remain shadow

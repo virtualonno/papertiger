@@ -1597,7 +1597,7 @@ fn terminal_run_failure(
     let transaction = begin_mutation(connection)?;
     // The receipt owns these raw stream pointers, as deterministic failure
     // receipts do. Do not assign a second indexed media type to bytes that may
-    // already be candidate material (in particular an empty legacy no-op).
+    // already be indexed as candidate material.
     record_indexed_object(&transaction, &receipt_object, "application/json")?;
     let changed = transaction.execute(
         "UPDATE paired_runs

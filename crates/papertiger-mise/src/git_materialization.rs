@@ -551,13 +551,8 @@ pub(crate) fn verify_materialization_receipt(
     let object = artifact_object(connection, &record.receipt_sha256)?;
     let bytes = read_object(object_root, &object)?;
     let receipt: MaterializationReceipt = serde_json::from_slice(&bytes)?;
-    let expected_schema = if manifest.candidate_material.is_some() {
-        "papertiger-mise.materialization.v4"
-    } else {
-        "papertiger-mise.materialization.v3"
-    };
     if serde_json::to_vec(&receipt)? != bytes
-        || receipt.schema != expected_schema
+        || receipt.schema != "papertiger-mise.materialization.v4"
         || receipt.campaign_id != manifest.campaign_id
         || receipt.candidate_id != record.candidate_id
         || receipt.base_commit != manifest.source.base_commit
@@ -571,14 +566,7 @@ pub(crate) fn verify_materialization_receipt(
     verify_tree_has_only_regular_files(manifest, &receipt.result_tree)?;
     let candidate = candidate(connection, &record.candidate_id)?
         .context("materialization candidate disappeared")?;
-    let material_matches = if manifest.candidate_material.is_some() {
-        receipt.patch_sha256.is_none()
-            && receipt.material_sha256.as_deref() == Some(candidate.material_sha256.as_str())
-    } else {
-        receipt.material_sha256.is_none()
-            && receipt.patch_sha256.as_deref() == Some(candidate.material_sha256.as_str())
-    };
-    if !material_matches {
+    if receipt.material_sha256 != candidate.material_sha256 {
         bail!("materialization receipt differs from its candidate material identity");
     }
     let material_object = artifact_object(connection, &candidate.material_sha256)?;
@@ -640,61 +628,50 @@ pub(crate) fn expected_result_tree(
         &["read-tree", &manifest.source.base_tree],
         None,
     )?;
-    if manifest.candidate_material.is_some() {
-        let material = CandidateMaterial::parse_canonical(material_bytes)?;
-        verify_git_change_set_against_base(repository, &manifest.source.base_tree, &material)?;
-        for change in &material.change_set.changes {
-            match change.operation {
-                GitChangeOperation::Delete => git_with_index(
+    let material = CandidateMaterial::parse_canonical(material_bytes)?;
+    verify_git_change_set_against_base(repository, &manifest.source.base_tree, &material)?;
+    for change in &material.change_set.changes {
+        match change.operation {
+            GitChangeOperation::Delete => git_with_index(
+                repository,
+                &index,
+                &object_directory,
+                &alternate,
+                &["update-index", "--force-remove", "--", &change.path],
+                None,
+            )?,
+            GitChangeOperation::Add | GitChangeOperation::Modify => {
+                let new = change
+                    .new
+                    .as_ref()
+                    .context("Git change omitted new state")?;
+                let bytes = new.bytes()?;
+                let object = String::from_utf8(git_with_index_output(
                     repository,
                     &index,
                     &object_directory,
                     &alternate,
-                    &["update-index", "--force-remove", "--", &change.path],
+                    &["hash-object", "-w", "--stdin"],
+                    Some(&bytes),
+                )?)
+                .context("Git object identity is not UTF-8")?;
+                git_with_index(
+                    repository,
+                    &index,
+                    &object_directory,
+                    &alternate,
+                    &[
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        new.mode.as_str(),
+                        object.trim(),
+                        &change.path,
+                    ],
                     None,
-                )?,
-                GitChangeOperation::Add | GitChangeOperation::Modify => {
-                    let new = change
-                        .new
-                        .as_ref()
-                        .context("Git change omitted new state")?;
-                    let bytes = new.bytes()?;
-                    let object = String::from_utf8(git_with_index_output(
-                        repository,
-                        &index,
-                        &object_directory,
-                        &alternate,
-                        &["hash-object", "-w", "--stdin"],
-                        Some(&bytes),
-                    )?)
-                    .context("Git object identity is not UTF-8")?;
-                    git_with_index(
-                        repository,
-                        &index,
-                        &object_directory,
-                        &alternate,
-                        &[
-                            "update-index",
-                            "--add",
-                            "--cacheinfo",
-                            new.mode.as_str(),
-                            object.trim(),
-                            &change.path,
-                        ],
-                        None,
-                    )?;
-                }
+                )?;
             }
         }
-    } else if !material_bytes.is_empty() {
-        git_with_index(
-            repository,
-            &index,
-            &object_directory,
-            &alternate,
-            &["apply", "--cached", "--whitespace=nowarn", "-"],
-            Some(material_bytes),
-        )?;
     }
     let tree = git_with_index_text(
         repository,
@@ -714,18 +691,6 @@ pub(crate) fn apply_candidate_material(
     material_bytes: &[u8],
     worktree: &Path,
 ) -> Result<()> {
-    if manifest.candidate_material.is_none() {
-        if !material_bytes.is_empty() {
-            git_run(
-                worktree,
-                &["apply", "--index", "--whitespace=nowarn", "-"],
-                None,
-                None,
-                Some(material_bytes),
-            )?;
-        }
-        return Ok(());
-    }
     verify_worktree_has_no_link_escape(worktree)?;
     if !git_text(worktree, &["ls-files", "--others"])?
         .trim()
@@ -1103,7 +1068,6 @@ fn git_with_object_output(
 mod tests {
     use super::*;
     use crate::candidate::{CandidateMaterial, GitChangeOperation};
-    use crate::manifest::CandidateMaterialContract;
 
     #[cfg(windows)]
     #[test]
@@ -1386,11 +1350,6 @@ mod tests {
             manifest.source.base_tree = self.base_tree.clone();
             manifest.execution_limits.workspace_root_locator =
                 portable_absolute(&self.workspace).unwrap();
-            manifest.candidate_material = Some(CandidateMaterialContract {
-                kind: "git_change_set".to_owned(),
-                protocol: crate::candidate::GIT_CHANGE_SET_PROTOCOL_V2.to_owned(),
-                media_type: crate::candidate::GIT_CHANGE_SET_MEDIA_TYPE.to_owned(),
-            });
             manifest
         }
     }

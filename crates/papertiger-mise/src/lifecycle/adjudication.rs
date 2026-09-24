@@ -372,11 +372,7 @@ fn verify_candidate_evidence(
         serde_json::from_str(&proposal_json_for(connection, &candidate.candidate_id)?)?;
     let material_object = artifact_object(connection, &candidate.material_sha256)?;
     let material_bytes = read_object(object_root, &material_object)?;
-    let rebound = if manifest.candidate_material.is_some() {
-        crate::candidate::bind_candidate(proposal.clone(), material_bytes)?
-    } else {
-        bind_legacy_patch_candidate(proposal.clone(), material_bytes)?
-    };
+    let rebound = crate::candidate::bind_candidate(proposal.clone(), material_bytes)?;
     if rebound.candidate_id != candidate.candidate_id
         || rebound.material_sha256 != candidate.material_sha256
         || rebound.negative_fingerprint != candidate.negative_fingerprint

@@ -509,8 +509,13 @@ impl Fixture {
         )
         .expect("commit paired base");
 
-        const KNOWN_BAD_PATCH: &[u8] = b"diff --git a/src/fixture.rs b/src/fixture.rs\n--- a/src/fixture.rs\n+++ b/src/fixture.rs\n@@ -1 +1 @@\n-old\n+known-bad\n";
-        const RESEARCH_PATCH: &[u8] = b"diff --git a/src/fixture.rs b/src/fixture.rs\n--- a/src/fixture.rs\n+++ b/src/fixture.rs\n@@ -1 +1 @@\n-old\n+improved\n";
+        let known_bad_material = crate::candidate::tests::modify_regular_file(
+            "src/fixture.rs",
+            b"old\n",
+            b"known-bad\n",
+        );
+        let research_material =
+            crate::candidate::tests::modify_regular_file("src/fixture.rs", b"old\n", b"improved\n");
         let mut manifest = crate::manifest::tests::valid_manifest();
         manifest.campaign_id = match containment {
             ContainmentGrade::WorkspaceOnly => "paired-runtime-campaign",
@@ -529,13 +534,7 @@ impl Fixture {
             .to_owned();
         manifest.execution_limits.workspace_root_locator =
             canonical_or_pending_absolute(&runs).expect("workspace root locator");
-        manifest
-            .calibration
-            .known_bad
-            .candidate_patch_sha256
-            .as_mut()
-            .expect("legacy known-bad patch")
-            .0 = sha256(KNOWN_BAD_PATCH);
+        manifest.calibration.known_bad.candidate_material_sha256.0 = sha256(&known_bad_material);
         let evidence_kind = match containment {
             ContainmentGrade::WorkspaceOnly => {
                 manifest.containment = ContainmentGrade::WorkspaceOnly;
@@ -550,7 +549,6 @@ impl Fixture {
             ContainmentGrade::Sealed => crate::manifest::HoldoutTierKind::Confirmation,
         };
         manifest.objectives = statistic_fixtures::objectives();
-        manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V4.to_owned();
         for objective in &mut manifest.objectives {
             objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
         }
@@ -623,7 +621,7 @@ impl Fixture {
             objects.path(),
             &manifest,
             "calibration-no-op",
-            Vec::new(),
+            crate::candidate::tests::empty_material(),
             &runs.join("baseline"),
         );
         let known_bad = seed_candidate(
@@ -631,7 +629,7 @@ impl Fixture {
             objects.path(),
             &manifest,
             "calibration-known-bad",
-            KNOWN_BAD_PATCH.to_vec(),
+            known_bad_material,
             &runs.join("known-bad"),
         );
         let research = seed_candidate(
@@ -639,7 +637,7 @@ impl Fixture {
             objects.path(),
             &manifest,
             "paired-nomination",
-            RESEARCH_PATCH.to_vec(),
+            research_material,
             &runs.join("research"),
         );
         Self {
@@ -822,15 +820,14 @@ fn seed_candidate(
     objects: &Path,
     manifest: &CampaignManifest,
     semantic_class: &str,
-    patch_bytes: Vec<u8>,
+    material_bytes: Vec<u8>,
     worktree: &Path,
 ) -> crate::candidate::BoundCandidate {
-    let changed_paths = if patch_bytes.is_empty() {
-        BTreeSet::new()
-    } else {
-        BTreeSet::from(["src/fixture.rs".to_owned()])
-    };
-    let candidate = crate::candidate::bind_legacy_patch_candidate(
+    let changed_paths = crate::candidate::CandidateMaterial::parse_canonical(&material_bytes)
+        .expect("fixture material")
+        .scope
+        .changed_paths;
+    let candidate = crate::candidate::bind_candidate(
         crate::candidate::CandidateProposal {
             campaign_id: manifest.campaign_id.clone(),
             parent_candidate_ids: BTreeSet::new(),
@@ -850,12 +847,17 @@ fn seed_candidate(
             semantic_class: semantic_class.to_owned(),
             differentiator: None,
         },
-        patch_bytes,
+        material_bytes,
     )
     .expect("bind fixture candidate");
-    let patch_object = preserve_object(objects, &candidate.material_bytes).expect("patch object");
-    record_artifact_in(connection, &patch_object, "text/x-diff; charset=utf-8")
-        .expect("index patch object");
+    let material_object =
+        preserve_object(objects, &candidate.material_bytes).expect("material object");
+    record_artifact_in(
+        connection,
+        &material_object,
+        crate::candidate::GIT_CHANGE_SET_MEDIA_TYPE,
+    )
+    .expect("index material object");
     let proposal_json = serde_json::to_string(&candidate.proposal).expect("proposal JSON");
     connection
         .execute(
@@ -876,10 +878,10 @@ fn seed_candidate(
     connection
         .execute(
             "INSERT INTO candidate_artifacts (candidate_id, role, sha256)
-                 VALUES (?1, 'patch', ?2)",
+                 VALUES (?1, 'material', ?2)",
             params![candidate.candidate_id, candidate.material_sha256],
         )
-        .expect("bind patch artifact");
+        .expect("bind material artifact");
 
     git_run(
         Path::new(&manifest.source.repository_locator),
@@ -889,29 +891,24 @@ fn seed_candidate(
         None,
     )
     .expect("fixture worktree");
-    if !candidate.material_bytes.is_empty() {
-        git_run(
-            worktree,
-            &["apply", "--index", "--whitespace=nowarn", "-"],
-            None,
-            None,
-            Some(&candidate.material_bytes),
-        )
-        .expect("apply fixture patch");
-    }
+    crate::git_materialization::apply_candidate_material(
+        manifest,
+        &candidate.material_bytes,
+        worktree,
+    )
+    .expect("apply fixture material");
     let result_tree = git_text(worktree, &["write-tree"])
         .expect("fixture result tree")
         .trim()
         .to_owned();
     let worktree_locator = canonical_or_pending_absolute(worktree).expect("worktree locator");
     let receipt = crate::lifecycle::MaterializationReceipt {
-        schema: "papertiger-mise.materialization.v3".to_owned(),
+        schema: "papertiger-mise.materialization.v4".to_owned(),
         campaign_id: manifest.campaign_id.clone(),
         candidate_id: candidate.candidate_id.clone(),
         base_commit: manifest.source.base_commit.clone(),
         base_tree: manifest.source.base_tree.clone(),
-        patch_sha256: Some(candidate.material_sha256.clone()),
-        material_sha256: None,
+        material_sha256: candidate.material_sha256.clone(),
         result_tree: result_tree.clone(),
         worktree_locator: worktree_locator.clone(),
         adapter_sha256: candidate.proposal.adapter_sha256.clone(),

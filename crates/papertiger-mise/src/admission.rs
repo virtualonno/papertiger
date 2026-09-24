@@ -254,7 +254,7 @@ fn inspect_campaign_preflight(requested_manifest_path: &Path) -> CampaignPreflig
     collect_check(
         &mut report.defects,
         "manifest.contract",
-        manifest.validate_for_admission(),
+        manifest.validate(),
     );
 
     let source_repository = collect_check(
@@ -285,13 +285,6 @@ fn inspect_campaign_preflight(requested_manifest_path: &Path) -> CampaignPreflig
             "source.clean",
             require_clean_repository(source_repository, "source"),
         );
-        if manifest.candidate_material.is_none() {
-            collect_check(
-                &mut report.defects,
-                "mutation_scope.v1",
-                verify_v1_mutation_scope(source_repository, &manifest),
-            );
-        }
     }
 
     let control_repository = manifest_path.parent().and_then(|parent| {
@@ -694,31 +687,6 @@ fn require_clean_repository(repository: &Path, role: &str) -> Result<()> {
     Ok(())
 }
 
-fn verify_v1_mutation_scope(repository: &Path, manifest: &CampaignManifest) -> Result<()> {
-    for path in &manifest.mutation_scope.allowlist {
-        let listing = git_output(
-            repository,
-            &["ls-tree", &manifest.source.base_tree, "--", path],
-        )?;
-        let line = listing.trim();
-        if line.is_empty() {
-            bail!(
-                "mutation_scope.allowlist path '{path}' is absent from source.base_tree; legacy git_patch.v1 material cannot create it because its patches reject new-file and mode records. Preseed the tracked path before campaign admission or select an existing file/directory"
-            );
-        }
-        let mode = line
-            .split_whitespace()
-            .next()
-            .context("Git tree listing omitted the allowlist path mode")?;
-        if !matches!(mode, "040000" | "100644" | "100755") {
-            bail!(
-                "mutation_scope.allowlist path '{path}' has unsupported Git mode {mode}; legacy git_patch.v1 material requires a pre-existing regular file or directory"
-            );
-        }
-    }
-    Ok(())
-}
-
 fn git_repository_root(path: &Path) -> Result<PathBuf> {
     let root = git_output(path, &["rev-parse", "--show-toplevel"])?;
     std::fs::canonicalize(root.trim())
@@ -980,19 +948,16 @@ mod tests {
     }
 
     #[test]
-    fn v1_admission_refuses_an_allowlist_path_absent_from_the_base_tree() {
+    fn typed_material_admission_accepts_an_allowlist_path_absent_from_the_base_tree() {
         let fixture = AdmissionFixture::new();
         fixture.replace_allowlist_with_missing_path();
 
-        let error = verify_campaign_admission(&fixture.manifest_path)
-            .expect_err("missing v1 mutation path must refuse admission");
-        assert!(
-            error.to_string().contains(
-                "legacy git_patch.v1 material cannot create it because its patches reject new-file"
-            ),
-            "{error:#}"
+        let verified = verify_campaign_admission(&fixture.manifest_path)
+            .expect("a Git change-set campaign may add a path absent from its base tree");
+        assert_eq!(
+            verified.manifest().mutation_scope.allowlist,
+            vec!["src/not-preseeded.rs".to_owned()]
         );
-        assert!(error.to_string().contains("Preseed the tracked path"));
     }
 
     #[test]
@@ -1065,7 +1030,6 @@ mod tests {
             if paired {
                 configure_paired_manifest(&mut manifest);
             }
-            manifest.schema = crate::manifest::CAMPAIGN_SCHEMA_V4.to_owned();
             for objective in &mut manifest.objectives {
                 objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
             }

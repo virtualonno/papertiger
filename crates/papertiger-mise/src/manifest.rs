@@ -10,9 +10,7 @@ use crate::improvement::objective_unit_is_boolean;
 use crate::budget::{BudgetLimit, BudgetResource};
 use crate::digest::sha256;
 
-pub const CAMPAIGN_SCHEMA_V3: &str = "papertiger-mise.campaign.v3";
 pub const CAMPAIGN_SCHEMA_V4: &str = "papertiger-mise.campaign.v4";
-const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 /// Immutable, content-bound admission contract for one Mise campaign.
 ///
@@ -26,8 +24,7 @@ pub struct CampaignManifest {
     pub campaign_id: String,
     pub source: SourceBinding,
     pub mutation_scope: MutationScope,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub candidate_material: Option<CandidateMaterialContract>,
+    pub candidate_material: CandidateMaterialContract,
     pub adapter: AdapterBinding,
     pub evaluator: EvaluatorBinding,
     pub execution_limits: ExecutionLimits,
@@ -194,8 +191,8 @@ pub struct ObjectiveSpec {
     pub regression_tolerance: f64,
     /// Absolute acceptance boundary, required for hard constraints.
     pub acceptance_threshold: Option<f64>,
-    /// Absent only in `papertiger-mise.campaign.v3` manifests; every
-    /// `papertiger-mise.campaign.v4` objective binds its measurement contract.
+    /// Required: validation refuses an objective without its measurement
+    /// contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub measurement: Option<crate::measurement::MeasurementContract>,
     /// Absolute target, required only for target-directed objectives.
@@ -324,10 +321,7 @@ pub struct CalibrationRequirements {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NoOpCalibration {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub candidate_patch_sha256: Option<Sha256Digest>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub candidate_material_sha256: Option<Sha256Digest>,
+    pub candidate_material_sha256: Sha256Digest,
     pub fixture_locator: String,
     pub fixture_sha256: Sha256Digest,
     pub minimum_repetitions: u32,
@@ -336,10 +330,7 @@ pub struct NoOpCalibration {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KnownBadCalibration {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub candidate_patch_sha256: Option<Sha256Digest>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub candidate_material_sha256: Option<Sha256Digest>,
+    pub candidate_material_sha256: Sha256Digest,
     pub fixture_locator: String,
     pub fixture_sha256: Sha256Digest,
     pub minimum_repetitions: u32,
@@ -366,7 +357,7 @@ impl CampaignManifest {
             .get("schema")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        if !matches!(schema, CAMPAIGN_SCHEMA_V3 | CAMPAIGN_SCHEMA_V4) {
+        if schema != CAMPAIGN_SCHEMA_V4 {
             return Err(crate::schema_ids::schema_refusal(
                 "stored campaign manifest",
                 schema,
@@ -380,10 +371,7 @@ impl CampaignManifest {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if !matches!(
-            self.schema.as_str(),
-            CAMPAIGN_SCHEMA_V3 | CAMPAIGN_SCHEMA_V4
-        ) {
+        if self.schema != CAMPAIGN_SCHEMA_V4 {
             return Err(crate::schema_ids::schema_refusal(
                 "campaign manifest",
                 &self.schema,
@@ -394,9 +382,7 @@ impl CampaignManifest {
         validate_identifier("campaign_id", &self.campaign_id)?;
         self.source.validate()?;
         self.mutation_scope.validate()?;
-        if let Some(contract) = &self.candidate_material {
-            contract.validate()?;
-        }
+        self.candidate_material.validate()?;
         self.adapter.validate()?;
         self.evaluator.validate()?;
         self.mutation_scope
@@ -513,20 +499,10 @@ impl CampaignManifest {
         self.validate_containment_requirement()?;
         self.holdouts.validate(self.containment, &self.budgets)?;
         self.generation.validate(&self.campaign_id)?;
-        self.calibration
-            .validate(self.candidate_material.as_ref())?;
+        self.calibration.validate()?;
         self.validate_fixture_access_boundary()?;
         self.validate_cross_contract()?;
         Ok(())
-    }
-
-    pub(crate) fn validate_for_admission(&self) -> Result<()> {
-        if self.schema != CAMPAIGN_SCHEMA_V4 {
-            bail!(
-                "campaign admission requires {CAMPAIGN_SCHEMA_V4} and objectives[].measurement; author a {CAMPAIGN_SCHEMA_V4} manifest and run `papertiger-mise campaign preflight <manifest>`"
-            );
-        }
-        self.validate()
     }
 
     fn validate_measurement_contracts(&self) -> Result<()> {
@@ -535,19 +511,11 @@ impl CampaignManifest {
         let mut behavioral_primary = false;
         for objective in &self.objectives {
             let Some(contract) = &objective.measurement else {
-                if self.schema == CAMPAIGN_SCHEMA_V4 {
-                    bail!(
-                        "objective '{}' requires measurement process/workload provenance",
-                        objective.key
-                    );
-                }
-                continue;
-            };
-            if self.schema == CAMPAIGN_SCHEMA_V3 {
                 bail!(
-                    "papertiger-mise.campaign.v3 does not accept measurement contracts; author a papertiger-mise.campaign.v4 manifest"
+                    "objective '{}' requires measurement process/workload provenance",
+                    objective.key
                 );
-            }
+            };
             contract.validate(&objective.unit, objective.role)?;
             behavioral_primary |= objective.role == ObjectiveRole::Primary
                 && contract.metric_kind == MetricKind::Behavior;
@@ -1311,61 +1279,16 @@ fn validate_local_absolute_path(field: &str, value: &str) -> Result<()> {
 
 impl CalibrationRequirements {
     pub fn no_op_material_sha256(&self) -> &Sha256Digest {
-        self.no_op
-            .candidate_material_sha256
-            .as_ref()
-            .or(self.no_op.candidate_patch_sha256.as_ref())
-            .expect("validated calibration identity")
+        &self.no_op.candidate_material_sha256
     }
 
     pub fn known_bad_material_sha256(&self) -> &Sha256Digest {
-        self.known_bad
-            .candidate_material_sha256
-            .as_ref()
-            .or(self.known_bad.candidate_patch_sha256.as_ref())
-            .expect("validated calibration identity")
+        &self.known_bad.candidate_material_sha256
     }
 
-    fn validate(&self, material: Option<&CandidateMaterialContract>) -> Result<()> {
-        let (no_op, known_bad) = match material {
-            None => {
-                if self.no_op.candidate_material_sha256.is_some()
-                    || self.known_bad.candidate_material_sha256.is_some()
-                {
-                    bail!(
-                        "legacy Git-patch campaigns require candidate_patch_sha256 calibration fields"
-                    );
-                }
-                (
-                    self.no_op
-                        .candidate_patch_sha256
-                        .as_ref()
-                        .context("legacy no-op calibration requires candidate_patch_sha256")?,
-                    self.known_bad
-                        .candidate_patch_sha256
-                        .as_ref()
-                        .context("legacy known-bad calibration requires candidate_patch_sha256")?,
-                )
-            }
-            Some(_) => {
-                if self.no_op.candidate_patch_sha256.is_some()
-                    || self.known_bad.candidate_patch_sha256.is_some()
-                {
-                    bail!(
-                        "typed candidate-material campaigns do not accept legacy candidate_patch_sha256 fields"
-                    );
-                }
-                (
-                    self.no_op
-                        .candidate_material_sha256
-                        .as_ref()
-                        .context("typed no-op calibration requires candidate_material_sha256")?,
-                    self.known_bad.candidate_material_sha256.as_ref().context(
-                        "typed known-bad calibration requires candidate_material_sha256",
-                    )?,
-                )
-            }
-        };
+    fn validate(&self) -> Result<()> {
+        let no_op = &self.no_op.candidate_material_sha256;
+        let known_bad = &self.known_bad.candidate_material_sha256;
         no_op.validate("calibration.no_op candidate identity")?;
         self.no_op
             .fixture_sha256
@@ -1374,9 +1297,6 @@ impl CalibrationRequirements {
             "calibration.no_op.fixture_locator",
             &self.no_op.fixture_locator,
         )?;
-        if material.is_none() && no_op.0 != EMPTY_SHA256 {
-            bail!("no-op calibration candidate patch must be the SHA-256 of empty bytes");
-        }
         if self.no_op.minimum_repetitions < 2 {
             bail!("no-op calibration requires at least two repetitions to expose run noise");
         }
@@ -1388,7 +1308,7 @@ impl CalibrationRequirements {
             "calibration.known_bad.fixture_locator",
             &self.known_bad.fixture_locator,
         )?;
-        if known_bad.0 == no_op.0 || (material.is_none() && known_bad.0 == EMPTY_SHA256) {
+        if known_bad.0 == no_op.0 {
             bail!("known-bad calibration must bind candidate material distinct from the no-op");
         }
         if self.known_bad.minimum_repetitions == 0 {
@@ -1635,30 +1555,47 @@ pub(crate) mod tests {
         })
     }
 
-    fn round_trip_objectives_have_no_measurement(manifest: &CampaignManifest) -> bool {
-        serde_json::to_value(&manifest.objectives)
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|o| o.get("measurement").is_none())
-    }
-
     #[test]
-    fn campaign_v3_round_trips_but_admission_requires_measured_v4() {
-        let historical = valid_manifest();
-        let bytes = historical.canonical_bytes().unwrap();
-        assert!(round_trip_objectives_have_no_measurement(&historical));
-        let round_trip: CampaignManifest = serde_json::from_slice(&bytes).unwrap();
+    fn manifests_require_campaign_v4_measurement_and_typed_material() {
+        let manifest = valid_manifest();
+        manifest.validate().expect("campaign.v4 fixture");
+        let bytes = manifest.canonical_bytes().unwrap();
+        let round_trip = CampaignManifest::from_stored_json(std::str::from_utf8(&bytes).unwrap())
+            .expect("stored campaign.v4 manifest");
         assert_eq!(round_trip.canonical_bytes().unwrap(), bytes);
-        assert!(historical.validate_for_admission().is_err());
-        let mut current = historical;
-        current.schema = CAMPAIGN_SCHEMA_V4.to_owned();
-        assert!(current.validate_for_admission().is_err());
-        for objective in &mut current.objectives {
-            objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
-        }
-        current.validate_for_admission().unwrap();
+
+        let mut retired = manifest.clone();
+        retired.schema = "papertiger-mise.campaign.v3".to_owned();
+        let error = retired.validate().unwrap_err().to_string();
+        assert!(
+            error.contains("expected 'papertiger-mise.campaign.v4'"),
+            "{error}"
+        );
+        let stored = serde_json::to_string(&retired).unwrap();
+        let error = CampaignManifest::from_stored_json(&stored)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(
+                "unsupported stored campaign manifest schema 'papertiger-mise.campaign.v3'"
+            ),
+            "{error}"
+        );
+
+        let mut unmeasured = manifest.clone();
+        unmeasured.objectives[0].measurement = None;
+        let error = unmeasured.validate().unwrap_err().to_string();
+        assert!(error.contains("requires measurement"), "{error}");
+
+        let mut value = serde_json::to_value(&manifest).unwrap();
+        value.as_object_mut().unwrap().remove("candidate_material");
+        let error = CampaignManifest::from_stored_json(&value.to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("not a typed Mise campaign manifest"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1667,10 +1604,6 @@ pub(crate) mod tests {
             MeasurementPhase, MetricKind, ProcessRole, ResourceConstraintBasis, ResourceMetric,
         };
         let mut manifest = valid_manifest();
-        manifest.schema = CAMPAIGN_SCHEMA_V4.to_owned();
-        for objective in &mut manifest.objectives {
-            objective.measurement = Some(crate::measurement::tests::contract(&objective.unit));
-        }
         let mut resource = manifest.objectives[0].clone();
         resource.key = "runtime-peak-bytes".to_owned();
         resource.role = ObjectiveRole::HardConstraint;
@@ -1713,10 +1646,24 @@ pub(crate) mod tests {
         assert!(manifest.validate_measurement_contracts().is_err());
     }
 
+    pub(crate) fn git_change_set_contract() -> CandidateMaterialContract {
+        CandidateMaterialContract {
+            kind: "git_change_set".to_owned(),
+            protocol: crate::candidate::GIT_CHANGE_SET_PROTOCOL_V2.to_owned(),
+            media_type: crate::candidate::GIT_CHANGE_SET_MEDIA_TYPE.to_owned(),
+        }
+    }
+
+    /// SHA-256 of the canonical empty Git change set, the no-op calibration
+    /// material every fixture campaign binds.
+    pub(crate) fn no_op_material_sha256() -> String {
+        crate::digest::sha256(&crate::candidate::tests::empty_material())
+    }
+
     pub(crate) fn valid_manifest() -> CampaignManifest {
         let (judge_locator, judge_sha256) = test_executable_identity().clone();
         CampaignManifest {
-            schema: CAMPAIGN_SCHEMA_V3.to_owned(),
+            schema: CAMPAIGN_SCHEMA_V4.to_owned(),
             campaign_id: "fixture-rsi-1".to_owned(),
             source: SourceBinding {
                 repository_id: "virtualonno-fixture".to_owned(),
@@ -1771,7 +1718,7 @@ pub(crate) mod tests {
                     minimum_practical_change: 0.0,
                     regression_tolerance: 0.0,
                     acceptance_threshold: Some(1.0),
-                    measurement: None,
+                    measurement: Some(crate::measurement::tests::contract("boolean")),
                     target_value: None,
                 },
                 ObjectiveSpec {
@@ -1782,7 +1729,7 @@ pub(crate) mod tests {
                     minimum_practical_change: 1.0,
                     regression_tolerance: 0.0,
                     acceptance_threshold: None,
-                    measurement: None,
+                    measurement: Some(crate::measurement::tests::contract("ms")),
                     target_value: None,
                 },
             ],
@@ -1819,7 +1766,7 @@ pub(crate) mod tests {
                     },
                 ],
             },
-            candidate_material: None,
+            candidate_material: git_change_set_contract(),
             stop_rules: StopRules {
                 not_before_unix_ms: 1,
                 deadline_unix_ms: 4_000_000_000_000,
@@ -1871,15 +1818,13 @@ pub(crate) mod tests {
             },
             calibration: CalibrationRequirements {
                 no_op: NoOpCalibration {
-                    candidate_patch_sha256: Some(Sha256Digest(EMPTY_SHA256.to_owned())),
-                    candidate_material_sha256: None,
+                    candidate_material_sha256: Sha256Digest(no_op_material_sha256()),
                     fixture_locator: "fixtures/mise/calibration-no-op.json".to_owned(),
                     fixture_sha256: digest('7'),
                     minimum_repetitions: 3,
                 },
                 known_bad: KnownBadCalibration {
-                    candidate_patch_sha256: Some(digest('8')),
-                    candidate_material_sha256: None,
+                    candidate_material_sha256: digest('8'),
                     fixture_locator: "fixtures/mise/calibration-known-bad.json".to_owned(),
                     fixture_sha256: digest('6'),
                     minimum_repetitions: 2,
@@ -2499,20 +2444,20 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn calibration_requires_true_no_op_and_nonempty_known_bad_patch() {
+    fn calibration_requires_distinct_canonical_material_identities() {
         let mut manifest = valid_manifest();
-        manifest.calibration.no_op.candidate_patch_sha256 = Some(digest('5'));
+        manifest.calibration.no_op.candidate_material_sha256 = Sha256Digest("A".repeat(64));
         assert!(
             manifest
                 .validate()
                 .unwrap_err()
                 .to_string()
-                .contains("no-op")
+                .contains("calibration.no_op")
         );
 
         let mut manifest = valid_manifest();
-        manifest.calibration.known_bad.candidate_patch_sha256 =
-            Some(Sha256Digest(EMPTY_SHA256.to_owned()));
+        manifest.calibration.known_bad.candidate_material_sha256 =
+            manifest.calibration.no_op.candidate_material_sha256.clone();
         assert!(
             manifest
                 .validate()

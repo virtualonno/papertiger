@@ -1868,7 +1868,7 @@ mod tests {
         });
         child.validate().expect("child manifest");
         let proof = crate::successor::ParentPromotionProof {
-            schema: crate::successor::PARENT_PROMOTION_PROOF_SCHEMA_V2.to_owned(),
+            schema: crate::successor::PARENT_PROMOTION_PROOF_SCHEMA_V3.to_owned(),
             scope: crate::successor::SUCCESSOR_ADMISSION_SCOPE_V1.to_owned(),
             parent_campaign_id: parent.campaign_id.clone(),
             parent_manifest_sha256: parent.sha256().expect("parent digest"),
@@ -1896,8 +1896,10 @@ mod tests {
                 .outer_judge_executable_sha256
                 .0
                 .clone(),
-            promoted_judge_build_trial_receipts: Vec::new(),
-            promoted_judge_executable_sha256: None,
+            promoted_judge_build_trial_receipts: vec!["9".repeat(64)],
+            promoted_judge_executable_sha256: Some(
+                child.generation.outer_judge_executable_sha256.0.clone(),
+            ),
             successor_budget_debit: child.budgets.caps.clone(),
         };
         let proof_bytes = proof.canonical_bytes().expect("proof bytes");

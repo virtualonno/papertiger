@@ -11,10 +11,7 @@ use crate::budget::{
     BoundReservation, BudgetResource, BudgetSettlement, SettlementMode, SettlementOutcome,
     settle_bound_budget, settle_bound_budget_in,
 };
-use crate::candidate::{
-    BoundCandidate, CandidateDisposition, CandidateMaterial, CandidateMaterialFormat,
-    bind_legacy_patch_candidate,
-};
+use crate::candidate::{BoundCandidate, CandidateDisposition, CandidateMaterial};
 use crate::classification::{Classification, DeterministicObservation, classify_deterministic};
 use crate::digest::sha256;
 use crate::executor::{
@@ -88,10 +85,7 @@ pub struct MaterializationReceipt {
     pub candidate_id: String,
     pub base_commit: String,
     pub base_tree: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub patch_sha256: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub material_sha256: Option<String>,
+    pub material_sha256: String,
     pub result_tree: String,
     pub worktree_locator: String,
     pub adapter_sha256: String,
@@ -417,61 +411,13 @@ pub fn record_candidate(
     candidate: &BoundCandidate,
     material_object: &PreservedObject,
 ) -> Result<bool> {
-    if candidate.material_format != CandidateMaterialFormat::GitChangeSetV1 {
-        bail!(
-            "new candidate writes require typed material; run `papertiger-mise candidate build-material --repository <repo> --base-tree <tree> --result-tree <tree> --output <file>`"
-        );
-    }
-    record_candidate_in(
-        connection,
-        actor,
-        object_root,
-        reservation_id,
-        candidate,
-        material_object,
-    )
-}
-
-#[cfg(test)]
-fn record_legacy_candidate_for_test(
-    connection: &Connection,
-    actor: &str,
-    object_root: &Path,
-    reservation_id: &str,
-    candidate: &BoundCandidate,
-    material_object: &PreservedObject,
-) -> Result<bool> {
-    record_candidate_in(
-        connection,
-        actor,
-        object_root,
-        reservation_id,
-        candidate,
-        material_object,
-    )
-}
-
-fn record_candidate_in(
-    connection: &Connection,
-    actor: &str,
-    object_root: &Path,
-    reservation_id: &str,
-    candidate: &BoundCandidate,
-    material_object: &PreservedObject,
-) -> Result<bool> {
     validate_nonblank("actor", actor)?;
     validate_nonblank("reservation_id", reservation_id)?;
     verify_object(object_root, material_object)?;
-    let rebound = match candidate.material_format {
-        CandidateMaterialFormat::GitChangeSetV1 => crate::candidate::bind_candidate(
-            candidate.proposal.clone(),
-            candidate.material_bytes.clone(),
-        )?,
-        CandidateMaterialFormat::LegacyGitPatchV1 => bind_legacy_patch_candidate(
-            candidate.proposal.clone(),
-            candidate.material_bytes.clone(),
-        )?,
-    };
+    let rebound = crate::candidate::bind_candidate(
+        candidate.proposal.clone(),
+        candidate.material_bytes.clone(),
+    )?;
     if &rebound != candidate {
         bail!("candidate fields do not recompute their canonical identity");
     }
@@ -483,34 +429,15 @@ fn record_candidate_in(
     }
     let manifest = campaign_manifest(connection, &candidate.proposal.campaign_id)?;
     validate_candidate_against_manifest(candidate, &manifest)?;
-    match candidate.material_format {
-        CandidateMaterialFormat::GitChangeSetV1 => {
-            let material = CandidateMaterial::parse_canonical(&candidate.material_bytes)?;
-            if material.change_set.changes.is_empty() {
-                if candidate.material_sha256 != manifest.calibration.no_op_material_sha256().0
-                    || candidate.proposal.semantic_class != "calibration-no-op"
-                {
-                    bail!("only the manifest-bound no-op calibration may use an empty change set");
-                }
-            } else {
-                validate_mutation_scope(&material.scope.changed_paths, &manifest)?;
-            }
+    let material = CandidateMaterial::parse_canonical(&candidate.material_bytes)?;
+    if material.change_set.changes.is_empty() {
+        if candidate.material_sha256 != manifest.calibration.no_op_material_sha256().0
+            || candidate.proposal.semantic_class != "calibration-no-op"
+        {
+            bail!("only the manifest-bound no-op calibration may use an empty change set");
         }
-        CandidateMaterialFormat::LegacyGitPatchV1 => {
-            if candidate.material_bytes.is_empty() {
-                if candidate.material_sha256 != manifest.calibration.no_op_material_sha256().0
-                    || candidate.proposal.semantic_class != "calibration-no-op"
-                {
-                    bail!("only the manifest-bound no-op calibration may use an empty patch");
-                }
-            } else {
-                let actual_paths = exact_patch_paths(candidate)?;
-                if actual_paths != candidate.proposal.changed_paths {
-                    bail!("candidate declared changed paths differ from its exact patch headers");
-                }
-                validate_mutation_scope(&actual_paths, &manifest)?;
-            }
-        }
+    } else {
+        validate_mutation_scope(&material.scope.changed_paths, &manifest)?;
     }
     let proposal_json = serde_json::to_string(&candidate.proposal)?;
     let transaction = begin_mutation(connection)?;
@@ -593,11 +520,11 @@ fn record_candidate_in(
         "candidate",
         &candidate.candidate_id,
     )?;
-    let media_type = match candidate.material_format {
-        CandidateMaterialFormat::GitChangeSetV1 => crate::candidate::GIT_CHANGE_SET_MEDIA_TYPE,
-        CandidateMaterialFormat::LegacyGitPatchV1 => "text/x-diff; charset=utf-8",
-    };
-    record_artifact_in(&transaction, material_object, media_type)?;
+    record_artifact_in(
+        &transaction,
+        material_object,
+        crate::candidate::GIT_CHANGE_SET_MEDIA_TYPE,
+    )?;
     let timestamp = now();
     transaction.execute(
         "INSERT INTO candidates
@@ -619,17 +546,9 @@ fn record_candidate_in(
             params![candidate.candidate_id, parent],
         )?;
     }
-    let artifact_role = match candidate.material_format {
-        CandidateMaterialFormat::GitChangeSetV1 => "material",
-        CandidateMaterialFormat::LegacyGitPatchV1 => "patch",
-    };
     transaction.execute(
-        "INSERT INTO candidate_artifacts (candidate_id, role, sha256) VALUES (?1, ?2, ?3)",
-        params![
-            candidate.candidate_id,
-            artifact_role,
-            candidate.material_sha256
-        ],
+        "INSERT INTO candidate_artifacts (candidate_id, role, sha256) VALUES (?1, 'material', ?2)",
+        params![candidate.candidate_id, candidate.material_sha256],
     )?;
     record_event_in_mutation(
         &transaction,
@@ -780,24 +699,12 @@ pub fn materialize_candidate(
         }
         verify_tree_has_only_regular_files(&manifest, &result_tree)?;
         let receipt = MaterializationReceipt {
-            schema: if manifest.candidate_material.is_some() {
-                "papertiger-mise.materialization.v4"
-            } else {
-                "papertiger-mise.materialization.v3"
-            }
-            .to_owned(),
+            schema: "papertiger-mise.materialization.v4".to_owned(),
             campaign_id: durable_candidate.campaign_id.clone(),
             candidate_id: candidate_id.to_owned(),
             base_commit: manifest.source.base_commit.clone(),
             base_tree: manifest.source.base_tree.clone(),
-            patch_sha256: manifest
-                .candidate_material
-                .is_none()
-                .then(|| durable_candidate.material_sha256.clone()),
-            material_sha256: manifest
-                .candidate_material
-                .is_some()
-                .then(|| durable_candidate.material_sha256.clone()),
+            material_sha256: durable_candidate.material_sha256.clone(),
             result_tree: result_tree.clone(),
             worktree_locator: requested_locator.clone(),
             adapter_sha256: proposal.adapter_sha256.clone(),
@@ -1083,16 +990,6 @@ fn validate_candidate_against_manifest(
     candidate: &BoundCandidate,
     manifest: &CampaignManifest,
 ) -> Result<()> {
-    match (&manifest.candidate_material, candidate.material_format) {
-        (Some(_), CandidateMaterialFormat::GitChangeSetV1) => {}
-        (None, CandidateMaterialFormat::LegacyGitPatchV1) => {}
-        (Some(_), CandidateMaterialFormat::LegacyGitPatchV1) => {
-            bail!("typed candidate-material campaign refuses legacy Git patch material")
-        }
-        (None, CandidateMaterialFormat::GitChangeSetV1) => {
-            bail!("legacy campaign does not admit typed candidate material")
-        }
-    }
     if candidate.proposal.base_commit != manifest.source.base_commit
         || candidate.proposal.base_tree != manifest.source.base_tree
     {
@@ -1105,91 +1002,6 @@ fn validate_candidate_against_manifest(
         bail!("candidate adapter differs from the frozen campaign adapter");
     }
     Ok(())
-}
-
-fn exact_patch_paths(candidate: &BoundCandidate) -> Result<BTreeSet<String>> {
-    let patch =
-        std::str::from_utf8(&candidate.material_bytes).context("candidate patch is not UTF-8")?;
-    let mut paths = BTreeSet::new();
-    let mut current: Option<(String, bool, bool)> = None;
-    for line in patch.lines() {
-        if let Some(header) = line.strip_prefix("diff --git ") {
-            if current
-                .as_ref()
-                .is_some_and(|(_, old_seen, new_seen)| !old_seen || !new_seen)
-            {
-                bail!("candidate patch has an incomplete Git file header");
-            }
-            let mut fields = header.split(' ');
-            let old = fields.next().context("patch has no old path")?;
-            let new = fields.next().context("patch has no new path")?;
-            if fields.next().is_some()
-                || !old.starts_with("a/")
-                || !new.starts_with("b/")
-                || old[2..] != new[2..]
-                || old.contains('"')
-                || new.contains('"')
-            {
-                bail!(
-                    "legacy git_patch.v1 material accepts only unquoted, non-renaming Git patch headers"
-                );
-            }
-            let path = old[2..].to_owned();
-            paths.insert(path.clone());
-            current = Some((path, false, false));
-        } else if let Some(old) = line.strip_prefix("--- ") {
-            let (path, old_seen, _) = current
-                .as_mut()
-                .context("patch old-file marker precedes a Git file header")?;
-            if old == "/dev/null" {
-                bail!(
-                    "legacy git_patch.v1 candidate patches do not admit /dev/null new-file markers"
-                );
-            }
-            if *old_seen || old != format!("a/{path}") {
-                bail!("candidate patch old-file marker differs from its Git header");
-            }
-            *old_seen = true;
-        } else if let Some(new) = line.strip_prefix("+++ ") {
-            let (path, _, new_seen) = current
-                .as_mut()
-                .context("patch new-file marker precedes a Git file header")?;
-            if new == "/dev/null" {
-                bail!(
-                    "legacy git_patch.v1 candidate patches do not admit /dev/null deletion markers"
-                );
-            }
-            if *new_seen || new != format!("b/{path}") {
-                bail!("candidate patch new-file marker differs from its Git header");
-            }
-            *new_seen = true;
-        }
-        if line.starts_with("rename from ")
-            || line.starts_with("rename to ")
-            || line.starts_with("copy from ")
-            || line.starts_with("copy to ")
-            || line.starts_with("old mode ")
-            || line.starts_with("new mode ")
-            || line.starts_with("new file mode ")
-            || line.starts_with("deleted file mode ")
-            || line.starts_with("similarity index ")
-        {
-            bail!("legacy git_patch.v1 candidate patches do not admit rename/copy/mode records");
-        }
-        if line == "GIT binary patch" || line.starts_with("Binary files ") {
-            bail!("legacy git_patch.v1 candidate patches require inspectable textual file markers");
-        }
-    }
-    if current
-        .as_ref()
-        .is_some_and(|(_, old_seen, new_seen)| !old_seen || !new_seen)
-    {
-        bail!("candidate patch has an incomplete Git file header");
-    }
-    if paths.is_empty() {
-        bail!("candidate patch contains no canonical Git file headers");
-    }
-    Ok(paths)
 }
 
 fn validate_mutation_scope(paths: &BTreeSet<String>, manifest: &CampaignManifest) -> Result<()> {
@@ -2008,88 +1820,31 @@ fn validate_observation_bindings(
     Ok(())
 }
 
-fn deterministic_trial_receipt_schema(manifest: &CampaignManifest) -> &'static str {
-    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {
-        "papertiger-mise.trial_receipt.v5"
-    } else if manifest.evaluator.judge_build.is_some() {
-        "papertiger-mise.trial_receipt.v4"
-    } else if manifest.evaluator.rust_build_environment.is_some() {
-        "papertiger-mise.trial_receipt.v3"
-    } else {
-        "papertiger-mise.trial_receipt.v2"
-    }
-}
+/// Every admitted campaign is `papertiger-mise.campaign.v4`, whose
+/// deterministic trials bind the runtime-owned environment.
+pub(crate) const DETERMINISTIC_TRIAL_RECEIPT_SCHEMA: &str = "papertiger-mise.trial_receipt.v5";
 
 fn validate_trial_receipt_schema(
     trial: &TrialRecord,
     receipt: &TrialReceipt,
     manifest: &CampaignManifest,
 ) -> Result<()> {
-    let expected_schema = deterministic_trial_receipt_schema(manifest);
-    if receipt.schema != expected_schema {
+    if receipt.schema != DETERMINISTIC_TRIAL_RECEIPT_SCHEMA {
         return Err(crate::schema_ids::schema_refusal(
             "trial receipt",
             &receipt.schema,
-            expected_schema,
+            DETERMINISTIC_TRIAL_RECEIPT_SCHEMA,
             crate::schema_ids::STORED_EVIDENCE_REMEDY,
         ));
     }
-    if manifest.schema == crate::manifest::CAMPAIGN_SCHEMA_V4 {
-        let expected = sha256(&serde_json::to_vec(&trial.environment)?);
-        if receipt.environment_sha256.as_deref() != Some(expected.as_str()) {
-            bail!(
-                "provenance-bound trial receipt requires the exact runtime-owned environment_sha256"
-            );
-        }
-        if receipt.judge_build.is_some() != manifest.evaluator.judge_build.is_some() {
-            bail!(
-                "provenance-bound trial receipt must include judge_build exactly when the manifest admits it"
-            );
-        }
-        return Ok(());
+    let expected = sha256(&serde_json::to_vec(&trial.environment)?);
+    if receipt.environment_sha256.as_deref() != Some(expected.as_str()) {
+        bail!("provenance-bound trial receipt requires the exact runtime-owned environment_sha256");
     }
-    match (
-        &manifest.evaluator.rust_build_environment,
-        &manifest.evaluator.judge_build,
-    ) {
-        (None, None) => {
-            if receipt.schema != "papertiger-mise.trial_receipt.v2"
-                || receipt.environment_sha256.is_some()
-                || receipt.judge_build.is_some()
-            {
-                bail!(
-                    "ordinary deterministic trials require an exact papertiger-mise.trial_receipt.v2"
-                );
-            }
-        }
-        (Some(_), None) => {
-            if receipt.schema != "papertiger-mise.trial_receipt.v3" {
-                bail!(
-                    "Rust-build trials require an exact environment-bound papertiger-mise.trial_receipt.v3"
-                );
-            }
-            let expected = sha256(&serde_json::to_vec(&trial.environment)?);
-            if receipt.environment_sha256.as_deref() != Some(expected.as_str()) {
-                bail!("trial receipt does not bind the exact runtime-owned Rust environment");
-            }
-            if receipt.judge_build.is_some() {
-                bail!(
-                    "papertiger-mise.trial_receipt.v3 Rust-build receipt cannot contain a judge build"
-                );
-            }
-        }
-        (_, Some(_)) => {
-            if receipt.schema != "papertiger-mise.trial_receipt.v4" {
-                bail!("judge-build trials require an exact papertiger-mise.trial_receipt.v4");
-            }
-            let expected = sha256(&serde_json::to_vec(&trial.environment)?);
-            if receipt.environment_sha256.as_deref() != Some(expected.as_str()) {
-                bail!("judge-build receipt does not bind the exact runtime-owned environment");
-            }
-            if receipt.judge_build.is_none() {
-                bail!("papertiger-mise.trial_receipt.v4 omitted its judge build");
-            }
-        }
+    if receipt.judge_build.is_some() != manifest.evaluator.judge_build.is_some() {
+        bail!(
+            "provenance-bound trial receipt must include judge_build exactly when the manifest admits it"
+        );
     }
     Ok(())
 }

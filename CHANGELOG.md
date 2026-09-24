@@ -40,6 +40,18 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Removed
 
+- Mise's readers for the provenance-free campaign shapes:
+  `papertiger-mise.campaign.v3` with Git-patch candidate material,
+  deterministic evaluator request and output v2, trial receipts v2–v4,
+  materialization v3, candidate identity v2, paired analysis v2, paired trial
+  request v3, and parent promotion proof v2. Admission already accepted only
+  `papertiger-mise.campaign.v4`, and no known Mise authority stores any of these
+  records; one that did is now refused with the expected identifier. A
+  `campaign.v4` manifest must declare `candidate_material` and each
+  calibration's `candidate_material_sha256`; `campaign preflight` and admission
+  refuse a manifest that omits them or still carries `candidate_patch_sha256`.
+  Every objective must bind a measurement contract, and every deterministic
+  observation must carry its measurement provenance.
 - The v1 and v2 improvement-paradigm registries. `improvement verify-brief`
   and `improvement compile` read only the current built-in registry and refuse
   a brief bound to any other registry digest; rebind such a brief to the digest

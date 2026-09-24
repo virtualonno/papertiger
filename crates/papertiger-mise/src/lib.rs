@@ -43,7 +43,7 @@ pub use attestation::{
 pub use adapter::{
     DomainBlockMeasurement, DomainObjectiveMeasurement, DomainObservationResult, DomainParticipant,
     DomainSessionEvidence, DomainTrialMeasurement, DomainTrialResult,
-    PAIRED_ADAPTER_BINDING_SCHEMA_V2, PAIRED_TRIAL_REQUEST_SCHEMA_V3, PairedAdapterBinding,
+    PAIRED_ADAPTER_BINDING_SCHEMA_V2, PAIRED_TRIAL_REQUEST_SCHEMA_V4, PairedAdapterBinding,
     PairedAdapterCohort, PairedExecutionParticipant, PairedExecutionParticipants,
     PairedParticipantRole, PairedTrialObjective, PairedTrialRequest, VerifiedAdapterResult,
     execute_paired_adapter, execute_paired_adapter_cohort,
@@ -118,9 +118,9 @@ pub use state::{
     PairedExecutionStatus, TrialStatus,
 };
 pub use statistics::{
-    ExactPValue, MedianOrderStatistics, NoOpCalibrationResult, PAIRED_ANALYSIS_SCHEMA_V2,
-    PAIRED_ANALYSIS_SCHEMA_V3, PAIRED_MEASUREMENT_PROTOCOL_V2, PairedAnalysisMethod,
-    PairedAnalysisPlan, PairedAnalysisSlotRecord, PairedBlockDesign, PairedBlockObservation,
+    ExactPValue, MedianOrderStatistics, NoOpCalibrationResult, PAIRED_ANALYSIS_SCHEMA_V3,
+    PAIRED_MEASUREMENT_PROTOCOL_V2, PairedAnalysisMethod, PairedAnalysisPlan,
+    PairedAnalysisSlotRecord, PairedBlockDesign, PairedBlockObservation,
     PairedCalibrationFixtureBindings, PairedCandidateContext, PairedClassification, PairedCohort,
     PairedDisposition, PairedFixtureBinding, PairedHypothesisKind, PairedHypothesisResult,
     PairedObjectiveObservation, PairedObjectivePolicy, PairedObjectiveResult, PairedRunOrder,
@@ -135,8 +135,8 @@ pub use store::{
     open_for_init, successor_admission,
 };
 pub use successor::{
-    PARENT_PROMOTION_PROOF_SCHEMA_V2, PARENT_PROMOTION_PROOF_SCHEMA_V3, ParentPromotionProof,
-    PreservedParentPromotionProof, SUCCESSOR_ADMISSION_SCOPE_V1, VerifiedParentPromotionGate,
-    VerifiedSuccessorAdmission, admit_verified_successor, derive_parent_promotion_proof,
-    preserve_parent_promotion_proof, verify_parent_promotion_gate, verify_successor_admission,
+    PARENT_PROMOTION_PROOF_SCHEMA_V3, ParentPromotionProof, PreservedParentPromotionProof,
+    SUCCESSOR_ADMISSION_SCOPE_V1, VerifiedParentPromotionGate, VerifiedSuccessorAdmission,
+    admit_verified_successor, derive_parent_promotion_proof, preserve_parent_promotion_proof,
+    verify_parent_promotion_gate, verify_successor_admission,
 };

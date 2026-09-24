@@ -182,7 +182,7 @@ mod tests {
                 minimum_practical_change: 0.0,
                 regression_tolerance: 0.0,
                 acceptance_threshold: Some(1.0),
-                measurement: None,
+                measurement: Some(crate::measurement::tests::contract("boolean")),
                 target_value: None,
             },
             ObjectiveSpec {
@@ -193,7 +193,7 @@ mod tests {
                 minimum_practical_change: 1.0,
                 regression_tolerance: 0.0,
                 acceptance_threshold: None,
-                measurement: None,
+                measurement: Some(crate::measurement::tests::contract("milliseconds")),
                 target_value: None,
             },
             ObjectiveSpec {
@@ -204,14 +204,15 @@ mod tests {
                 minimum_practical_change: 0.0,
                 regression_tolerance: 2.0,
                 acceptance_threshold: None,
-                measurement: None,
+                measurement: Some(crate::measurement::tests::contract("mebibytes")),
                 target_value: None,
             },
         ]
     }
 
     fn observations(correct: f64, latency: f64, memory: f64) -> Vec<DeterministicObservation> {
-        vec![
+        let definitions = definitions();
+        let mut observations = vec![
             DeterministicObservation {
                 provenance: None,
                 objective: "correct".to_owned(),
@@ -230,7 +231,22 @@ mod tests {
                 baseline: 100.0,
                 candidate: memory,
             },
-        ]
+        ];
+        for observation in &mut observations {
+            let contract = definitions
+                .iter()
+                .find(|definition| definition.key == observation.objective)
+                .and_then(|definition| definition.measurement.as_ref())
+                .expect("fixture contract");
+            observation.provenance = Some(crate::measurement::tests::provenance(
+                contract,
+                ("baseline-tree", "candidate-tree"),
+                &"a".repeat(64),
+                &"b".repeat(64),
+                (observation.baseline, observation.candidate),
+            ));
+        }
+        observations
     }
 
     #[test]

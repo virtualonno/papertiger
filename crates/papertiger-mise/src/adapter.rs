@@ -16,7 +16,6 @@ use crate::statistics::{
 use crate::validation::validate_bounded_token as validate_token;
 
 pub const PAIRED_ADAPTER_BINDING_SCHEMA_V2: &str = "papertiger-mise.paired_adapter_binding.v2";
-pub const PAIRED_TRIAL_REQUEST_SCHEMA_V3: &str = "papertiger-mise.paired_trial_request.v3";
 pub const PAIRED_TRIAL_REQUEST_SCHEMA_V4: &str = "papertiger-mise.paired_trial_request.v4";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -434,15 +433,7 @@ pub(crate) fn prepare_paired_adapter_cohort(
                 PairedParticipantRole::Candidate => &participants.candidate,
             };
             requests.push(PairedTrialRequest {
-                schema: if objectives
-                    .iter()
-                    .any(|objective| objective.measurement.is_some())
-                {
-                    PAIRED_TRIAL_REQUEST_SCHEMA_V4
-                } else {
-                    PAIRED_TRIAL_REQUEST_SCHEMA_V3
-                }
-                .to_owned(),
+                schema: PAIRED_TRIAL_REQUEST_SCHEMA_V4.to_owned(),
                 execution_id: trial_execution_id(
                     experiment_id,
                     &schedule_sha256,
