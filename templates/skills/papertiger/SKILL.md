@@ -45,7 +45,12 @@ to ask permission for requested work.
 papertiger start <N> --why "Why this work resumes" --json
 papertiger add "Outcome" --plan <slug> --start --intent "Standalone purpose" --intent-source user --why "Why now" --json
 papertiger done <N> --result "Outcome and verification" --result-source agent --json
+papertiger decompose <N> --outline-file outline.json --start-ready --json
 ```
+
+Split a multi-part outcome into child tasks with one `decompose` call instead
+of inventing section or phase labels. Refer to local work by task number inside
+Papertiger and by its outcome everywhere else.
 
 Read rejected history before reviving an approach. Choose `user`, `agent`, or
 `external` for the actual source of intent. Write `--why` for choices a cold

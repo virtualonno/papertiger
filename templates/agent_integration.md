@@ -282,6 +282,14 @@ papertiger gate resolve <task.seq> <name> \
 papertiger done <task.seq>
 ```
 
+Decompose a multi-part outcome into child tasks with one
+`decompose <parent> --outline-file <path|->` call (`papertiger schema` defines
+`papertiger.task_outline.v1`); its receipt lists one task create event per child
+in outline order. A replay is refused only while the earlier children are still
+live, so check `show <parent>` before retrying. Refer to local work by task
+number inside Papertiger and by its outcome everywhere else; never invent
+section or phase labels for parts of the work.
+
 Replacing intent that already has a source requires either a replacement
 `--intent-source` or `--clear-intent-source`; unchanged text keeps its stored
 source. Use `edit <task.seq> --clear-intent-source --why <reason>` to correct a
