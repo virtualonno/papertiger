@@ -30,6 +30,11 @@ All notable user-visible changes are documented here. Papertiger follows
   or complete until the edge was removed by hand. The refusal shows the chain
   of dependencies and unfinished children that makes the tasks wait, and names
   the `dep remove` command for each dependency in it.
+- `reopen` refuses a task that would make its parent wait for it forever,
+  for example a retired child that gained a dependency on a task downstream of
+  its parent, or a finished task moved under such a parent. The refusal shows
+  the chain and names the `edit --parent`, `edit --clear-parent` and
+  `dep remove` commands that resolve it.
 
 ## [0.19.0] - 2026-09-23
 

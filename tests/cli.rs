@@ -997,6 +997,41 @@ fn dependencies_that_finish_only_after_their_dependent_are_refused() {
         &db.0,
         &["add", "Sibling", "--parent", "2", "--dep", "4"],
     ));
+
+    // A finished task gains no wait edge when moved, but reopening it makes
+    // its new parent wait for it again.
+    assert_success(&papertiger(&db.0, &["add", "Moved later", "--dep", "3"]));
+    assert_success(&papertiger(&db.0, &["retire", "7", "--why", "set aside"]));
+    assert_success(&papertiger(
+        &db.0,
+        &[
+            "edit",
+            "7",
+            "--parent",
+            "2",
+            "--why",
+            "file it under the parent",
+        ],
+    ));
+    let before = head(&db);
+    let refused = papertiger(&db.0, &["reopen", "7", "--why", "needed again"]);
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains(
+            "reopening #7 would deadlock: #7 finishes only after its parent #2 (#7 depends on #3, which depends on #2), which would wait for it again; move it first with `papertiger edit 7 --parent <task>` or `papertiger edit 7 --clear-parent`, or first remove a dependency in that chain with `papertiger dep remove 7 3 --why <reason>` or `papertiger dep remove 3 2 --why <reason>`"
+        ),
+        "{stderr}"
+    );
+    assert_eq!(head(&db), before);
+    assert_success(&papertiger(
+        &db.0,
+        &["dep", "remove", "7", "3", "--why", "no longer downstream"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["reopen", "7", "--why", "needed again"],
+    ));
 }
 
 #[test]

@@ -2085,6 +2085,15 @@ pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Resul
                 parent.1
             );
         }
+        // Reopening makes the parent wait for this child again.
+        if let Some(steps) = task_graph::waits_for(&tx, seq, parent.0)? {
+            bail!(
+                "reopening #{seq} would deadlock: #{seq} finishes only after its parent #{} ({}), which would wait for it again; move it first with `papertiger edit {seq} --parent <task>` or `papertiger edit {seq} --clear-parent`{}",
+                parent.0,
+                task_graph::describe_chain(seq, &steps),
+                task_graph::or_remove_dependency(seq, &steps)
+            );
+        }
     }
     let completed_dependents = completed_dependent_sequences(&tx, task.task_id)?;
     if !completed_dependents.is_empty() {
