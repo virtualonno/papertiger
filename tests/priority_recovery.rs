@@ -156,6 +156,29 @@ fn recovery_requires_explicit_isolated_edit_and_rolls_back_on_other_corruption()
 }
 
 #[test]
+fn decompose_reports_an_unreadable_dependency_with_its_corrective_error() {
+    let conn = fixture();
+    let plan = conn
+        .query_row("SELECT plan_id FROM plans WHERE slug='work'", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap();
+    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Parent")).unwrap();
+    let outline = pt::parse_task_outline(
+        br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","deps":[1]}]}"#,
+    )
+    .unwrap();
+    let error = pt::decompose_task(&conn, "test", parent, &outline, false, None)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("papertiger edit 1 --priority <integer>"),
+        "{error}"
+    );
+    assert!(!error.contains("does not exist"), "{error}");
+}
+
+#[test]
 fn non_text_corruption_is_not_coerced_by_recovery() {
     let conn = fixture();
     conn.execute("UPDATE tasks SET priority=1.5 WHERE seq=1", [])

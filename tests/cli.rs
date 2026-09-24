@@ -5,6 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "cli/schema_contracts.rs"]
 mod schema_contracts;
+#[path = "cli/task_outline.rs"]
+mod task_outline;
 
 #[test]
 fn session_pickup_is_visible_advisory_and_requires_no_release() {

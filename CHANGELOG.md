@@ -6,6 +6,17 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Added
+
+- `decompose <parent> --outline-file <path|->` creates all of a parent's child
+  tasks, with dependencies between them and on existing tasks, from one
+  `papertiger.task_outline.v1` JSON outline in a single transaction. Outline
+  keys wire the dependencies and are not stored; the receipt lists one task
+  create event per child in outline order. `--start-ready` also starts the
+  children whose dependencies are already done. Any invalid entry, unknown
+  reference, dependency cycle, dependency that waits for the parent, or
+  duplicate title refuses the whole outline and lists every problem.
+
 ### Fixed
 
 - `add --dep`, `dep add` and `edit --parent` refuse an edge that would leave

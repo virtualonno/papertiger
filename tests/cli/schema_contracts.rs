@@ -110,6 +110,44 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
         "--json",
     ]);
     run(&["export", "--plan", "destination"]);
+    let outline = json!({"schema": "papertiger.task_outline.v1", "children": [
+        {"key": "model", "title": "Model outline work", "intent": "Split outline work",
+         "intent_source": "agent", "why": "exercise the outline receipt", "tags": ["outline"],
+         "priority": 1},
+        {"key": "check", "title": "Check outline work", "kind": "probe", "deps": ["model", 1]}
+    ]});
+    validator
+        .validate(&outline)
+        .unwrap_or_else(|error| panic!("outline violates its schema: {error}"));
+    for (path, invalid) in [
+        ("/children/0/key", json!("1bad")),
+        ("/children/1/deps/1", json!("#1")),
+        ("/children/1/kind", json!("chore")),
+    ] {
+        let mut corrupt = outline.clone();
+        *corrupt.pointer_mut(path).unwrap() = invalid;
+        assert!(!validator.is_valid(&corrupt), "accepted invalid {path}");
+    }
+    let outline_path = format!("{}.outline.json", db.0.display());
+    std::fs::write(&outline_path, outline.to_string()).unwrap();
+    let decomposed = run(&[
+        "decompose",
+        "2",
+        "--outline-file",
+        &outline_path,
+        "--start-ready",
+        "--json",
+    ]);
+    std::fs::remove_file(&outline_path).unwrap();
+    assert_eq!(decomposed["schema"], "papertiger.mutation.v1");
+    assert_eq!(
+        decomposed["events"][0]["task"]["title"],
+        "Model outline work"
+    );
+    assert_eq!(
+        decomposed["events"][1]["task"]["title"],
+        "Check outline work"
+    );
     run(&[
         "gate",
         "waive",

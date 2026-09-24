@@ -41,11 +41,16 @@ pub use pickup::{TaskPickup, validate_session};
 pub use write_guard::{GuardDrift, GuardDriftState};
 mod plan_move;
 pub use plan_move::move_tasks_to_plan;
+mod task_outline;
 pub use read_model::{
     ActivityEvent, AuthorityInfo, EventCursor, EventLog, EventRecord, PlanIdentity, PlanStatus,
     StatusInProgress, StatusProjection, StatusReadyTask, StatusResponse, StatusTask, TaskActivity,
     TaskCounts, TaskListItem, TaskListResponse, TaskSummary, authority_info, event_cursor,
     event_head, event_log, status_response, task_activity, task_list_response,
+};
+pub use task_outline::{
+    OutlineChild, OutlineEntry, TASK_OUTLINE_SCHEMA, TaskOutline, decompose_task,
+    parse_task_outline,
 };
 mod search;
 pub use search::{SearchExcerpt, SearchHit, SearchResponse, search_tasks};

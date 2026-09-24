@@ -44,6 +44,9 @@
     },
     {
       "$ref": "#/$defs/history_inspection"
+    },
+    {
+      "$ref": "#/$defs/task_outline"
     }
   ],
   "$defs": {
@@ -2364,6 +2367,102 @@
           ]
         }
       }
+    },
+    "outline_key": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+    },
+    "task_outline": {
+      "description": "Input to `papertiger decompose <parent> --outline-file <path|->`: the parent's new child tasks. A string dependency names a sibling key; an integer names an existing task in the parent's plan. Keys wire dependencies only and are never stored. The papertiger.mutation.v1 receipt lists one task create event per child, in outline order, before any dependency or status event.",
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.task_outline.v1"
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "$ref": "#/$defs/outline_key"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "intent": {
+                "type": "string"
+              },
+              "intent_source": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/meaning_source"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "why": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "work",
+                  "probe",
+                  "decision"
+                ]
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                }
+              },
+              "priority": {
+                "type": "integer"
+              },
+              "deps": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/outline_key"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "key",
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "children"
+      ],
+      "additionalProperties": false
     }
   }
 }

@@ -145,6 +145,18 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   obtain new task selectors from `events[].task.seq` without scraping prose.
   Refusals emit no success receipt; idempotent operations can report
   `changed=false`. Initialization has its own human-readable migration result.
+- `decompose <N> --outline-file <path|->` creates a parent's child tasks and
+  their dependencies from one `papertiger.task_outline.v1` outline in a single
+  transaction. Dependencies name siblings by batch-local key or existing tasks
+  by number; keys are never stored. The receipt lists one task create event per
+  child in outline order, and plain output prints each key with its new task.
+  The whole outline is validated first: an invalid entry, unknown reference,
+  sibling cycle, dependency that waits for the parent, or title that repeats
+  another child or a live child of the parent refuses every child.
+  `--start-ready` also starts the children whose dependencies are all done
+  tasks. A replay is refused by its duplicate titles only while the earlier
+  children are still proposed or in progress; once they are finished, the same
+  outline creates new children, so check `show <parent>` before retrying.
 - `--model <model-id>` or `PAPERTIGER_MODEL` optionally records caller-reported
   event authorship independently of actor and meaning source. Creation,
   completion, and status history expose it; historical unknowns remain null.

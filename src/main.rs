@@ -115,6 +115,20 @@ enum Cmd {
         #[arg(long)]
         start: bool,
     },
+    /// Create a parent's child tasks and their dependencies from a JSON outline in one atomic call
+    #[command(
+        after_help = "Outline: papertiger.task_outline.v1 in `papertiger schema`. Each child has a batch-local \"key\" and a \"title\", and optionally \"intent\", \"intent_source\", \"why\", \"kind\", \"tags\", \"priority\" and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
+    )]
+    Decompose {
+        /// Parent task number (N or #N)
+        parent: String,
+        /// Read the papertiger.task_outline.v1 outline as UTF-8 from PATH, or stdin with '-'
+        #[arg(long, value_name = "PATH|-")]
+        outline_file: String,
+        /// Also start every child whose dependencies are all existing done tasks; each needs a "why"
+        #[arg(long)]
+        start_ready: bool,
+    },
     /// Show one task in full
     Show {
         /// Task number (N or #N)
@@ -1645,6 +1659,35 @@ fn run_planner(cli: Cli) -> Result<()> {
                 mutation_output!("#{seq} added to {slug}");
             }
         }
+        Cmd::Decompose {
+            parent,
+            outline_file,
+            start_ready,
+        } => {
+            let parent = pt::parse_task_ref(&parent)?;
+            let bytes = read_input_bytes(&outline_file, "task outline")?;
+            let outline = pt::parse_task_outline(&bytes)?;
+            let children = pt::decompose_task(
+                &conn,
+                &actor,
+                parent,
+                &outline,
+                start_ready,
+                session.as_deref(),
+            )?;
+            mutation_output!(
+                "#{parent} decomposed into {} child task(s):",
+                children.len()
+            );
+            for child in &children {
+                let started = if child.status == "in_progress" {
+                    " (in progress)"
+                } else {
+                    ""
+                };
+                mutation_output!("  {} -> #{}{started}", child.key, child.seq);
+            }
+        }
         Cmd::Show { task, no_history } => {
             let seq = pt::parse_task_ref(&task)?;
             if no_history {
@@ -2470,16 +2513,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Mise { cmd } => match cmd {
             MiseCmd::Record { task, projection } => {
                 let task_seq = pt::parse_task_ref(&task)?;
-                let bytes = if projection == "-" {
-                    let mut bytes = Vec::new();
-                    std::io::stdin()
-                        .read_to_end(&mut bytes)
-                        .context("read Mise planner projection from stdin")?;
-                    bytes
-                } else {
-                    std::fs::read(&projection)
-                        .with_context(|| format!("read Mise planner projection {projection}"))?
-                };
+                let bytes = read_input_bytes(&projection, "Mise planner projection")?;
                 let (outcome, record) =
                     pt::record_mise_projection(&conn, &actor, task_seq, &bytes)?;
                 mutation_output!(
@@ -2536,6 +2570,19 @@ fn run_planner(cli: Cli) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&recorder.receipt()?)?);
     }
     Ok(())
+}
+
+/// Read a whole input file, or stdin for '-'.
+fn read_input_bytes(path: &str, label: &str) -> Result<Vec<u8>> {
+    if path == "-" {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("read {label} from stdin"))?;
+        Ok(bytes)
+    } else {
+        std::fs::read(path).with_context(|| format!("read {label} {path}"))
+    }
 }
 
 fn short_event_time(at: &str) -> String {
