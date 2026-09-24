@@ -227,8 +227,8 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   vectors. Other locator schemes remain explicitly unsupported until they have
   scheme-specific authority-backed verifiers.
 - `gate resolve` and `blocker resolve` refuse a new `file:` locator that is
-  absolute, leaves the project root, or does not name an existing regular file
-  beneath it, using the same path rules as `evidence verify`; with `--sha256`
+  absolute, leaves the project root, separates components with `\`, or does
+  not name an existing regular file beneath it, using the same path rules as `evidence verify`; with `--sha256`
   they also refuse a digest that does not match the file's current bytes and
   name the actual digest. The root is the
   explicit `--project-root` or the discovered project; an authority selected by

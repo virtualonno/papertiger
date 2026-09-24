@@ -180,10 +180,11 @@ schemes are reported, never counted as verified. Failed bindings include exact
 corrective argument vectors for their evented reopen-and-rebind workflow.
 
 `gate resolve` and `blocker resolve` refuse a new `file:` locator unless it is
-relative to the project root and names an existing regular file there whose
-bytes match any `--sha256` given; evidence
-under ignored or temporary paths rots, so keep durable text in the authority
-with `--result-file` or `note --text-file` instead.
+relative to the project root, uses `/` separators, and names an existing
+regular file there whose bytes match any `--sha256` given. Evidence under
+ignored or temporary paths rots, so keep durable text in the authority with
+`note --text-file <path> --task <task>` and resolve with a non-file locator
+such as `note:<summary>`.
 
 A `file:` locator plus SHA-256 is the byte receipt for retained evidence, not a
 Git snapshot. For a commit-backed outcome, bind an immutable audit receipt as

@@ -1406,6 +1406,88 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
 }
 
 #[test]
+fn new_file_evidence_resolves_against_the_discovered_project_from_a_subdirectory() {
+    let project = TestDirectory::new("file-evidence-discovered");
+    let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .arg("setup-project")
+        .arg(&project.0)
+        .args(["--skill-target", "none"])
+        .env_remove("PAPERTIGER_DB")
+        .env_remove("PAPERTIGER_ACTOR")
+        .output()
+        .unwrap();
+    assert_success(&setup);
+    std::fs::create_dir_all(project.0.join("docs")).unwrap();
+    std::fs::write(project.0.join("docs/proof.txt"), b"proof\n").unwrap();
+    let invoke = |args: &[&str]| {
+        Command::new(installed_papertiger(&project.0))
+            .args(args)
+            .current_dir(project.0.join("docs"))
+            .env_remove("PAPERTIGER_DB")
+            .env("PAPERTIGER_ACTOR", "evidence-test")
+            .output()
+            .unwrap()
+    };
+    assert_success(&invoke(&["init"]));
+    assert_success(&invoke(&["plan", "add", "work", "Work"]));
+    assert_success(&invoke(&["add", "bound", "--plan", "work"]));
+    assert_success(&invoke(&[
+        "gate",
+        "add",
+        "1",
+        "proof",
+        "--kind",
+        "review",
+        "--requirement",
+        "retained evidence",
+    ]));
+
+    let backslash = invoke(&[
+        "gate",
+        "resolve",
+        "1",
+        "proof",
+        "--evidence",
+        "file:docs\\proof.txt",
+    ]);
+    assert!(!backslash.status.success());
+    let stderr = String::from_utf8_lossy(&backslash.stderr);
+    assert!(stderr.contains("(invalid_path)"), "{stderr}");
+    assert!(
+        stderr.contains("pass --evidence file:docs/proof.txt"),
+        "{stderr}"
+    );
+
+    let missing = invoke(&[
+        "gate",
+        "resolve",
+        "1",
+        "proof",
+        "--evidence",
+        "file:proof.txt",
+    ]);
+    assert!(!missing.status.success());
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(
+        stderr.contains("note --text-file <path> --task <task>"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("gate waive <task> <name> --why <reason>"),
+        "{stderr}"
+    );
+
+    assert_success(&invoke(&[
+        "gate",
+        "resolve",
+        "1",
+        "proof",
+        "--evidence",
+        "file:docs/proof.txt",
+    ]));
+}
+
+#[test]
 fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
     let root = TestDirectory::new("file-evidence-write");
     std::fs::create_dir_all(root.0.join("state")).unwrap();
@@ -1506,7 +1588,7 @@ fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
     assert!(
         missing.contains("(missing)")
             && missing.contains("with a path relative to project root")
-            && missing.contains("--result-file"),
+            && missing.contains("--evidence note:<summary>"),
         "{missing}"
     );
     let blocker_missing = refusal(&in_project(&[

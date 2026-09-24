@@ -363,7 +363,7 @@ pub fn validate_new_file_evidence(
     if !scheme.eq_ignore_ascii_case("file") {
         return Ok(());
     }
-    let keep_text = "or keep the evidence text in the authority with `done <task> --result-file <path>` or `note --text-file <path> --task <task>`";
+    let keep_text = "or keep the evidence text in the authority with `note --text-file <path> --task <task>` and resolve with a non-file locator such as `--evidence note:<summary>`, or waive a gate with `gate waive <task> <name> --why <reason>`";
     let Some(project_root) = project_root else {
         bail!(
             "evidence {locator:?} names a file, but authority {authority} was selected without a project root (by --db, PAPERTIGER_DB, or the personal store), so the path cannot be checked; rerun with --db \"{authority}\" --project-root <project-root> for the project the path is relative to, {keep_text}"
@@ -379,6 +379,14 @@ pub fn validate_new_file_evidence(
         bail!(
             "evidence project root {} is not a directory; pass --project-root with the project directory",
             project_root.display()
+        );
+    }
+    // A backslash separates components only on Windows, so such a locator
+    // would verify there and fail everywhere else.
+    if value.contains('\\') {
+        bail!(
+            "evidence {locator:?} is refused (invalid_path): file: evidence separates path components with '/'; pass --evidence file:{}",
+            value.replace('\\', "/")
         );
     }
     let canonical = match resolve_file_evidence(&root, value) {
