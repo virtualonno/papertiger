@@ -4057,6 +4057,29 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
             ),
         );
     }
+    // Older releases admitted these, and import restores them unchanged.
+    // Pure dependency loops are reported above as dependency_cycle.
+    for (start, steps) in task_graph::WaitGraph::load_unfinished(conn)?.loops() {
+        if steps
+            .iter()
+            .all(|step| step.edge == task_graph::WaitEdge::Dependency)
+        {
+            continue;
+        }
+        let removals = task_graph::dependency_removals(start, &steps);
+        let correction = if removals.is_empty() {
+            "move one of these tasks with `papertiger edit <task> --parent <task>`".to_string()
+        } else {
+            format!("remove one dependency with {}", removals.join(" or "))
+        };
+        push(
+            "dependency_deadlock",
+            format!(
+                "{}, so none of these tasks can finish; {correction}",
+                task_graph::describe_chain(start, &steps)
+            ),
+        );
+    }
     if let Some(cycle) = find_cycle(
         conn,
         "SELECT task_id, parent_id FROM tasks WHERE parent_id IS NOT NULL",

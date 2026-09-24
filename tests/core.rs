@@ -927,6 +927,61 @@ fn waive_requires_why_via_retire_reject_paths() {
 }
 
 #[test]
+fn audit_reports_stored_dependency_deadlocks_with_their_removals() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
+    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("parent")).unwrap();
+    let child = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            parent: Some(parent),
+            ..pt::TaskCreation::new("child")
+        },
+    )
+    .unwrap();
+    let downstream = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            deps: &[parent],
+            ..pt::TaskCreation::new("downstream")
+        },
+    )
+    .unwrap();
+    assert!(pt::add_dep(&conn, "test", child, downstream, "deadlock probe").is_err());
+    assert!(
+        !pt::audit(&conn)
+            .unwrap()
+            .iter()
+            .any(|finding| finding.kind == "dependency_deadlock")
+    );
+    // Explicitly admitted disposable fixture represents an edge an older
+    // release accepted and import restores unchanged.
+    conn.execute(
+        "INSERT INTO deps (task_id, depends_on)
+         SELECT child.task_id, downstream.task_id FROM tasks child, tasks downstream
+          WHERE child.seq=?1 AND downstream.seq=?2",
+        [child, downstream],
+    )
+    .unwrap();
+    let deadlocks = pt::audit(&conn)
+        .unwrap()
+        .into_iter()
+        .filter(|finding| finding.kind == "dependency_deadlock")
+        .map(|finding| finding.detail)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        deadlocks,
+        [format!(
+            "#{parent} waits for unfinished child #{child}, which depends on #{downstream}, which depends on #{parent}, so none of these tasks can finish; remove one dependency with `papertiger dep remove {child} {downstream} --why <reason>` or `papertiger dep remove {downstream} {parent} --why <reason>`"
+        )]
+    );
+}
+
+#[test]
 fn dependency_cycles_rejected_and_readiness_derived() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();

@@ -35,6 +35,10 @@ All notable user-visible changes are documented here. Papertiger follows
   its parent, or a finished task moved under such a parent. The refusal shows
   the chain and names the `edit --parent`, `edit --clear-parent` and
   `dep remove` commands that resolve it.
+- `audit` reports a `dependency_deadlock` finding for each such loop an
+  authority already holds, since older releases accepted these edges and
+  import restores them unchanged. The finding names the `dep remove`
+  commands that break the loop.
 
 ## [0.19.0] - 2026-09-23
 

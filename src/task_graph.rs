@@ -33,6 +33,16 @@ impl WaitGraph {
         Self::load_with(conn, "")
     }
 
+    /// Only the dependency edges between unfinished tasks: a loop through a
+    /// finished task already moved on, so only these loops are stuck.
+    pub(crate) fn load_unfinished(conn: &Connection) -> Result<Self> {
+        Self::load_with(
+            conn,
+            "WHERE task.status IN ('proposed','in_progress')
+               AND prerequisite.status IN ('proposed','in_progress')",
+        )
+    }
+
     fn load_with(conn: &Connection, dependency_filter: &str) -> Result<Self> {
         let mut edges: HashMap<i64, Vec<WaitStep>> = HashMap::new();
         let dependencies = format!(
@@ -90,6 +100,72 @@ impl WaitGraph {
             }
         }
         None
+    }
+
+    /// Every stored wait loop, each closed at its first task. Each reported
+    /// loop removes its closing edge before the search resumes, so every loop
+    /// that needs its own repair is reported once.
+    pub(crate) fn loops(&self) -> Vec<(i64, Vec<WaitStep>)> {
+        let mut nodes = self
+            .edges
+            .iter()
+            .flat_map(|(from, steps)| std::iter::once(*from).chain(steps.iter().map(|s| s.seq)))
+            .collect::<Vec<_>>();
+        nodes.sort_unstable();
+        nodes.dedup();
+        let index = nodes
+            .iter()
+            .enumerate()
+            .map(|(position, seq)| (*seq, position))
+            .collect::<HashMap<_, _>>();
+        let mut adjacency = nodes
+            .iter()
+            .map(|seq| {
+                let mut targets = self
+                    .edges
+                    .get(seq)
+                    .into_iter()
+                    .flatten()
+                    .map(|step| index[&step.seq])
+                    .collect::<Vec<_>>();
+                targets.sort_unstable();
+                targets.dedup();
+                targets
+            })
+            .collect::<Vec<_>>();
+        let mut loops = Vec::new();
+        while let Some(cycle) = first_cycle(&adjacency) {
+            let closing_from = cycle[cycle.len() - 2];
+            let closing_to = cycle[cycle.len() - 1];
+            adjacency[closing_from].retain(|target| *target != closing_to);
+            let start = nodes[cycle[0]];
+            let steps = cycle
+                .windows(2)
+                .map(|pair| {
+                    let (from, seq) = (nodes[pair[0]], nodes[pair[1]]);
+                    WaitStep {
+                        edge: self.edge(from, seq),
+                        seq,
+                    }
+                })
+                .collect();
+            loops.push((start, steps));
+        }
+        loops
+    }
+
+    /// A dependency is reported ahead of a child edge between the same
+    /// tasks because only it can be removed without moving a task.
+    fn edge(&self, from: i64, to: i64) -> WaitEdge {
+        let steps = self.edges.get(&from).into_iter().flatten();
+        if steps
+            .clone()
+            .any(|step| step.seq == to && step.edge == WaitEdge::Dependency)
+        {
+            WaitEdge::Dependency
+        } else {
+            WaitEdge::Child
+        }
     }
 }
 
@@ -243,5 +319,29 @@ mod tests {
         assert_eq!(first_cycle(&chain), None);
         chain[long - 1].push(0);
         assert_eq!(first_cycle(&chain).map(|cycle| cycle.len()), Some(long + 1));
+    }
+
+    #[test]
+    fn every_stored_loop_is_reported_once_preferring_dependency_edges() {
+        use WaitEdge::{Child, Dependency};
+        let waits = graph(&[
+            (1, Child, 2),
+            (2, Dependency, 3),
+            (3, Dependency, 1),
+            (5, Child, 6),
+            (5, Dependency, 6),
+            (6, Dependency, 5),
+        ]);
+        let loops = waits.loops();
+        assert_eq!(loops.len(), 2);
+        assert_eq!(
+            describe_chain(loops[0].0, &loops[0].1),
+            "#1 waits for unfinished child #2, which depends on #3, which depends on #1"
+        );
+        assert_eq!(
+            describe_chain(loops[1].0, &loops[1].1),
+            "#5 depends on #6, which depends on #5"
+        );
+        assert!(graph(&[(1, Dependency, 2)]).loops().is_empty());
     }
 }
