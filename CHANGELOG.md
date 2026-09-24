@@ -14,8 +14,11 @@ All notable user-visible changes are documented here. Papertiger follows
   keys wire the dependencies and are not stored; the receipt lists one task
   create event per child in outline order. `--start-ready` also starts the
   children whose dependencies are already done. Any invalid entry, unknown
-  reference, dependency cycle, dependency that waits for the parent, or
-  duplicate title refuses the whole outline and lists every problem.
+  reference, repeated tag or dependency, dependency cycle, dependency that
+  waits for the parent, or duplicate title refuses the whole outline and lists
+  every such problem in its entries. An outline that repeats a JSON key in any
+  object, exceeds 1 MiB or 256 children, or targets a finished parent or plan
+  is refused on its own, naming the command or limit that fixes it.
 
 ### Fixed
 

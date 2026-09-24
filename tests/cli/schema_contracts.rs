@@ -123,10 +123,38 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
         ("/children/0/key", json!("1bad")),
         ("/children/1/deps/1", json!("#1")),
         ("/children/1/kind", json!("chore")),
+        ("/children/0/title", json!("   ")),
+        ("/children/0/title", json!("t".repeat(161))),
+        ("/children/0/why", json!("  ")),
+        ("/children/0/tags", json!(["outline", "outline"])),
+        ("/children/0/tags", json!(["t".repeat(65)])),
+        ("/children/0/priority", json!(1.5)),
+        ("/children/1/deps", json!(["model", "model"])),
+        (
+            "/children",
+            Value::Array(
+                (0..257)
+                    .map(|index| json!({"key": format!("k{index}"), "title": "T"}))
+                    .collect(),
+            ),
+        ),
     ] {
         let mut corrupt = outline.clone();
         *corrupt.pointer_mut(path).unwrap() = invalid;
         assert!(!validator.is_valid(&corrupt), "accepted invalid {path}");
+    }
+    // The parser trims titles and tags and reads integral numbers as integers.
+    for (path, valid) in [
+        (
+            "/children/0/title",
+            json!(format!("  {}  ", "t".repeat(160))),
+        ),
+        ("/children/0/tags", json!([format!(" {} ", "t".repeat(64))])),
+        ("/children/0/priority", json!(2.0)),
+    ] {
+        let mut accepted = outline.clone();
+        *accepted.pointer_mut(path).unwrap() = valid;
+        assert!(validator.is_valid(&accepted), "refused valid {path}");
     }
     let outline_path = format!("{}.outline.json", db.0.display());
     std::fs::write(&outline_path, outline.to_string()).unwrap();

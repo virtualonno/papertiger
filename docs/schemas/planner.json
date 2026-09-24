@@ -2373,7 +2373,7 @@
       "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
     },
     "task_outline": {
-      "description": "Input to `papertiger decompose <parent> --outline-file <path|->`: the parent's new child tasks. A string dependency names a sibling key; an integer names an existing task in the parent's plan. Keys wire dependencies only and are never stored. The papertiger.mutation.v1 receipt lists one task create event per child, in outline order, before any dependency or status event.",
+      "description": "Input to `papertiger decompose <parent> --outline-file <path|->`: the parent's new child tasks. A string dependency names a sibling key; an integer names an existing task in the parent's plan. Keys wire dependencies only and are never stored. The papertiger.mutation.v1 receipt lists one task create event per child, in outline order, before any dependency or status event. The document is at most 1048576 bytes and may not repeat a key within any object.",
       "type": "object",
       "properties": {
         "schema": {
@@ -2382,6 +2382,7 @@
         "children": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 256,
           "items": {
             "type": "object",
             "properties": {
@@ -2389,9 +2390,9 @@
                 "$ref": "#/$defs/outline_key"
               },
               "title": {
+                "description": "Nonblank, at most 160 characters after trimming leading and trailing whitespace. Titles compare trimmed and case-insensitive with the other children and the parent's live children.",
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 160
+                "pattern": "^\\s*\\S([\\s\\S]{0,158}\\S)?\\s*$"
               },
               "intent": {
                 "type": "string"
@@ -2410,7 +2411,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "minLength": 1
+                    "pattern": "\\S"
                   },
                   {
                     "type": "null"
@@ -2425,18 +2426,22 @@
                 ]
               },
               "tags": {
+                "description": "Each tag nonblank, at most 64 characters after trimming, and listed once after trimming.",
                 "type": "array",
+                "uniqueItems": true,
                 "items": {
                   "type": "string",
-                  "minLength": 1,
-                  "maxLength": 64
+                  "pattern": "^\\s*\\S([\\s\\S]{0,62}\\S)?\\s*$"
                 }
               },
               "priority": {
+                "description": "Any integral number; 2.0 is 2.",
                 "type": "integer"
               },
               "deps": {
+                "description": "Each dependency once; an integral number such as 3.0 names task 3.",
                 "type": "array",
+                "uniqueItems": true,
                 "items": {
                   "anyOf": [
                     {

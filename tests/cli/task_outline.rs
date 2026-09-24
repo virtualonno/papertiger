@@ -208,7 +208,11 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         {"key": "h", "title": "Eighth", "deps": ["i"]},
         {"key": "i", "title": "Ninth", "deps": ["j"]},
         {"key": "j", "title": "Tenth", "deps": ["h"]},
-        {"key": "k", "title": ""}
+        {"key": "k", "title": ""},
+        {"key": "l", "title": "Eleventh", "intent": "Has an intent", "intent_source": "bot"},
+        {"key": "m", "title": "Twelfth", "tags": ["", "t".repeat(65), "dup", " dup "]},
+        {"key": "n", "title": "Thirteenth", "deps": ["h", "h", 99, 99.0]},
+        {"key": "o", "title": "   "}
     ]));
     let refused = decompose(&db, "3", &children, &["--json"]);
     assert!(!refused.status.success());
@@ -236,6 +240,13 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         "child 8 (\"g\"): why must be nonblank",
         "sibling dependencies form a cycle: \"h\" -> \"i\" -> \"j\" -> \"h\"",
         "child 12 (\"k\"): task title must not be blank",
+        "child 13 (\"l\"): unknown meaning source 'bot' (expected user|agent|external)",
+        "child 14 (\"m\"): tag must not be blank",
+        "child 14 (\"m\"): tag has 65 characters; shorten it to at most 64 characters",
+        "child 14 (\"m\"): repeats tag \"dup\"; list each tag once",
+        "child 15 (\"n\"): repeats dependency \"h\"",
+        "child 15 (\"n\"): repeats dependency #99",
+        "child 16 (\"o\"): task title must not be blank",
     ] {
         assert!(
             message.contains(expected),
@@ -256,6 +267,26 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         ),
         (outline(json!([])), "task outline has no children"),
         ("not json".to_owned(), "task outline is not valid JSON"),
+        (
+            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A"}],"children":[{"key":"b","title":"B"}]}"#.to_owned(),
+            "task outline repeats key \"children\" in one object; write each key once",
+        ),
+        (
+            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","title":"B"}]}"#.to_owned(),
+            "task outline repeats key \"title\" in one object",
+        ),
+        (
+            outline(Value::Array(
+                (0..257)
+                    .map(|index| json!({"key": format!("k{index}"), "title": format!("Child {index}")}))
+                    .collect(),
+            )),
+            "task outline has 257 children, more than the limit of 256; group them under intermediate children",
+        ),
+        (
+            " ".repeat(1024 * 1024 + 1),
+            "task outline exceeds the 1048576-byte limit; split it into several decompose calls",
+        ),
     ] {
         let refused = decompose(&db, "3", &document, &[]);
         assert!(!refused.status.success());
@@ -267,8 +298,68 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
     }
     let finished_parent = decompose(&db, "1", &outline(json!([{"key": "a", "title": "A"}])), &[]);
     assert!(!finished_parent.status.success());
-    assert!(stderr(&finished_parent).contains("parent #1 is retired; reopen it"));
+    assert!(stderr(&finished_parent).contains(
+        "parent #1 is retired; reopen it with `papertiger reopen 1 --why <reason>` before adding live children"
+    ));
     assert_eq!(log_head(&db), head);
+}
+
+#[test]
+fn decompose_names_the_plan_step_first_and_reads_outline_files() {
+    let db = TestDatabase::new("decompose-plan-and-file");
+    assert_success(&papertiger(&db.0, &["init"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "closed", "Closed"]));
+    assert_success(&papertiger(&db.0, &["add", "Shipped parent"]));
+    assert_success(&papertiger(&db.0, &["done", "1"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["plan", "set", "closed", "done", "--why", "shipped"],
+    ));
+    let children = outline(json!([{"key": "follow", "title": "Follow up", "priority": 2.0}]));
+    let head = log_head(&db);
+    let refused = decompose(&db, "1", &children, &[]);
+    assert!(!refused.status.success());
+    assert!(
+        stderr(&refused).contains(
+            "plan 'closed' is done; reactivate it with `papertiger plan set closed active --why <reason>` and then parent #1 with `papertiger reopen 1 --why <reason>` before adding tasks"
+        ),
+        "{}",
+        stderr(&refused)
+    );
+    assert_eq!(log_head(&db), head);
+
+    assert_success(&papertiger(
+        &db.0,
+        &[
+            "plan",
+            "set",
+            "closed",
+            "active",
+            "--why",
+            "follow-up found",
+        ],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["reopen", "1", "--why", "follow-up found"],
+    ));
+    let path = db.0.with_extension("outline.json");
+    std::fs::write(&path, &children).unwrap();
+    let applied = json_of(&papertiger(
+        &db.0,
+        &[
+            "decompose",
+            "1",
+            "--outline-file",
+            path.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(created(&applied), [(2, "Follow up".to_owned())]);
+    let child = json_of(&papertiger(&db.0, &["show", "2", "--json"]));
+    assert_eq!(child["task"]["priority"], 2);
+    assert_eq!(child["parent"]["seq"], 1);
 }
 
 #[test]

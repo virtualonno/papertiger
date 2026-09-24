@@ -151,8 +151,11 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   by number; keys are never stored. The receipt lists one task create event per
   child in outline order, and plain output prints each key with its new task.
   The whole outline is validated first: an invalid entry, unknown reference,
-  sibling cycle, dependency that waits for the parent, or title that repeats
-  another child or a live child of the parent refuses every child.
+  repeated tag or dependency, sibling cycle, dependency that waits for the
+  parent, or title that repeats another child or a live child of the parent
+  refuses every child, and the refusal lists each such entry problem. A JSON key
+  repeated in any object, an outline over 1 MiB or 256 children, or a finished
+  parent or plan refuses before the entries are checked.
   `--start-ready` also starts the children whose dependencies are all done
   tasks. A replay is refused by its duplicate titles only while the earlier
   children are still proposed or in progress; once they are finished, the same

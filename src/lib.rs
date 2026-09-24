@@ -50,8 +50,8 @@ pub use read_model::{
     event_head, event_log, status_response, task_activity, task_list_response,
 };
 pub use task_outline::{
-    OutlineChild, OutlineEntry, TASK_OUTLINE_SCHEMA, TaskOutline, decompose_task,
-    parse_task_outline,
+    MAX_OUTLINE_BYTES, MAX_OUTLINE_CHILDREN, OutlineChild, OutlineEntry, TASK_OUTLINE_SCHEMA,
+    TaskOutline, decompose_task, parse_task_outline,
 };
 mod search;
 pub use search::{SearchExcerpt, SearchHit, SearchResponse, search_tasks};
@@ -3343,62 +3343,31 @@ pub struct AuditFinding {
 }
 
 fn find_cycle(conn: &Connection, edge_sql: &str) -> Result<Option<Vec<i64>>> {
-    let mut st = conn.prepare("SELECT task_id, seq FROM tasks")?;
-    let seq_by_id: HashMap<i64, i64> = st
+    let mut st = conn.prepare("SELECT task_id, seq FROM tasks ORDER BY seq")?;
+    let tasks: Vec<(i64, i64)> = st
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
+    let index: HashMap<i64, usize> = tasks
+        .iter()
+        .enumerate()
+        .map(|(position, (task_id, _))| (*task_id, position))
+        .collect();
     let mut st = conn.prepare(edge_sql)?;
     let edges: Vec<(i64, i64)> = st
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    let mut adjacency: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut adjacency = vec![Vec::new(); tasks.len()];
     for (from, to) in edges {
-        adjacency.entry(from).or_default().push(to);
-    }
-    let mut states = HashMap::new();
-    let mut stack = Vec::new();
-    for task_id in seq_by_id.keys().copied() {
-        if states.get(&task_id).copied().unwrap_or(0) != 0 {
-            continue;
-        }
-        if let Some(ids) = visit_cycle(task_id, &adjacency, &mut states, &mut stack) {
-            return Ok(Some(
-                ids.into_iter()
-                    .filter_map(|id| seq_by_id.get(&id).copied())
-                    .collect(),
-            ));
+        if let (Some(&from), Some(&to)) = (index.get(&from), index.get(&to)) {
+            adjacency[from].push(to);
         }
     }
-    Ok(None)
-}
-
-fn visit_cycle(
-    node: i64,
-    adjacency: &HashMap<i64, Vec<i64>>,
-    states: &mut HashMap<i64, u8>,
-    stack: &mut Vec<i64>,
-) -> Option<Vec<i64>> {
-    states.insert(node, 1);
-    stack.push(node);
-    for next in adjacency.get(&node).into_iter().flatten().copied() {
-        match states.get(&next).copied().unwrap_or(0) {
-            0 => {
-                if let Some(cycle) = visit_cycle(next, adjacency, states, stack) {
-                    return Some(cycle);
-                }
-            }
-            1 => {
-                let start = stack.iter().position(|id| *id == next).unwrap_or(0);
-                let mut cycle = stack[start..].to_vec();
-                cycle.push(next);
-                return Some(cycle);
-            }
-            _ => {}
-        }
-    }
-    stack.pop();
-    states.insert(node, 2);
-    None
+    Ok(task_graph::first_cycle(&adjacency).map(|cycle| {
+        cycle
+            .into_iter()
+            .map(|position| tasks[position].1)
+            .collect()
+    }))
 }
 
 fn replacement_repair_instruction(seq: i64, status: &str, replacement_seq: Option<i64>) -> String {

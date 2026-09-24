@@ -1665,7 +1665,8 @@ fn run_planner(cli: Cli) -> Result<()> {
             start_ready,
         } => {
             let parent = pt::parse_task_ref(&parent)?;
-            let bytes = read_input_bytes(&outline_file, "task outline")?;
+            let bytes =
+                read_input_bytes(&outline_file, "task outline", Some(pt::MAX_OUTLINE_BYTES))?;
             let outline = pt::parse_task_outline(&bytes)?;
             let children = pt::decompose_task(
                 &conn,
@@ -2513,7 +2514,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Mise { cmd } => match cmd {
             MiseCmd::Record { task, projection } => {
                 let task_seq = pt::parse_task_ref(&task)?;
-                let bytes = read_input_bytes(&projection, "Mise planner projection")?;
+                let bytes = read_input_bytes(&projection, "Mise planner projection", None)?;
                 let (outcome, record) =
                     pt::record_mise_projection(&conn, &actor, task_seq, &bytes)?;
                 mutation_output!(
@@ -2573,16 +2574,26 @@ fn run_planner(cli: Cli) -> Result<()> {
 }
 
 /// Read a whole input file, or stdin for '-'.
-fn read_input_bytes(path: &str, label: &str) -> Result<Vec<u8>> {
-    if path == "-" {
-        let mut bytes = Vec::new();
-        std::io::stdin()
-            .read_to_end(&mut bytes)
-            .with_context(|| format!("read {label} from stdin"))?;
-        Ok(bytes)
+/// Read PATH, or stdin for '-'. With `limit`, reading stops one byte past it
+/// so an oversized input is never buffered whole; the parser names the limit.
+fn read_input_bytes(path: &str, label: &str, limit: Option<usize>) -> Result<Vec<u8>> {
+    let mut reader: Box<dyn Read> = if path == "-" {
+        Box::new(std::io::stdin())
     } else {
-        std::fs::read(path).with_context(|| format!("read {label} {path}"))
+        Box::new(std::fs::File::open(path).with_context(|| format!("read {label} {path}"))?)
+    };
+    if let Some(limit) = limit {
+        reader = Box::new(reader.take(limit as u64 + 1));
     }
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).with_context(|| {
+        if path == "-" {
+            format!("read {label} from stdin")
+        } else {
+            format!("read {label} {path}")
+        }
+    })?;
+    Ok(bytes)
 }
 
 fn short_event_time(at: &str) -> String {

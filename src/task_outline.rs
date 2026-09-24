@@ -1,15 +1,17 @@
 //! One-call decomposition: a versioned outline creates a parent's child tasks
 //! and their dependencies atomically.
 //!
-//! Batch-local keys wire sibling dependencies and the receipt's key-to-task
-//! mapping. They are never stored, so no invented label survives the call.
+//! Batch-local keys wire sibling dependencies and the plain output's
+//! key-to-task lines. They are never stored, so no invented label survives
+//! the call; the JSON receipt names children only by outline order.
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
+use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use std::collections::{HashMap, HashSet};
 
-use crate::task_graph::{WaitGraph, describe_chain, or_remove_dependency};
+use crate::task_graph::{WaitGraph, describe_chain, first_cycle, or_remove_dependency};
 use crate::{
     begin_mutation, get_task, meaning_source_requires_text, parse_task_ref, plan_status,
     validate_meaning_source, validate_tag, validate_task_kind, validate_task_title,
@@ -17,6 +19,10 @@ use crate::{
 
 pub const TASK_OUTLINE_SCHEMA: &str = "papertiger.task_outline.v1";
 pub const MAX_OUTLINE_KEY_CHARS: usize = 64;
+/// Largest outline document accepted, in bytes.
+pub const MAX_OUTLINE_BYTES: usize = 1024 * 1024;
+/// Most children one outline may create.
+pub const MAX_OUTLINE_CHILDREN: usize = 256;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,7 +47,8 @@ pub struct OutlineEntry {
     pub kind: String,
     #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(default)]
+    /// Any integral JSON number, `2.0` included, as JSON Schema's `integer`.
+    #[serde(default, deserialize_with = "integral_priority")]
     pub priority: i64,
     /// Strings name sibling keys; integers name existing task numbers.
     #[serde(default)]
@@ -50,6 +57,87 @@ pub struct OutlineEntry {
 
 fn default_kind() -> String {
     "work".into()
+}
+
+/// The integer a JSON number denotes, accepting an integral float such as
+/// `3.0` the way JSON Schema's `integer` does.
+fn integral(number: &serde_json::Number) -> Option<i64> {
+    number.as_i64().or_else(|| {
+        number
+            .as_f64()
+            .filter(|value| {
+                value.fract() == 0.0 && *value >= i64::MIN as f64 && *value < i64::MAX as f64
+            })
+            .map(|value| value as i64)
+    })
+}
+
+fn integral_priority<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
+    let number = serde_json::Number::deserialize(deserializer)?;
+    integral(&number)
+        .ok_or_else(|| de::Error::custom(format!("priority {number} is not an integer")))
+}
+
+/// Walks any JSON value and refuses an object that repeats a key, which
+/// `serde_json::Value` would otherwise resolve silently to the last copy.
+struct UniqueKeys;
+
+impl<'de> Deserialize<'de> for UniqueKeys {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(UniqueKeysVisitor)
+    }
+}
+
+struct UniqueKeysVisitor;
+
+impl<'de> Visitor<'de> for UniqueKeysVisitor {
+    type Value = UniqueKeys;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_unit<E>(self) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<UniqueKeys, A::Error> {
+        while seq.next_element::<UniqueKeys>()?.is_some() {}
+        Ok(UniqueKeys)
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<UniqueKeys, A::Error> {
+        let mut seen = HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !seen.insert(key.clone()) {
+                return Err(de::Error::custom(format!(
+                    "task outline repeats key {key:?} in one object; write each key once"
+                )));
+            }
+            map.next_value::<UniqueKeys>()?;
+        }
+        Ok(UniqueKeys)
+    }
 }
 
 /// The task created for one outline key.
@@ -62,7 +150,13 @@ pub struct OutlineChild {
 
 /// Parse UTF-8 outline bytes (one leading BOM accepted) and check the
 /// schema id before the document shape, so a wrong id is named exactly.
+/// A repeated key in any object refuses the outline.
 pub fn parse_task_outline(bytes: &[u8]) -> Result<TaskOutline> {
+    if bytes.len() > MAX_OUTLINE_BYTES {
+        bail!(
+            "task outline exceeds the {MAX_OUTLINE_BYTES}-byte limit; split it into several decompose calls"
+        );
+    }
     let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
     let text = std::str::from_utf8(bytes).context(
         "task outline must be UTF-8 JSON; write the file as UTF-8 and pass it with --outline-file",
@@ -70,6 +164,8 @@ pub fn parse_task_outline(bytes: &[u8]) -> Result<TaskOutline> {
     let value: serde_json::Value = serde_json::from_str(text).context(
         "task outline is not valid JSON; see `papertiger schema` for papertiger.task_outline.v1",
     )?;
+    UniqueKeys::deserialize(&mut serde_json::Deserializer::from_str(text))
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
     match value.get("schema").and_then(serde_json::Value::as_str) {
         Some(TASK_OUTLINE_SCHEMA) => {}
         Some(other) => bail!(
@@ -99,50 +195,11 @@ enum Dependency {
     Existing(i64),
 }
 
-fn sibling_cycle(edges: &[Vec<usize>]) -> Option<Vec<usize>> {
-    fn visit(
-        node: usize,
-        edges: &[Vec<usize>],
-        state: &mut [u8],
-        stack: &mut Vec<usize>,
-    ) -> Option<Vec<usize>> {
-        state[node] = 1;
-        stack.push(node);
-        for &next in &edges[node] {
-            match state[next] {
-                0 => {
-                    if let Some(cycle) = visit(next, edges, state, stack) {
-                        return Some(cycle);
-                    }
-                }
-                1 => {
-                    let start = stack.iter().position(|&n| n == next).unwrap_or(0);
-                    let mut cycle = stack[start..].to_vec();
-                    cycle.push(next);
-                    return Some(cycle);
-                }
-                _ => {}
-            }
-        }
-        stack.pop();
-        state[node] = 2;
-        None
-    }
-    let mut state = vec![0; edges.len()];
-    for node in 0..edges.len() {
-        if state[node] == 0
-            && let Some(cycle) = visit(node, edges, &mut state, &mut Vec::new())
-        {
-            return Some(cycle);
-        }
-    }
-    None
-}
-
 /// Create every outline child under `parent_seq` in one transaction, in
 /// outline order, then their dependency edges, then (with `start_ready`) start
-/// each child whose dependencies are all existing done tasks. Any invalid
-/// entry refuses the whole outline and names every problem found.
+/// each child whose dependencies are all existing done tasks. A parent, plan
+/// or outline size that cannot take children refuses first; otherwise every
+/// problem found in the entries is listed and nothing is created.
 pub fn decompose_task(
     conn: &Connection,
     actor: &str,
@@ -153,19 +210,36 @@ pub fn decompose_task(
 ) -> Result<Vec<OutlineChild>> {
     let tx = begin_mutation(conn)?;
     let parent = get_task(&tx, parent_seq)?;
-    if matches!(parent.status.as_str(), "done" | "retired" | "rejected") {
-        bail!(
-            "parent #{parent_seq} is {}; reopen it before adding live children",
-            parent.status
-        );
-    }
+    let parent_finished = matches!(parent.status.as_str(), "done" | "retired" | "rejected");
+    let reopen_parent = format!("`papertiger reopen {parent_seq} --why <reason>`");
+    // The plan comes first: a finished plan refuses the parent's reopen too.
     let status = plan_status(&tx, parent.plan_id)?;
     if matches!(status.as_str(), "done" | "retired") {
-        bail!("plan is {status}; reactivate it before adding tasks");
+        let slug = crate::get_plan(&tx, parent.plan_id)?.slug;
+        let then_reopen = if parent_finished {
+            format!(" and then parent #{parent_seq} with {reopen_parent}")
+        } else {
+            String::new()
+        };
+        bail!(
+            "plan '{slug}' is {status}; reactivate it with `papertiger plan set {slug} active --why <reason>`{then_reopen} before adding tasks"
+        );
+    }
+    if parent_finished {
+        bail!(
+            "parent #{parent_seq} is {}; reopen it with {reopen_parent} before adding live children",
+            parent.status
+        );
     }
     if outline.children.is_empty() {
         bail!(
             "task outline has no children; list at least one entry under \"children\" or use `papertiger add`"
+        );
+    }
+    if outline.children.len() > MAX_OUTLINE_CHILDREN {
+        bail!(
+            "task outline has {} children, more than the limit of {MAX_OUTLINE_CHILDREN}; group them under intermediate children and decompose each with its own outline",
+            outline.children.len()
         );
     }
 
@@ -233,9 +307,14 @@ pub fn decompose_task(
             }
             Ok(_) => {}
         }
+        let mut seen_tags = HashSet::new();
         for tag in &entry.tags {
-            if let Err(error) = validate_tag(tag) {
-                problems.push(format!("{label}: {error}"));
+            match validate_tag(tag) {
+                Err(error) => problems.push(format!("{label}: {error}")),
+                Ok(tag) if !seen_tags.insert(tag) => {
+                    problems.push(format!("{label}: repeats tag {tag:?}; list each tag once"))
+                }
+                Ok(_) => {}
             }
         }
         if entry
@@ -279,7 +358,7 @@ pub fn decompose_task(
                     )),
                 },
                 serde_json::Value::Number(number) => {
-                    let Some(seq) = number.as_i64().filter(|seq| *seq > 0) else {
+                    let Some(seq) = integral(number).filter(|seq| *seq > 0) else {
                         problems.push(format!(
                             "{label}: dependency {number} is not a positive task number"
                         ));
@@ -341,7 +420,7 @@ pub fn decompose_task(
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    if let Some(cycle) = sibling_cycle(&sibling_edges) {
+    if let Some(cycle) = first_cycle(&sibling_edges) {
         problems.push(format!(
             "sibling dependencies form a cycle: {}",
             cycle
@@ -463,11 +542,41 @@ mod tests {
     }
 
     #[test]
-    fn sibling_cycles_are_reported_as_a_closed_path() {
-        assert_eq!(sibling_cycle(&[vec![1], vec![2], vec![]]), None);
-        assert_eq!(
-            sibling_cycle(&[vec![1], vec![2], vec![0]]),
-            Some(vec![0, 1, 2, 0])
+    fn repeated_keys_are_refused_at_any_depth() {
+        for outline in [
+            r#"{"schema":"papertiger.task_outline.v1","schema":"papertiger.task_outline.v1","children":[]}"#,
+            r#"{"schema":"papertiger.task_outline.v1","children":[],"children":[{"key":"a","title":"A"}]}"#,
+            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","title":"B"}]}"#,
+        ] {
+            let error = parse_task_outline(outline.as_bytes())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("repeats key"), "{error}");
+            assert!(error.contains("write each key once"), "{error}");
+        }
+    }
+
+    #[test]
+    fn integral_numbers_are_integers_and_oversized_input_is_refused() {
+        let outline = parse_task_outline(
+            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","priority":2.0,"deps":[3.0]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(outline.children[0].priority, 2);
+        let serde_json::Value::Number(dependency) = &outline.children[0].deps[0] else {
+            panic!("dependency is a number");
+        };
+        assert_eq!(integral(dependency), Some(3));
+        let fraction = parse_task_outline(
+            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","priority":2.5}]}"#,
+        )
+        .unwrap_err();
+        assert!(format!("{fraction:#}").contains("priority 2.5 is not an integer"));
+        let oversized = vec![b' '; MAX_OUTLINE_BYTES + 1];
+        let error = parse_task_outline(&oversized).unwrap_err().to_string();
+        assert!(
+            error.contains("split it into several decompose calls"),
+            "{error}"
         );
     }
 

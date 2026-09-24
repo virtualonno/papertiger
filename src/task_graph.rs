@@ -1,4 +1,4 @@
-//! Task graph walks shared by admission and decomposition.
+//! Task graph walks shared by admission, reopen, decomposition and audit.
 //!
 //! A task finishes only after its dependencies and its unfinished children,
 //! so those two edge kinds form the wait-for graph. A loop in it means none
@@ -28,17 +28,23 @@ pub(crate) struct WaitGraph {
 }
 
 impl WaitGraph {
+    /// Every stored edge, as admission sees it.
     pub(crate) fn load(conn: &Connection) -> Result<Self> {
+        Self::load_with(conn, "")
+    }
+
+    fn load_with(conn: &Connection, dependency_filter: &str) -> Result<Self> {
         let mut edges: HashMap<i64, Vec<WaitStep>> = HashMap::new();
+        let dependencies = format!(
+            "SELECT task.seq, prerequisite.seq
+               FROM deps
+               JOIN tasks task ON task.task_id=deps.task_id
+               JOIN tasks prerequisite ON prerequisite.task_id=deps.depends_on
+             {dependency_filter}
+              ORDER BY task.seq, prerequisite.seq"
+        );
         for (sql, edge) in [
-            (
-                "SELECT task.seq, prerequisite.seq
-                   FROM deps
-                   JOIN tasks task ON task.task_id=deps.task_id
-                   JOIN tasks prerequisite ON prerequisite.task_id=deps.depends_on
-                  ORDER BY task.seq, prerequisite.seq",
-                WaitEdge::Dependency,
-            ),
+            (dependencies.as_str(), WaitEdge::Dependency),
             (
                 "SELECT parent.seq, child.seq
                    FROM tasks child
@@ -144,6 +150,53 @@ pub(crate) fn or_remove_dependency(from: i64, steps: &[WaitStep]) -> String {
     }
 }
 
+/// The first cycle found by an iterative depth-first search, as a closed path
+/// of node indices (`[a, b, a]`). Iterative so that arbitrarily long chains
+/// cannot exhaust the stack.
+pub(crate) fn first_cycle(adjacency: &[Vec<usize>]) -> Option<Vec<usize>> {
+    const UNVISITED: u8 = 0;
+    const ON_PATH: u8 = 1;
+    const FINISHED: u8 = 2;
+    let mut state = vec![UNVISITED; adjacency.len()];
+    for root in 0..adjacency.len() {
+        if state[root] != UNVISITED {
+            continue;
+        }
+        // Each frame is a node on the current path and its next edge position.
+        let mut path: Vec<(usize, usize)> = vec![(root, 0)];
+        state[root] = ON_PATH;
+        while let Some(frame) = path.last_mut() {
+            let (node, next) = *frame;
+            let Some(&target) = adjacency[node].get(next) else {
+                state[node] = FINISHED;
+                path.pop();
+                continue;
+            };
+            frame.1 += 1;
+            match state[target] {
+                UNVISITED => {
+                    state[target] = ON_PATH;
+                    path.push((target, 0));
+                }
+                ON_PATH => {
+                    let start = path
+                        .iter()
+                        .position(|(on_path, _)| *on_path == target)
+                        .expect("a node on the path has a frame");
+                    let mut cycle = path[start..]
+                        .iter()
+                        .map(|(on_path, _)| *on_path)
+                        .collect::<Vec<_>>();
+                    cycle.push(target);
+                    return Some(cycle);
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +227,21 @@ mod tests {
         );
         assert_eq!(waits.chain(4, 3), None);
         assert_eq!(waits.chain(3, 3), Some(Vec::new()));
+    }
+
+    #[test]
+    fn cycles_are_closed_paths_and_long_chains_do_not_recurse() {
+        assert_eq!(first_cycle(&[vec![1], vec![2], vec![]]), None);
+        assert_eq!(
+            first_cycle(&[vec![1], vec![2], vec![0]]),
+            Some(vec![0, 1, 2, 0])
+        );
+        assert_eq!(first_cycle(&[vec![0]]), Some(vec![0, 0]));
+        let long = 1_000_000;
+        let mut chain = (1..long).map(|next| vec![next]).collect::<Vec<_>>();
+        chain.push(Vec::new());
+        assert_eq!(first_cycle(&chain), None);
+        chain[long - 1].push(0);
+        assert_eq!(first_cycle(&chain).map(|cycle| cycle.len()), Some(long + 1));
     }
 }
