@@ -29,6 +29,11 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Fixed
 
+- A project-install receipt naming another Papertiger release still refuses,
+  but the refusal now names that project's own launcher,
+  `<root>/tools/papertiger/bin/papertiger[.exe] --project-root <root>`, for
+  working in the authority as it is (or says the launcher is not installed on
+  this host), before the deliberate `papertiger setup-project <root>` upgrade.
 - `add --dep`, `dep add` and `edit --parent` refuse an edge that would leave
   tasks waiting on each other forever: a dependency on the task's own parent,
   on an ancestor of that parent, or on any task that depends on one of them,

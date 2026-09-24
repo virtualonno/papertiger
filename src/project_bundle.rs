@@ -2,13 +2,24 @@
 //!
 //! Binary bytes are verified once, at download, against the release checksum.
 //! At run time the manifest only has to name this release.
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 const MANIFEST_SCHEMA: &str = "papertiger.release_manifest.v3";
 pub(crate) const MANIFEST_PATH: &str = "tools/papertiger/manifest.json";
+
+/// The host-local native launcher a project root operates its authority with.
+pub(crate) fn project_launcher(root: &Path) -> PathBuf {
+    root.join(format!(
+        "tools/papertiger/bin/papertiger{}",
+        std::env::consts::EXE_SUFFIX
+    ))
+}
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -64,11 +75,7 @@ pub(crate) fn verify(root: &Path) -> Result<bool> {
             bail!(
                 "project bundle {} is Papertiger {version}, but the running binary is {running}; invoke {} from that release, or unpack the verified Papertiger {running} release over the project root",
                 root.join(MANIFEST_PATH).display(),
-                root.join(format!(
-                    "tools/papertiger/bin/papertiger{}",
-                    std::env::consts::EXE_SUFFIX
-                ))
-                .display()
+                project_launcher(root).display()
             );
         }
     }

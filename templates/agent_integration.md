@@ -55,7 +55,10 @@ the receipt's authority; without a receipt, the release bundle's or an
 existing `state/papertiger.sqlite`. It never walks upward or changes the process
 working directory. Without a receipt or bundle it selects only a database that
 already exists; `init` creates only the receipt- or bundle-selected authority. Discovery without
-`--project-root` uses only receipts and release bundles. `PAPERTIGER_DB` or an explicit global `--db`
+`--project-root` uses only receipts and release bundles. Operate each authority
+with its own project launcher, `<canonical-project-root>/tools/papertiger/bin/papertiger[.exe]`,
+because projects can pin different releases during a rollout; a receipt naming
+another release refuses and names that launcher. `PAPERTIGER_DB` or an explicit global `--db`
 deliberately overrides receipt discovery. The installed personal executable falls back to its private
 store only when no project receipt is discovered. It needs no `--db` argument.
 Do not use a raw database override for ordinary

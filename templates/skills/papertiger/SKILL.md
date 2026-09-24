@@ -17,7 +17,8 @@ existing team or domain lifecycle.
 
 Use `<project-root>/tools/papertiger/bin/papertiger[.exe]` in the native
 shell. Keep work in the canonical project that owns the outcome, including
-cross-repository work; from elsewhere pass `--project-root <canonical-root>`.
+cross-repository work; from elsewhere pass `--project-root <canonical-root>` to
+that root's own launcher, since releases can differ during rollouts.
 The runtime selects the existing authority; do not guess `--db`, use PATH, or
 create a second store in a worktree. Without a project runtime, use the
 executable named by your personal Papertiger skill and put the consuming

@@ -708,14 +708,34 @@ fn load_running_project_receipt(root: &Path) -> Result<Option<InstallReceipt>> {
     }
     let running = env!("CARGO_PKG_VERSION");
     if receipt.papertiger_version != running {
-        return Err(anyhow!(
-            "project-install receipt at {} requires Papertiger {}, but the running binary is {running}; upgrade the project deliberately with: papertiger setup-project \"{}\"",
-            receipt_path.display(),
-            receipt.papertiger_version,
-            root.display()
+        return Err(receipt_version_refusal(
+            root,
+            &receipt.papertiger_version,
+            running,
         ));
     }
     Ok(Some(receipt))
+}
+
+/// Each authority is operated with its own project launcher, so the refusal
+/// names that launcher before the deliberate setup-project upgrade.
+fn receipt_version_refusal(root: &Path, required: &str, running: &str) -> anyhow::Error {
+    let root_text = normalized_path(root);
+    let launcher = crate::project_bundle::project_launcher(root);
+    let launcher_text = normalized_path(&launcher);
+    let use_as_is = if launcher.is_file() {
+        format!(
+            "to use this authority as it is, run its own launcher: \"{launcher_text}\" --project-root \"{root_text}\" <command>"
+        )
+    } else {
+        format!(
+            "its launcher {launcher_text} is not installed on this host; to use this authority as it is, install the verified Papertiger {required} release there and run: \"{launcher_text}\" --project-root \"{root_text}\" <command>"
+        )
+    };
+    anyhow!(
+        "project-install receipt at {} requires Papertiger {required}, but the running binary is {running}; {use_as_is}; to move the project to Papertiger {running} deliberately, run: papertiger setup-project \"{root_text}\"",
+        normalized_path(&root.join(INSTALL_RECEIPT_PATH))
+    )
 }
 
 fn receipt_authority(root: &Path, receipt: &InstallReceipt) -> Result<PathBuf> {
@@ -1497,7 +1517,7 @@ mod tests {
     }
 
     #[test]
-    fn native_binary_refuses_receipt_version_drift_with_upgrade_command() {
+    fn native_binary_refuses_receipt_version_drift_naming_its_launcher_and_upgrade() {
         let (project, binary) = fixture("discover-version-drift");
         setup_project(request(&project, &binary)).unwrap();
         let receipt_path = project.join(INSTALL_RECEIPT_PATH);
@@ -1518,6 +1538,28 @@ mod tests {
         assert!(message.contains("running binary is"));
         assert!(message.contains("papertiger setup-project"));
         assert!(message.contains("demo-project"));
+
+        let root = normalized_path(&fs::canonicalize(&project).unwrap());
+        let launcher = format!(
+            "{root}/tools/papertiger/bin/papertiger{}",
+            std::env::consts::EXE_SUFFIX
+        );
+        assert_eq!(
+            message,
+            format!(
+                "project-install receipt at {root}/{INSTALL_RECEIPT_PATH} requires Papertiger 0.7.1, but the running binary is {running}; to use this authority as it is, run its own launcher: \"{launcher}\" --project-root \"{root}\" <command>; to move the project to Papertiger {running} deliberately, run: papertiger setup-project \"{root}\"",
+                running = env!("CARGO_PKG_VERSION"),
+            )
+        );
+
+        fs::remove_file(crate::project_bundle::project_launcher(&project)).unwrap();
+        let message = project_authority(&project).unwrap_err().to_string();
+        assert!(
+            message.contains(&format!(
+                "its launcher {launcher} is not installed on this host; to use this authority as it is, install the verified Papertiger 0.7.1 release there and run: \"{launcher}\" --project-root \"{root}\" <command>"
+            )),
+            "{message}"
+        );
         cleanup(&project);
     }
 
