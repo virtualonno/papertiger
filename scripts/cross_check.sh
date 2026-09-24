@@ -13,8 +13,10 @@ exe=""
 case "${OS:-}:$(uname -s 2>/dev/null || true)" in
   Windows_NT:* | *:MINGW* | *:MSYS* | *:CYGWIN*) exe=".exe" ;;
 esac
-planner="$root/target/debug/papertiger$exe"
-mise="$root/target/debug/papertiger-mise$exe"
+# Run the binaries cargo just built, wherever CARGO_TARGET_DIR put them.
+target_dir="${CARGO_TARGET_DIR:-$root/target}"
+planner="$target_dir/debug/papertiger$exe"
+mise="$target_dir/debug/papertiger-mise$exe"
 planner_version="$($planner --version)"
 mise_version="$($mise --version)"
 planner_semver="${planner_version#papertiger }"
