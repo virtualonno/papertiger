@@ -13,8 +13,6 @@ pub const COMPILED_IMPROVEMENT_DRAFT_SCHEMA_V3: &str =
     "papertiger-mise.compiled_improvement_draft.v3";
 
 const CURRENT_REGISTRY: &str = include_str!("../../../docs/mise_templates/v3/registry.json");
-const HISTORICAL_REGISTRY_V2: &str = include_str!("../../../docs/mise_templates/v2/registry.json");
-const HISTORICAL_REGISTRY_V1: &str = include_str!("../../../docs/mise_templates/v1/registry.json");
 const REQUIRED_PARADIGMS: [&str; 8] = [
     "capability_effectiveness",
     "compatibility_portability",
@@ -279,19 +277,13 @@ pub fn builtin_paradigm_registry() -> Result<(ParadigmRegistry, String)> {
 }
 
 fn paradigm_registry_for_digest(digest: &str) -> Result<ParadigmRegistry> {
-    for bytes in [
-        CURRENT_REGISTRY.as_bytes(),
-        HISTORICAL_REGISTRY_V2.as_bytes(),
-        HISTORICAL_REGISTRY_V1.as_bytes(),
-    ] {
-        if sha256(bytes) == digest {
-            return validate_paradigm_registry(bytes);
-        }
+    let (registry, current) = builtin_paradigm_registry()?;
+    if digest != current {
+        bail!(
+            "brief template registry SHA-256 is not the built-in registry; rebind the brief to the current built-in registry {current} reported by `papertiger-mise improvement paradigms`"
+        );
     }
-    let current = sha256(CURRENT_REGISTRY.as_bytes());
-    bail!(
-        "brief template registry SHA-256 is unknown; create the brief from the current built-in registry {current}"
-    )
+    Ok(registry)
 }
 
 pub fn validate_paradigm_registry(bytes: &[u8]) -> Result<ParadigmRegistry> {
@@ -861,23 +853,16 @@ mod tests {
     }
 
     #[test]
-    fn historical_registry_remains_readable_without_becoming_current() {
-        let digest = sha256(HISTORICAL_REGISTRY_V1.as_bytes());
-        let registry = paradigm_registry_for_digest(&digest).expect("historical registry");
+    fn brief_bound_to_a_noncurrent_registry_is_refused() {
+        let (_, current) = builtin_paradigm_registry().expect("built-in registry");
+        paradigm_registry_for_digest(&current).expect("current registry");
+        let error = paradigm_registry_for_digest(&sha256(b"retired registry"))
+            .expect_err("a non-current registry digest must be refused")
+            .to_string();
+        assert!(error.contains(&current), "{error}");
         assert!(
-            registry
-                .templates
-                .iter()
-                .all(|template| template.version == 1)
-        );
-        assert_ne!(digest, builtin_paradigm_registry().unwrap().1);
-        let previous =
-            paradigm_registry_for_digest(&sha256(HISTORICAL_REGISTRY_V2.as_bytes())).unwrap();
-        assert!(
-            previous
-                .templates
-                .iter()
-                .all(|template| template.version == 2)
+            error.contains("papertiger-mise improvement paradigms"),
+            "{error}"
         );
     }
 

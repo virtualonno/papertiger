@@ -17,11 +17,9 @@ cannot:
 
 The generic registry uses schema
 `papertiger-mise.improvement_paradigm_registry.v2` at
-`docs/mise_templates/v3/registry.json`. The content-addressed v1 and v2
-registries keep their earlier template content under the current schema
-identifiers (their digests changed at the 0.18.0 schema-id cutover), while new
-briefs bind the digest reported by
-`papertiger-mise improvement paradigms`. `papertiger-mise improvement verify-registry <file>`
+`docs/mise_templates/v3/registry.json`. It is the only registry Mise reads: a
+brief binds the digest reported by `papertiger-mise improvement paradigms`, and
+a brief bound to any other registry digest is refused. `papertiger-mise improvement verify-registry <file>`
 refuses missing canonical paradigms or project command, path,
 numeric-threshold, and verdict leakage. Project facts remain in a separately
 versioned project brief; the registry supplies question and objective shapes,

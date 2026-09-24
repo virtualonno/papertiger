@@ -38,6 +38,15 @@ All notable user-visible changes are documented here. Papertiger follows
   authority with `--result-file` or `note --text-file`. Stored locators and
   import are unaffected; other schemes are accepted as before.
 
+### Removed
+
+- The v1 and v2 improvement-paradigm registries. `improvement verify-brief`
+  and `improvement compile` read only the current built-in registry and refuse
+  a brief bound to any other registry digest; rebind such a brief to the digest
+  from `improvement paradigms`. These registries were rewritten at the 0.18.0
+  schema-id cutover, so no brief written before 0.18.0 could bind them, and no
+  known project authority holds a brief that does.
+
 ### Fixed
 
 - A project-install receipt naming another Papertiger release still refuses,
