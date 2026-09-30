@@ -6,6 +6,14 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A quarantined legacy event whose only defect was a missing plan or task
+  reference no longer locks the authority once that plan or task is created.
+  Previously the next `add` or `plan add` naming it made every open, `audit`,
+  `export` and `init` refuse with advice that could not recover it. Structural
+  defects recorded by a quarantine are still re-checked on every open.
+
 ## [0.20.0] - 2026-09-24
 
 Planner schema v13 and Mise schema v10 are unchanged; no `init` is needed.

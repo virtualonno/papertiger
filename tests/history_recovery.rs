@@ -216,3 +216,46 @@ fn numeric_plan_id_is_never_guessed_into_a_slug() {
         Some("1")
     );
 }
+
+#[test]
+fn quarantine_stays_valid_after_a_recorded_missing_reference_is_created() {
+    // (entity, plan, seq) for a legacy row whose only defect is a reference
+    // that ordinary later commands can create.
+    for (entity, plan, seq) in [("plan", "later", None), ("task", "work", Some(1))] {
+        let conn = Connection::open_in_memory().unwrap();
+        pt::init(&conn).unwrap();
+        pt::add_plan(&conn, "test", "work", "Work", "").unwrap();
+        conn.execute_batch("DROP TRIGGER events_require_zoned_timestamp; DROP TRIGGER events_require_json_payload; DROP TRIGGER events_require_stable_reference;").unwrap();
+        conn.execute(
+            "INSERT INTO events (at,actor,entity,entity_plan,entity_seq,kind,why,payload) VALUES ('2026-09-19T02:41:00Z','devin',?1,?2,?3,'note','old reason','{}')",
+            rusqlite::params![entity, plan, seq],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+        pt::repair_write_guards(&conn, "operator", "restore fixture guards").unwrap();
+        let before = pt::history_recovery::inspect(&conn, id).unwrap();
+        assert_eq!(before.problems.len(), 1, "{entity}: {:?}", before.problems);
+        pt::history_recovery::quarantine(
+            &conn,
+            "operator",
+            id,
+            &before.sha256,
+            "Preserve untrusted history",
+        )
+        .unwrap();
+        if entity == "plan" {
+            pt::add_plan(&conn, "test", "later", "Later", "").unwrap();
+        } else {
+            pt::add_task(&conn, "test", Some("work"), pt::TaskCreation::new("Task")).unwrap();
+        }
+        assert!(
+            pt::history_recovery::inspect(&conn, id)
+                .unwrap()
+                .problems
+                .is_empty(),
+            "{entity}"
+        );
+        assert!(pt::audit(&conn).unwrap().is_empty(), "{entity}");
+        assert!(pt::export(&conn, None).is_ok(), "{entity}");
+    }
+}
