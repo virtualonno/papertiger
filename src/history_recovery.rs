@@ -66,6 +66,13 @@ pub struct HistoryInspection {
     pub recovery_event_id: Option<i64>,
 }
 
+// Reference problems depend on current plans and tasks, so ordinary later
+// commands can resolve them after the quarantine was recorded.
+const MISSING_REFERENCE: &str =
+    "stable task/plan/gate reference is missing; no association is inferred";
+const ABSENT_PLAN: &str =
+    "stored plan slug is absent; no plan is inferred from a numeric ID or current task";
+
 pub fn inspect(conn: &Connection, event_id: i64) -> Result<HistoryInspection> {
     let original = conn.query_row(
         "SELECT event_id,at,actor,entity,entity_id,entity_plan,entity_seq,gate_name,kind,why,payload FROM events WHERE event_id=?1",
@@ -101,9 +108,7 @@ pub fn inspect(conn: &Connection, event_id: i64) -> Result<HistoryInspection> {
             || original.entity_plan.is_none()
             || (original.entity == "gate" && original.gate_name.is_none())
         {
-            problems.push(
-                "stable task/plan/gate reference is missing; no association is inferred".into(),
-            );
+            problems.push(MISSING_REFERENCE.into());
         }
     }
     if let Some(plan) = &original.entity_plan {
@@ -113,10 +118,7 @@ pub fn inspect(conn: &Connection, event_id: i64) -> Result<HistoryInspection> {
             |r| r.get(0),
         )?;
         if !exists {
-            problems.push(
-                "stored plan slug is absent; no plan is inferred from a numeric ID or current task"
-                    .into(),
-            );
+            problems.push(ABSENT_PLAN.into());
         }
     }
     let recovery_event_id = conn
@@ -265,10 +267,22 @@ pub(crate) fn validate(conn: &Connection) -> Result<()> {
                     .as_ref()
                     == Some(&inspected.original)
         });
+        // A reference the quarantine recorded as missing may exist now; the
+        // row's own structural defects cannot change, so they are re-derived.
+        let recorded_references_only = value
+            .as_ref()
+            .and_then(|v| v["problems"].as_array())
+            .is_some_and(|problems| {
+                !problems.is_empty()
+                    && problems.iter().all(|p| {
+                        p.as_str()
+                            .is_some_and(|p| p == MISSING_REFERENCE || p == ABSENT_PLAN)
+                    })
+            });
         if kind.as_deref() != Some("quarantine_event")
             || !valid
             || original_id >= recovery_id
-            || inspected.problems.is_empty()
+            || (inspected.problems.is_empty() && !recorded_references_only)
         {
             bail!(
                 "event {original_id} quarantine evidence does not match recovery event {recovery_id}; preserve with `papertiger backup --output <new-path>` and restore a verified authority"
