@@ -950,6 +950,18 @@ fn review_marker(prefix: &str, claim: &pt::ClaimReview, triage: bool) -> String 
     )
 }
 
+/// The plans a text read covers: the named one, else every active plan (an
+/// empty set falls through to the refusal naming `plan add`).
+fn text_plans(conn: &Connection, plan: Option<&str>) -> Result<Vec<(i64, String)>> {
+    Ok(match plan {
+        Some(slug) => vec![pt::resolve_plan(conn, Some(slug))?],
+        None => match pt::active_plans(conn)? {
+            all if all.is_empty() => vec![pt::resolve_plan(conn, None)?],
+            all => all,
+        },
+    })
+}
+
 /// One line describing a claim's review for `show`.
 fn claim_review_line(claim: &pt::ClaimReview) -> String {
     let mut line = format!(
@@ -1750,29 +1762,39 @@ fn run_planner(cli: Cli) -> Result<()> {
                 pt::outln!("{}", serde_json::to_string_pretty(&response)?);
                 return Ok(());
             }
-            let (plan_id, _) = pt::resolve_plan(&conn, plan.as_deref())?;
-            let tasks = match sort.as_str() {
-                "seq" => pt::list_tasks(
-                    &conn,
-                    plan_id,
-                    status.as_deref(),
-                    tag.as_deref(),
-                    kind.as_deref(),
-                )?,
-                "activity" => pt::list_tasks_by_activity(
-                    &conn,
-                    plan_id,
-                    status.as_deref(),
-                    tag.as_deref(),
-                    kind.as_deref(),
-                )?,
-                _ => bail!("unknown list sort '{sort}' (expected seq|activity)"),
-            };
-            for t in &tasks {
-                if unreviewed && !pt::review::needs_review(&conn, t)? {
-                    continue;
+            let targets = text_plans(&conn, plan.as_deref())?;
+            let several = targets.len() > 1;
+            for (plan_id, slug) in targets {
+                let tasks = match sort.as_str() {
+                    "seq" => pt::list_tasks(
+                        &conn,
+                        plan_id,
+                        status.as_deref(),
+                        tag.as_deref(),
+                        kind.as_deref(),
+                    )?,
+                    "activity" => pt::list_tasks_by_activity(
+                        &conn,
+                        plan_id,
+                        status.as_deref(),
+                        tag.as_deref(),
+                        kind.as_deref(),
+                    )?,
+                    _ => bail!("unknown list sort '{sort}' (expected seq|activity)"),
+                };
+                let mut shown = Vec::new();
+                for t in &tasks {
+                    if !unreviewed || pt::review::needs_review(&conn, t)? {
+                        shown.push(t);
+                    }
                 }
-                print_task_line(&conn, t, unreviewed)?;
+                // Several plans each get a heading; an empty one stays quiet.
+                if several && !shown.is_empty() {
+                    pt::outln!("{slug}");
+                }
+                for t in shown {
+                    print_task_line(&conn, t, unreviewed)?;
+                }
             }
         }
         Cmd::Search {
@@ -2270,10 +2292,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                         return Ok(());
                     }
                 },
-                None => match pt::active_plans(&conn)? {
-                    all if all.is_empty() => vec![pt::resolve_plan(&conn, None)?],
-                    all => all,
-                },
+                None => text_plans(&conn, None)?,
             };
             let several = targets.len() > 1;
             let limit = limit.unwrap_or(if several { 5 } else { 20 });
@@ -2392,13 +2411,14 @@ fn run_planner(cli: Cli) -> Result<()> {
             }
         },
         Cmd::Tree { plan, kind } => {
-            let (plan_id, slug) = pt::resolve_plan(&conn, plan.as_deref())?;
-            let visible = kind
-                .as_deref()
-                .map(|kind| tree_kind_scope(&conn, plan_id, kind))
-                .transpose()?;
-            pt::outln!("{slug}");
-            print_tree(&conn, plan_id, None, 1, visible.as_ref())?;
+            for (plan_id, slug) in text_plans(&conn, plan.as_deref())? {
+                let visible = kind
+                    .as_deref()
+                    .map(|kind| tree_kind_scope(&conn, plan_id, kind))
+                    .transpose()?;
+                pt::outln!("{slug}");
+                print_tree(&conn, plan_id, None, 1, visible.as_ref())?;
+            }
         }
         Cmd::Note { text, task } => {
             let text = text.required()?;

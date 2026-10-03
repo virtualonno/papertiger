@@ -998,7 +998,7 @@ fn starting_and_reading_ask_for_nothing_extra() {
 }
 
 #[test]
-fn text_focus_ranks_every_active_plan_when_none_is_named() {
+fn text_reads_cover_every_active_plan_when_none_is_named() {
     let db = TestDatabase::new("focus-all-plans");
     let run = |args: &[&str]| {
         let output = papertiger(&db.0, args);
@@ -1043,6 +1043,29 @@ fn text_focus_ranks_every_active_plan_when_none_is_named() {
         "a text continuation stays text: {text}"
     );
     assert!(run(&["focus", "--limit", "7"]).matches("  F-").count() == 7);
+
+    let list = run(&["list"]);
+    assert!(
+        list.contains(
+            "alpha
+· F-1 Alpha 0"
+        ) && list.contains(
+            "beta
+· B-8 Beta crash"
+        ),
+        "{list}"
+    );
+    let tree = run(&["tree"]);
+    assert!(
+        tree.contains(
+            "alpha
+"
+        ) && tree.contains(
+            "beta
+"
+        ),
+        "{tree}"
+    );
 
     let json = papertiger(&db.0, &["focus", "--json"]);
     assert!(!json.status.success(), "JSON stays one plan per document");
