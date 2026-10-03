@@ -36,9 +36,12 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   which names `<root>/state/papertiger.sqlite`; else the nearest
   `state/papertiger.sqlite` above the working directory, the way Git finds a
   repository. With none, commands refuse and name `--project-root` and `init`.
-  `init` with no selector creates the authority in the working directory, and
-  when it creates one in a Git working tree it adds Papertiger's ignore rules to
-  `.gitignore`. A non-regular file at the authority path is refused.
+  Creating an authority names its root, `papertiger --project-root <root>
+  init` (or a `--db` path), so a command run from a subdirectory never nests a
+  second authority; without a selector, `init` only migrates or confirms the
+  authority found above. When `init` creates one in a Git working tree, it adds
+  Papertiger's ignore rules to `.gitignore`. A non-regular file at the
+  authority path is refused.
 - JSON documents whose shape changed move one version: task_context v9,
   task_current v4, event_log v2, mutation v2, status v4, focus v8, task_list
   v2, task_inventory v3, search v3, search_compact v3, dump v11; new

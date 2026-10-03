@@ -1316,12 +1316,8 @@ fn run_planner(cli: Cli) -> Result<()> {
             let cwd = std::env::current_dir()?;
             match project_authority::discover(&cwd)? {
                 Some(found) => pt::portable_absolute(&found.authority)?,
-                // Like `git init`, a new authority starts in the working directory.
-                None if matches!(cli.cmd, Cmd::Init) => {
-                    let selected = project_authority::at_root(&cwd)?;
-                    init_root = Some(selected.root);
-                    pt::portable_absolute(&selected.authority)?
-                }
+                // Creating an authority names its root: run from a
+                // subdirectory, an implicit one would nest a second authority.
                 None => return Err(project_authority::not_found(&cwd)),
             }
         }

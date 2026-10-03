@@ -93,7 +93,8 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
             .output()
             .unwrap()
     };
-    assert_success(&invoke(&["init"]));
+    let root = project.0.to_str().unwrap();
+    assert_success(&invoke(&["--project-root", root, "init"]));
     for plan in ["active", "paused", "closed", "empty", "retired"] {
         assert_success(&invoke(&[
             "plan",
@@ -2866,6 +2867,8 @@ fn explicit_project_root_selects_one_authority_from_another_project() {
 
     for project in [&canonical, &foreign] {
         let init = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+            .arg("--project-root")
+            .arg(project)
             .arg("init")
             .current_dir(project)
             .env_remove("PAPERTIGER_DB")
@@ -3082,7 +3085,19 @@ fn authority_selection_walks_up_and_refuses_missing_or_ambiguous_selection() {
     );
     assert!(!outside.join("state").exists());
 
-    assert_success(&run(&project, &["init"]));
+    // Creating an authority names its root; a bare init nests nothing.
+    let refused = run(&nested, &["init"]);
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("--project-root <project-root> init"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!nested.join("state").exists() && !project.join("state").exists());
+    assert_success(&run(
+        &nested,
+        &["--project-root", project.to_str().unwrap(), "init"],
+    ));
     assert_success(&run(&nested, &["plan", "add", "work", "Work"]));
     let status = run(&nested, &["status", "--json"]);
     assert_success(&status);

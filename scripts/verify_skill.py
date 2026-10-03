@@ -3,7 +3,8 @@
     python scripts/verify_skill.py <extracted>/papertiger <expected-version>
 
 Checks the layout, then runs the skill's own binaries against a fresh Git
-project: init through --project-root adds the ignore rules, a nested
+project: a bare init refuses to create an authority, init through
+--project-root adds the ignore rules, a nested
 directory finds the authority, a directory outside every project refuses,
 and Mise opens its separate authority beside the planner's.
 """
@@ -62,6 +63,9 @@ with tempfile.TemporaryDirectory(prefix=TOOL + ' skill smoke ') as directory:
 
     missing = run(planner, 'status', cwd=outside, success=False)
     assert 'no Papertiger authority' in missing and 'init' in missing, missing
+    bare = run(planner, 'init', cwd=nested, success=False)
+    assert '--project-root <project-root> init' in bare, bare
+    assert not (nested / 'state').exists() and not (project / 'state').exists()
     created = run(planner, '--project-root', project, 'init', cwd=outside)
     assert 'added Papertiger' in created, created
     assert '/state/papertiger.sqlite' in (project / '.gitignore').read_text()
