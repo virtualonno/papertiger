@@ -28,37 +28,42 @@ authorize removing guards or manufacturing admission; use the corrective command
 or preserve the blocker. Only for a genuinely new authority, read
 [first use](../../../tools/papertiger/agent_integration.md#first-use).
 
-Before mutating, set `PAPERTIGER_ACTOR` to a concise author label and
-`PAPERTIGER_SESSION` to one unique session ID, and reuse them (`--actor` and
-`--session` work when the shell drops environment). Set `PAPERTIGER_MODEL` and
-`PAPERTIGER_REASONING_EFFORT` only to known values.
+Every write records the model that authored it: pass `--model <your exact
+model id>` unless `PAPERTIGER_MODEL` was set at launch, and never use `human`
+or `runtime`. Harness, session and actor label come from the environment;
+outside a harness set `PAPERTIGER_SESSION` to one unique session ID.
 
 ## Enter, work, finish
 
 Orient to an unfamiliar authority with `status` once. For a known task, read
-`show <N> --json` and resume it; `--no-history` rechecks current state.
-Otherwise select work with `focus --plan <slug> --json`, and before adding,
-search with `search "<terms>" --plan <slug> --compact`; follow continuations
-when relevant. Another session's pickup is advisory: not a lock, and no reason
-to ask permission for requested work.
+`show <N> --json` and resume it (`--no-history` rechecks current state); for a
+goal or parent, `brief <N>` shows its whole subtree. Otherwise select work with
+`focus --plan <slug> --json`, and before adding, search with
+`search "<terms>" --plan <slug> --compact`; follow continuations when relevant.
+Another session's pickup is advisory: not a lock, and no reason to ask
+permission for requested work.
 
 ```text
 papertiger start <N> --why "Why this work resumes" --json
-papertiger add "Outcome" --plan <slug> --start --intent "Standalone purpose" --intent-source user --why "Why now" --json
-papertiger done <N> --result "Outcome and verification" --result-source agent --json
+papertiger add "Outcome" --kind <kind> --plan <slug> --start --intent "Standalone purpose" --why "Why now" --json
+papertiger done <N> --result "Outcome and verification" --json
 papertiger decompose <N> --outline-file outline.json --start-ready --json
 ```
 
-Split a multi-part outcome into child tasks with one `decompose` call instead
-of inventing section or phase labels. Refer to local work by task number inside
-Papertiger and by its outcome everywhere else.
+Choose each task's kind: goal, feature, change, bug, probe, decision or
+release; probes, decisions and bugs require results. Split a multi-part
+outcome into children with one `decompose` call instead of inventing section
+or phase labels. Refer to local work by its handle (`F-924`) inside Papertiger
+and by its outcome everywhere else; keep both out of shared Git/PR prose.
 
-Read rejected history before reviving an approach. Choose `user`, `agent`, or
-`external` for the actual source of intent. An intent stands alone: fold a
-source plan's substance in (`--intent-file`) instead of citing a scratch file.
-Write `--why` for choices a cold
-reader could question. Record a decision with `note --text "..." --task <N>`.
-`--intent-file`, `--why-file`, `--result-file`, and `note --text-file` read
+A claim marked `[unreviewed · <model>]` or `[disputed · <model>]` is
+unverified: check it before acting, then record
+`review <N> --verdict confirmed|disputed --why "..."` (add `--result` for a
+done task's result). Read rejected history before reviving an approach. An
+intent stands alone: fold a source plan's substance in (`--intent-file`)
+instead of citing a scratch file. Write `--why` for choices a cold reader
+could question, and record decisions with `note --text "..." --task <N>`;
+`--intent-file`, `--why-file`, `--result-file` and `note --text-file` read
 UTF-8 text when shell quoting becomes awkward.
 
 Don't truncate JSON with head/tail; use `--compact`, `--no-history` or
@@ -67,8 +72,7 @@ fails after a successful mutation, check with `show`/`log`; never replay it.
 
 Before completion, record any commit that represents the outcome with
 `commit add <N> <full-oid>` (add `--repo <label>` only for a nested or external
-repository). Keep task numbers out of shared Git/PR prose. Probes and decisions
-require results; `done` refuses open obligations. Resolve them with evidence,
+repository). `done` refuses open obligations; resolve them with evidence,
 never route around a refusal. Run `audit` after planning changes.
 
 Use live `--help` for operations. Read [the reference](../../../tools/papertiger/agent_integration.md)

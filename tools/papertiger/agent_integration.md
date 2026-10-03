@@ -1,354 +1,195 @@
 # Papertiger project reference
 
+The skill carries the ordinary workflow. Read this reference for first use,
+authority selection, migration, recovery and transfer, and for the details of
+kinds, review, pickup, gates, commits, references and Mise.
+
 ## First use
 
 The release archive is laid out for a project root: unpacked there, its skills
-and `tools/papertiger/bin/papertiger[.exe]` work as they are. `setup-project`
-and `setup-user` are optional managed installations; installation, upgrade and
-removal are covered by `--help` and the README, not by this reference.
+and `tools/papertiger/bin/papertiger[.exe]` work as they are. Installation,
+upgrade and removal are covered by `--help` and the README.
 
 Start from the authority the project already has. Only a genuinely new project
-with no planning history gets a new one: set `PAPERTIGER_ACTOR` and a stable
-`PAPERTIGER_SESSION`, then run `init` with the same executable and selectors you
-use for `status` (it reports in plain text and refuses `--json`). Add the
-database and its `-journal`, `-wal` and `-shm` sidecars to Git's ignore rules
-before `init`.
-Add a plan with `plan add <slug> "Title" --intent "Purpose"` only if no suitable
-plan exists. When history is unexpectedly missing, stop and restore it; never
-run `init` to replace it.
+with no planning history gets one: add the database and its `-journal`, `-wal`
+and `-shm` sidecars to Git's ignore rules, run `init`, then
+`plan add <slug> "Title" --intent "Purpose"`. When history is unexpectedly
+missing, stop and restore it; never run `init` to replace it.
 
-Papertiger is optional. Use it when work has independently reviewable outcomes,
-separate commits, dependencies, external blockers, decisions, probes, or proof
-obligations that merit durable identity and cold-resume context. This can apply
-even when the operator requests all outcomes in one session.
-
-The skill carries the ordinary workflow; read this reference for migration,
-recovery, transfer or authority changes, and record validated
-deferred defects, dependencies, decisions or proof debt as they appear, never
-speculative observations or intermediate steps inside one independently
-reviewable outcome.
+Use Papertiger when work has independently reviewable outcomes, separate
+commits, dependencies, external conditions, decisions, probes or proof
+obligations that merit durable identity and cold resume, even when all of them
+are requested in one session. Record validated deferred defects, decisions and
+proof debt as they appear; intermediate steps inside one independently
+reviewable outcome do not need tasks.
 
 ## Authority
 
-Choose one canonical authority by the initiative or outcome that owns the
-work, not by whichever repository contains the next edited file. One outcome
-that spans repositories remains in that authority. If its repository changes
-are independently reviewable or separately committed, model them as separate
-tasks in the same authority and associate their commits with stable external
-repository labels. Loading another repository's Papertiger skill or editing
-that repository does not require a duplicate local task. Use a second
-authority only when the second project owns a genuinely independent durable
-outcome; independent authorities cannot express replacements or dependencies
-between each other.
+Choose one canonical authority by the outcome that owns the work, not by the
+repository holding the next edited file. One outcome spanning repositories
+stays in that authority, with separately committed parts as separate tasks
+whose commits carry stable `--repo` labels. Use a second authority only for a
+genuinely independent outcome; authorities never share dependencies or
+replacements and are never merged.
 
-The default authority is `state/papertiger.sqlite`. The native binary walks
-upward from the current directory to the nearest project-install receipt
-(`tools/papertiger/project-install.json`) or release manifest
-(`tools/papertiger/manifest.json`), refuses one that names another Papertiger
-release (the refusal names the corrective command), and resolves the selected
-authority against that project root. A manifest naming the running release
-takes precedence over an older receipt's recorded version; the receipt still
-selects the authority path.
-When an intentional command runs from another repository, pass the global
-`--project-root <canonical-project-root>` option. At that exact root it selects
-the receipt's authority; without a receipt, the release bundle's or an
-existing `state/papertiger.sqlite`. It never walks upward or changes the process
-working directory. Without a receipt or bundle it selects only a database that
-already exists; `init` creates only the receipt- or bundle-selected authority. Discovery without
-`--project-root` uses only receipts and release bundles. Operate each authority
-with its own project launcher, `<canonical-project-root>/tools/papertiger/bin/papertiger[.exe]`,
-because projects can pin different releases during a rollout; a receipt naming
-another release refuses and names that launcher. `PAPERTIGER_DB` or an explicit global `--db`
-deliberately overrides receipt discovery. The installed personal executable falls back to its private
-store only when no project receipt is discovered. It needs no `--db` argument.
-Do not use a raw database override for ordinary
-project selection or split ordinary planning
-across multiple authorities. Ordinary commands refuse combining the receipt
-selector with a database override. `evidence verify`, `gate resolve` and
-`blocker resolve` retain that combination only so an explicitly selected
-database can verify or bind `file:` locators beneath a supplied project root.
+Run the project's own launcher, `<project-root>/tools/papertiger/bin/papertiger[.exe]`,
+not a copy on `PATH`. It finds the project receipt or release manifest above
+the working directory and opens `state/papertiger.sqlite` there. From another
+repository pass the global `--project-root <canonical-project-root>` to that
+root's launcher, since projects can pin different releases during a rollout.
+`--db` and `PAPERTIGER_DB` are deliberate overrides for recovery, never for
+ordinary selection.
 
-- Many agents and harnesses may use one canonical SQLite authority in its
-  planning worktree. Every connection receives one fixed 500 ms SQLite lock
-  grace for brief read or mutation overlap; commands are never replayed, and a
-  longer lock produces an explicit retry refusal. Independent authorities are
-  never merged or synchronized; Git cannot merge changed database copies.
-- Mutate the database only through Papertiger commands and public APIs.
-- `init` is the only command that initializes or migrates the selected live authority. Read commands never
-  migrate; follow their exact corrective command deliberately.
-- The current planner authority schema is v13 and the current dump format is
-  `papertiger.dump.v10`. To migrate an older authority, first create a
-  standalone recovery file with the new release's
-  `--db <source> backup --output <new-path>`, then run `init` with the new
-  release. `import` also converts `papertiger.dump.v9`; older dumps need their
-  matching release, a temporary authority migration, and a current-format
-  re-export. Migration never rewrites stored events and leaves earlier
-  malformed rows untouched for `audit`. Mise's schema is independent.
-- Writes to every planner table require public mutation API entry. A raw
-  SQLite writer fails with `papertiger_write_requires_public_api`; use the bound
-  executable, never remove its guards, add triggers or manufacture the admission
-  function. Guard drift (a missing or altered guard, or any trigger the
-  executable did not install) blocks writes, not reads, export or backup;
-  `audit` reports it. After stopping the direct access, preview with
-  `repair-guards --dry-run` and repair with `repair-guards --why <reason>`,
-  which reinstalls the guards, removes foreign triggers, records the observed
-  SQL and cannot write planning data. An altered history view blocks reads until
-  repaired. This is a misuse boundary, not a sandbox against an unrestricted
-  filesystem owner. API callers are trusted after mutation entry.
-- Legacy history recovery is explicit: preserve a `backup`, review
-  `history inspect <event-id>`, then use `history quarantine <event-id>
-  --expect-sha256 <digest> --why <reason>` only for its reported structural
-  defects. The immutable original survives, and a recovery event carries every
-  raw field through log/export/import. Unknown timestamps and associations stay
-  unknown; recovery never infers task state. This is not routine task editing.
-- `export` is transfer and recovery, not a second live authority. It carries
-  plans, tasks, gates, blockers, events and Mise projections.
-  `export --output <path>` writes a canonical UTF-8 recovery file atomically
-  and prints a digest/count receipt; replacing an existing file requires
-  `--replace`.
-- `backup --output <new-path> --json` creates a consistent standalone SQLite
-  recovery file, including committed WAL data. It supports planner schemas 1–13
-  without migration or new events, refuses foreign authorities and existing
-  destinations or sidecars, and reports the output hash and original schema.
-  Historical evidence is preserved without semantic validation; this can retain
-  legacy records that a matching release's JSON import refuses. Inspect recovery
-  copies with the matching release's `--db`; never use one as a second live
-  authority. Restoration is a deliberate operator action.
-- A task priority stored as text is invalid data, not a named priority level.
-  Preserve a `backup` before recovery. An explicit
-  `edit <task> --priority <integer> --why <reason>` with no other edits can replace
-  it and records a `repair_priority` event with the exact original text and the
-  chosen integer. No value is inferred; another unreadable task field rolls the
-  operation back. Other malformed storage types require a verified authority.
-  This repairs scheduling only; it does not certify the task's earlier provenance.
-
-Papertiger owns modeled plans, tasks, dependencies, blockers, gates, and event
-history. Domain evidence and issue systems remain authoritative for their own
-facts. Markdown carries doctrine and rationale, never duplicated live status.
+- Mutate only through Papertiger commands. A raw SQLite writer fails with
+  `papertiger_write_requires_public_api`. Never remove guards or add triggers;
+  after stopping any direct access, `repair-guards --dry-run` previews and
+  `repair-guards --why <reason>` restores them.
+- `init` is the only command that creates or migrates an authority. Read
+  commands never migrate; follow their exact corrective command deliberately.
+  The current schema is v14 and the dump format `papertiger.dump.v11`; before
+  migrating, take `backup --output <new-path>` with the new release.
+- `export --output <path>` writes a recovery file; `import` reads v11 and
+  converts `papertiger.dump.v10`. An export is transfer and recovery, never a
+  second live authority.
+- Legacy history recovery is explicit: `backup`, review `history inspect
+  <event-id>`, then `history quarantine <event-id> --expect-sha256 <digest>
+  --why <reason>` for its reported defects only.
 
 ## Start from live truth
 
-Invoke the project executable `<project-root>/tools/papertiger/bin/papertiger[.exe]`
-directly, not through `PATH` or a shell wrapper; project and authority
-selection belong to that binary. In the examples below,
-`papertiger` means that executable.
-
 ```bash
 papertiger status
-papertiger --project-root <canonical-project-root> status
 papertiger focus --json
-papertiger search "<terms>" --json
 papertiger search "<terms>" --compact
 papertiger show <task.seq> --json
-papertiger show <task.seq> --no-history
-papertiger plan list --json
+papertiger brief <task.seq>
 papertiger list --all-plans --status unfinished --json
 papertiger audit
-papertiger evidence verify --project-root <project-root> --json
-papertiger evidence verify --classification failed --task-state open --limit 50 --json
 ```
 
-If more than one plan is active, pass `--plan <slug>` to plan-scoped reads.
-`status --json` distinguishes all in-progress work from its explicit parent
-and leaf projections. Every bounded projection reports its scope, ordering,
-eligible, returned, and omitted counts; when it is incomplete, follow its
-`continuation_command` rather than treating the visible entries as exhaustive.
-Use compact search for discovery (5 results by default, with a
-`continuation_command` when more match) and full `show` when resuming selected
-work. `show --no-history` is a current-state recheck; follow its
-`history_command` when earlier notes or decisions matter. `plan list --json`
-includes every plan state and accepts `--plan <slug>` for one plan's
-orientation. For complete task inventory across active and paused plans, use
-`list --all-plans --status unfinished --json` and follow each page's
-`continuation_command` (its `--after-cursor` is bound to the filters and the
-authority snapshot). A history change invalidates the cursor; restart the read
-instead of combining pages from different states.
+Pass `--plan <slug>` when more than one plan is active. Bounded reads report
+what they omitted; follow their `continuation_command` instead of treating the
+visible entries as complete. Reads never change the authority.
 
-Planner read commands open the SQLite authority read-only by construction;
-they never initialize, migrate, or repair it.
-`evidence verify` is also read-only. Its summary always counts the complete
-selected task scope; `--classification`, `--task-state`, and `--limit` bound only the
-detail projection and never narrow the exit-status claim. Exact status and
-unsupported-scheme counts identify resolver gaps in the summary. The default
-detail filter is `incomplete`, covering failed and unsupported bindings. Follow the
-structured continuation command while `has_more=true`; a cursor is bound to
-the root, filters, stored bindings, and live verification results and refuses
-after drift. The verifier hashes stored `file:` locators in bounded memory from
-one stable byte read beneath the project root, rejects escapes and symlinks,
-and fails closed on missing, unhashed, or mismatched bytes. Unsupported locator
-schemes are reported, never counted as verified. Failed bindings include exact
-corrective argument vectors for their evented reopen-and-rebind workflow.
+`brief <task.seq>` reads a task and its whole subtree: what it is for,
+progress, the next ready leaves, open work with pickup and owner state, open
+gates, results of done descendants and the latest notes. Use it instead of
+handoff documents; anything worth keeping belongs in a result, gate or note.
 
-`gate resolve` and `blocker resolve` refuse a new `file:` locator unless it is
-relative to the project root, uses `/` separators, and names an existing
-regular file there whose bytes match any `--sha256` given. Evidence under
-ignored or temporary paths rots, so keep durable text in the authority with
-`note --text-file <path> --task <task>` and resolve with a non-file locator
-such as `note:<summary>`.
+## Tasks, kinds and handles
 
-A `file:` locator plus SHA-256 is the byte receipt for retained evidence, not a
-Git snapshot. For a commit-backed outcome, bind an immutable audit receipt as
-evidence and record the repository's full commit object ID separately with
-`commit add`; neither identity substitutes for the other.
-`task.seq`, written as `N` or `#N`, is the only task identity and selector.
-Prefer bare `N`: it is portable across shells, while `#N` must be quoted where
-`#` begins a comment.
+Choose each task's kind when creating it: `goal` for a container of child
+outcomes, `feature`, `change` (refactor, migration, hardening, removal), `bug`,
+`probe`, `decision`, or `release` (publishing, rollout and other chores). The
+legacy `work` kind cannot be assigned; retype an open `work` task with
+`edit <task.seq> --kind <kind> --why <reason>` (`audit` suggests one). Probe,
+decision and bug tasks require `--result` or `--result-file`; a bug's result
+names its cause.
 
-`task.seq` is private to one authority. Never write a Papertiger task number in
-a shared commit, pull request, changelog, release note, or public artifact. Such
-prose must stand alone. When a shared issue or artifact is relevant, record its
-stable URL or evidence locator in Papertiger; local planning identity never
-flows outward.
+Output shows each task by its handle, kind letter and number (`F-924`; JSON
+`handle`). Commands accept the handle, `N` or `#N`; prefer the handle or bare
+`N`, since `#` starts a shell comment. A handle whose letter no longer matches
+the task's kind is refused with the current one. `show`, `focus` and `brief`
+place a task under its ancestors (`path: G-1 › F-2`). Keep task numbers and
+handles out of shared commits, pull requests and release notes; record shared
+artifacts inward with `reference add`.
 
-## Concurrent pickup without reservations
+Priority is a level, `--priority now|next|later` (default `next`); `focus`
+ranks it after readiness. Express order between tasks with `--dep`, not finer
+priorities. `list`, `focus`, `search` and `tree` filter with `--kind`.
 
-Set `PAPERTIGER_SESSION` once to a unique identity for this agent session, or
-pass global `--session <id>`; reuse it across commands. Give concurrent agents
-different identities even when they use the same model or actor. Do not create
-an identity per CLI invocation. Identity accepts 1–128 ASCII letters, digits,
-`.`, `_`, `:`, and `-`, starting with a letter or digit. Omission is supported for
-human or unidentified callers and records a null session, never a guessed actor.
+Split a multi-part outcome into children with one
+`decompose <parent> --outline-file <path|->` call (`papertiger schema` defines
+`papertiger.task_outline.v2`) instead of inventing section or phase labels. An
+intent stands alone: fold a source document's substance in with
+`--intent-file` rather than citing a scratch file.
 
-`focus` prefers `mine`, then unattributed `in_progress`, then `ready`, then
-`picked_up_elsewhere`; `--include-blocked` also includes blocked proposed work. Real blockers
-remain in `blockers` independently of pickup. Work picked up elsewhere remains
-visible and eligible: neither its presence nor its age proves another agent is
-still working. When choosing freely, prefer other available work; an explicit
-user request to resume a task takes precedence. With no alternative, inspect
-its stored context and use `start <N>` to continue it directly.
+## Authorship and review
 
-`start` records pickup and can resume an already-in-progress task. An old pickup
-never requires release, takeover permission, a reason, a heartbeat, expiry, or a
-harness integration. A changed pickup records the previous and new identities;
-repeating `start` from the same identified session is eventless (`changed=false`).
-Initial `start` and `add --start` bind pickup in their status event and transaction.
-Terminal transitions clear current pickup while preserving its history. Notes,
-reads, and edits do not refresh pickup or pretend to be a heartbeat.
+Every write records the model that authored it; without one it is refused.
+Pass `--model <your-model-id>` with your own exact model unless
+`PAPERTIGER_MODEL` was set where the session was launched; events record
+which (`model_source`). Never use `human` (the operator's manual model) or
+`runtime` (reserved for the tool). Harness, session and the actor label come
+from the environment. Authorship is provenance, never ownership.
 
-`task.pickup` is null or `{session, at}` in full task context. `focus` v7
-returns compact task summaries with `pickup`, `readiness`, and `blockers` as
-sibling fields on each entry; `status` likewise keeps pickup beside its summary.
-Read `focus` directly without an additional projection. It omits task intent,
-result, history, and plan narrative; use `show <N> --json` for the chosen task.
-Its plan contains only `slug` and `status`. If scripting a smaller selection
-view, retain readiness, pickup, and blockers together with task identity.
-Whole-authority inventory uses `tasks[].{plan,task}`, so identifiers and titles
-are `tasks[].task.seq` and `tasks[].task.title`, not fields directly on each row.
-`at` is the last pickup time, not last-seen or last-active time. These are advisory
-coordination hints, not exclusive claims, authorization, liveness detection, or
-file locks. Concurrent explicit starts can both succeed; SQLite serializes their
-history, not their subsequent execution. Domain-owned work continues to use its
-domain's own coordination mechanism.
-
-## Mutations
-
-Set `PAPERTIGER_ACTOR` to a concise human-readable author label before
-mutating. It records who wrote each event; it is historical provenance, never
-an assignee, claim, lease, session handle, or liveness signal. Write `--why`
-for anything a future session could question, using language that stands alone
-without chat context.
-
-Pass `--model`/`--reasoning-effort` (or `PAPERTIGER_MODEL`/`PAPERTIGER_REASONING_EFFORT`)
-only with exact known values; effort requires a model; never guess or backfill.
-
-### Mutation receipts
-
-For scripted mutation chains, pass `--json`. `papertiger.mutation.v1` contains
-`changed` and the exact emitted `events`; each entry includes the event and
-its task/plan snapshots captured inside the committed transaction. Obtain
-created task selectors from `events[].task.seq`. Failed mutations produce no
-success receipt, and idempotent operations may emit an empty event list with
-`changed=false`. Never recover a task number by parsing human prose. `init`
-reports in plain text and refuses `--json`.
-
-For a concise acknowledgement, keep the receipt and show `changed` plus, per
-event, `event.event_id` and `event.kind` with their sibling `task` (a summary of
-`seq`, `title`, `status`, `kind` and `priority`, without `intent` or `result`;
-taskless events are legitimate) and `plan`; in Windows PowerShell 5.1 pass
-`ConvertTo-Json -Depth 8`, because the default depth is 2, and wrap
-single-event lists in `@(...)`, because a one-item pipeline yields a scalar.
-
-Check the native command's exit code before parsing. If local parsing or display
-fails after a successful write, inspect the retained receipt and use read-only
-`show`/`log` to verify the outcome; do not replay the mutation. Empty events and
-`changed=false` are distinct from a failed command with no success receipt.
-
-For multi-paragraph text, use the same `<field>-file <path|->` pattern:
-`--intent-file`, `--why-file`, `--result-file`, or `note --text-file`; note
-text is inline only as `note --text "..."`, never positional. `-` reads
-stdin. One command may consume stdin for only one field; inline and file forms
-for the same field are mutually exclusive. Explicit empty intent remains the
-way to clear optional orientation; rationale, results, and notes must be
-nonblank. File and stdin text must be UTF-8; one leading UTF-8 BOM is accepted.
-Windows PowerShell 5.1 uses a legacy encoding for native pipelines by default,
-so send non-ASCII text through a UTF-8 file or configure `$OutputEncoding`.
+A task carries two claims: its filing (title and intent) and, once done, its
+result. Each shows its review state with the model that made it, e.g.
+`[unreviewed · deepseek-v4.1-flash]`. An unreviewed or disputed claim is
+unverified: check it before acting on it or building on it, then record what
+you found:
 
 ```bash
-papertiger add "Outcome" --start \
-  --intent "Standalone purpose" --intent-source user \
-  --why "Why this outcome starts now"
-papertiger start <task.seq> --why "Why execution starts now"
-papertiger gate resolve <task.seq> <name> \
-  --evidence file:path/to/receipt.json --sha256 <digest>
-papertiger done <task.seq>
+papertiger review <task.seq> --verdict confirmed --why "What you verified"
+papertiger review <task.seq> --result --verdict disputed --why "What does not hold"
 ```
 
-Decompose a multi-part outcome into child tasks with one
-`decompose <parent> --outline-file <path|->` call (`papertiger schema` defines
-`papertiger.task_outline.v1`); its receipt lists one task create event per child
-in outline order. A replay is refused only while the earlier children are still
-live, so check `show <parent>` before retrying. Refer to local work by task
-number inside Papertiger and by its outcome everywhere else; never invent
-section or phase labels for parts of the work.
+A session cannot review its own claim. A disputed result holds the tasks that
+depend on it until confirmed or revised. `list --unreviewed` and
+`focus --unreviewed` select claims needing a check; `models` counts how each
+model's filings and results fared.
 
-An intent stands alone: fold a source document's substance into it, for
-example with `--intent-file`, instead of citing a scratch or dated plan file
-that may not survive.
+## Pickup
 
-Replacing intent that already has a source requires either a replacement
-`--intent-source` or `--clear-intent-source`; unchanged text keeps its stored
-source. Use `edit <task.seq> --clear-intent-source --why <reason>` to correct a
-mistaken attribution without erasing the intent or its revision history.
+`start <task.seq>` records pickup and resumes in-progress work directly; an
+earlier pickup never needs release, permission or a heartbeat. Outside a
+detected harness, set `PAPERTIGER_SESSION` once to a unique identity per agent
+session. `focus` prefers your own work, then unattributed in-progress work,
+then ready work, then work picked up elsewhere; when choosing freely, prefer
+other available work.
 
-`show --json` reports event-derived activity. `started_event` exists only while
-the task is currently in progress, and `completed_event` only while it is
-currently done. Their actor fields identify the transition author, not who
-should work next. `last_event` records the latest task, dependency, or gate
-event. Use `list --sort activity` when recency is useful; do not interpret
-event times as duration, productivity, or submission data.
+Where the harness names its process, a pickup records its owner, and
+`owner_state` reports `ended` only when that is provable on the owner's host,
+otherwise `running` or `unknown`. Age proves nothing. An ended owner is a
+reason to resume the work with `start`, never an automatic transition.
 
-Task context v8 is the single work-record surface: full selected-task details,
-compact related-task summaries, and twelve recent events with a history cursor
-when older events remain. Use `show <related-seq> --json` for that task's full
-context. `schema` emits the bundled JSON Schema without opening an authority;
-its top-level `oneOf` lists the documents it covers. Not every JSON output is
-among them (`evidence verify` and `audit` are not), so check that list before
-validating. Every field is provider-local; stored prose and locators require editorial review
-before external publication. There is no automatic publication renderer or
-provider-discovery protocol.
+## Mutations and receipts
 
-`log --json` returns full event identity and an `event-v1` cursor bound to the
-exact history prefix. Use `--after-cursor` for new events and
-`--before-cursor` for older pages. A cursor from divergent history refuses
-instead of silently reading the wrong timeline. Events keep the kind they were
-recorded with: gate resolutions recorded before schema v13 read as `closed`.
+Write `--why` for anything a future session could question, in language that
+stands alone. Long text uses `--intent-file`, `--why-file`, `--result-file` or
+`note --text-file`, with `-` for stdin; text must be UTF-8.
 
-New task `edit` events carry a
-`papertiger.task_definition_revision.v1` payload with canonical before/after
-values for every changed field. Their public
-`task_definition_revision_state` is `complete`. Historical edit events that
-predate snapshots remain readable as `legacy_without_snapshots`; never infer
-their missing prior values. Pure no-op edits refuse rather than minting a
-misleading revision.
+For scripted chains pass `--json` and read `papertiger.mutation.v2`: `changed`
+and the exact emitted `events`, with new task numbers in `events[].task.seq`.
+Check the exit code before parsing. If handling fails after a successful
+write, verify with `show` or `log`; never replay the mutation.
 
-`search` analyzes literal words across title, intent, result, tags, and event
-rationale, requires every term somewhere in the task record, and ranks exact
-phrases plus high-value fields deterministically. It searches done, retired,
-and rejected history by default. Use `--plan`, `--status`, or `--limit` to
-narrow it; there is no query language, external index, or semantic inference.
+```bash
+papertiger add "Outcome" --kind feature --start \
+  --intent "Standalone purpose" \
+  --why "Why this outcome starts now"
+papertiger gate add <task.seq> <name> --kind test --requirement "Tests pass"
+papertiger gate resolve <task.seq> <name> \
+  --evidence file:path/to/receipt.json --sha256 <digest>
+papertiger done <task.seq> --result "Outcome and verification"
+```
 
-When a local Git commit represents a task outcome, resolve the full object ID
-in the owning repository and record it inward before task completion:
+`done` refuses open dependencies, gates or children; resolve or waive them
+with evidence and reasons rather than routing around the refusal. Check
+`list --status rejected` before reviving an old approach; `reopen` revisits a
+rejected task. For a duplicate, `retire <duplicate> --into <canonical> --why
+<reason>`; for an approach that should not be pursued, `reject`. Rehome a
+connected set with `move-plan <N>... --plan <destination> --why <reason>`.
+
+## Gates and evidence
+
+A gate is a proof obligation: `gate add <task.seq> <name> --kind
+<test|benchmark|review|capture|fixture|build|doc|external|other> --requirement
+<text>`. An `external` gate names a condition outside the task, such as a
+vendor fix, and keeps the task out of ready work while open. Clear gates with
+`gate resolve` (evidence) or `gate waive` (reason).
+
+`gate resolve` refuses a new `file:` locator unless it is relative to the
+project root, uses `/` separators and names an existing file whose bytes match
+any `--sha256` given. Evidence under ignored or temporary paths rots: keep
+durable text in the authority with `note --text-file <path> --task <task.seq>`
+and resolve with a `note:<summary>` locator. `evidence verify --json`
+re-checks stored bindings read-only and names corrective commands.
+
+## Commits and references
+
+When a local commit represents a task outcome, record it inward
+before task completion:
 
 ```bash
 git rev-parse --verify 'HEAD^{commit}'
@@ -356,79 +197,20 @@ papertiger commit add <task.seq> <full-oid>
 papertiger commit find <full-oid>
 ```
 
-Omit this association only when no commit represents the task outcome. The
-association remains lookup evidence, not completion authority. Papertiger does
-not invoke Git, infer repositories, track branches, scrape commit messages, or
-treat a commit as task completion. A commit may be partial or wrong; task
-results and gates remain the completion authority.
-
-The repository label defaults to `.` for the project root selected by this
-authority. Pass `--repo` only for a nested or external repository, using the
-same stable label for add, remove, and find.
-
-Probe and decision tasks require `--result` or `--result-file`. `done` refuses
-open dependencies, blockers, gates, or children; resolve or waive them with
-evidence and reasons rather than routing around the refusal. Check
-`list --status rejected` before reviving an old approach; `reopen` can revisit a
-rejected task.
-
-Duplication is a replacement relationship, not another status: for overlapping
-work with one canonical task in the same plan, use
-`retire <duplicate> --into <canonical> --why <reason>` and state the overlap.
-`show` stays on the retired task and renders the replacement. A task with
-inbound replacements can only be retired into another live canonical task.
-Use `reject` for an approach that should not be pursued; it accepts no
-replacement.
-
-Rehome work with `move-plan <N>... --plan <destination> --why <reason>`.
-Supply every task connected by parent, dependency, or replacement links;
-a partial selection refuses with all missing selectors. The destination must
-be active. The operation preserves task state and all obligations, and records
-before/after plan revisions without rewriting old events. Scoped exports carry
-current member tasks, their full histories, and required former-plan definitions.
-
-Use `reference add <N> <locator> --kind <pull_request|issue|review|adr|input|other>`
-for inward artifact associations. Locators must be scheme-qualified with no
-literal whitespace; percent-encode spaces. Optional `--sha256` and `--note`
-retain a claimed byte identity and context. `reference list <N>` and
-`reference find <locator>` retrieve them; `reference remove <N> <locator>
---kind <kind> --why <reason>` preserves the removed value in history before
-rebinding. References may annotate terminal tasks, never fetch external data,
-import status, or satisfy proof. Reference hashes are not part of gate/blocker
-`evidence verify`; verify producer inputs independently. The existing validated
-Mise projection remains the typed producer boundary.
-
-Blockers record the external `--condition` preventing progress
-(`blocker add <N> <name> --condition <text>`) and clear with
-`blocker resolve` or `blocker waive`, the same verbs gates use.
+Pass `--repo <label>` only for a nested or external repository. A commit is
+lookup evidence, never completion authority; Papertiger does not run Git or
+read commit messages. Record shared issues, pull requests and other artifacts
+with `reference add <task.seq> <locator> --kind
+<pull_request|issue|review|adr|input|other>`; references never fetch data or
+satisfy proof.
 
 ## Mise is an episodic external driver
 
-`papertiger-mise` is included in every Papertiger release but is not vendored
-by `setup-project`. When a bounded RSI campaign is warranted, invoke the stable
-peer binary from the release against the consumer:
-
-```bash
-papertiger-mise --project-root <repository> status --json
-papertiger-mise --project-root <repository> init
-```
-
-The consumer owns `state/papertiger-mise.sqlite`,
-`state/papertiger-mise-objects/`, and campaign workspaces. The release binary
-is part of the frozen outer judge and must not change during the campaign.
-Read `MISE.md` from the same release before campaign admission.
-
-`papertiger-mise guide` supplies the matching driver's concise operating path;
-`guide --reference` emits its full bundled `MISE.md`. Start from `status`, then
-`campaign inspect <id>` to discover retained candidate, trial, cohort, and
-reservation identities without querying SQLite. These are discovery records;
-reopen the specific CAS evidence before using a result.
-
-Mise nominations are evidence, never planning completion, integration,
-promotion, or deployment authority. Historical and domain-shadow evidence is
-permanently decision-ineligible. Projection back into planning is two-key:
-derive with `papertiger-mise projection export`, then attach with
-`papertiger mise record`; the projection cannot resolve a task or gate.
-Projections recorded before 0.18 keep their original
-`papertiger.mise-planner-projection.v1` id and stay readable and exportable;
-new recordings require `papertiger.mise_planner_projection.v2`.
+`papertiger-mise` ships in every release but is not installed by
+`setup-project`. When a bounded improvement campaign is warranted, invoke the
+release's binary against the consumer; read `MISE.md` from the same release
+before admission. The consumer owns its Mise database, object store and
+campaign workspaces, and the binary must not change during a campaign. Mise
+nominations are evidence, never completion, promotion or deployment
+authority; attach a derived projection with `papertiger mise record`, which
+cannot resolve a task or gate.
