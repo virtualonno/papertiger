@@ -2441,6 +2441,11 @@
         "schema": {
           "const": "papertiger.task_outline.v2"
         },
+        "why": {
+          "description": "Rationale recorded for every child that states no why of its own, including when --start-ready starts it.",
+          "type": "string",
+          "pattern": "\\S"
+        },
         "children": {
           "type": "array",
           "minItems": 1,

@@ -425,14 +425,6 @@ fn decompose_replays_refuse_while_children_are_live_and_starts_require_inputs() 
     assert!(message.contains("inspect `papertiger show 1` instead of replaying it"));
     assert_eq!(log_head(&db), head);
 
-    let missing_why = decompose(
-        &db,
-        "1",
-        &outline(json!([{"key": "ship", "title": "Ship the data", "kind": "feature"}])),
-        &["--start-ready"],
-    );
-    assert!(!missing_why.status.success());
-    assert!(stderr(&missing_why).contains("--start-ready would start it, so it needs a \"why\""));
     assert_success(&papertiger(
         &db.0,
         &[
@@ -482,4 +474,48 @@ fn decompose_replays_refuse_while_children_are_live_and_starts_require_inputs() 
             (6, "Check the data".to_owned()),
         ]
     );
+}
+
+#[test]
+fn an_outline_why_covers_children_and_starts_need_no_rationale() {
+    let db = TestDatabase::new("decompose-outline-why");
+    assert_success(&papertiger(&db.0, &["init"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "goal", "Data release"],
+    ));
+    // One outline-level why covers every child that states none; starting
+    // ready children needs no per-child rationale.
+    let shared = json!({
+        "schema": "papertiger.task_outline.v2",
+        "why": "Split the data release",
+        "children": [
+            {"key": "release", "title": "Release the dataset", "kind": "feature"},
+            {"key": "docs", "title": "Describe the dataset", "kind": "change", "why": "Readers need the format"}
+        ]
+    })
+    .to_string();
+    let started = json_of(&decompose(&db, "1", &shared, &["--start-ready", "--json"]));
+    let creates = started["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["event"]["kind"] == "create")
+        .map(|event| event["event"]["why"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        creates,
+        [
+            json!("Split the data release"),
+            json!("Readers need the format")
+        ]
+    );
+    let blank = json!({"schema": "papertiger.task_outline.v2", "why": " ", "children": [
+        {"key": "more", "title": "More data", "kind": "feature"}
+    ]})
+    .to_string();
+    let refused = decompose(&db, "1", &blank, &[]);
+    assert!(!refused.status.success());
+    assert!(stderr(&refused).contains("outline why must be nonblank"));
 }

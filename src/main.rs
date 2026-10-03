@@ -81,7 +81,7 @@ enum Cmd {
         priority: pt::Priority,
         #[command(flatten)]
         why: WhyArgs,
-        /// Atomically create and transition the task to in_progress; requires --why
+        /// Atomically create and transition the task to in_progress
         #[arg(long)]
         start: bool,
     },

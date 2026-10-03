@@ -72,9 +72,6 @@ pub fn add_task<'a>(
     plan: impl Into<PlanSelector<'a>>,
     creation: TaskCreation<'_>,
 ) -> Result<i64> {
-    if creation.start && creation.why.is_none_or(|why| why.trim().is_empty()) {
-        bail!("add --start requires --why or --why-file with a standalone rationale");
-    }
     let tx = begin_mutation(conn)?;
     let plan_id = match plan.into() {
         PlanSelector::Id(plan_id) => plan_id,

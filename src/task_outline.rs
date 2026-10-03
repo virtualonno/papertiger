@@ -28,7 +28,17 @@ pub const MAX_OUTLINE_CHILDREN: usize = 256;
 #[serde(deny_unknown_fields)]
 pub struct TaskOutline {
     pub schema: String,
+    /// Rationale for every child that states none of its own.
+    #[serde(default)]
+    pub why: Option<String>,
     pub children: Vec<OutlineEntry>,
+}
+
+impl TaskOutline {
+    /// A child's own rationale, else the outline's.
+    fn why_for(&self, index: usize) -> Option<&str> {
+        self.children[index].why.as_deref().or(self.why.as_deref())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -235,6 +245,16 @@ pub fn decompose_task(
     }
 
     let mut problems = Vec::new();
+    if outline
+        .why
+        .as_deref()
+        .is_some_and(|why| why.trim().is_empty())
+    {
+        problems.push(
+            "outline why must be nonblank; omit it or state the rationale its children share"
+                .to_owned(),
+        );
+    }
     let name = |index: usize| {
         format!(
             "child {} ({:?})",
@@ -446,12 +466,6 @@ pub fn decompose_task(
                 };
             }
             ready[index] = satisfied;
-            if satisfied && outline.children[index].why.is_none() {
-                problems.push(format!(
-                    "{}: --start-ready would start it, so it needs a \"why\" like add --start",
-                    name(index)
-                ));
-            }
         }
     }
     if !problems.is_empty() {
@@ -462,7 +476,7 @@ pub fn decompose_task(
     }
 
     let mut sequences = Vec::with_capacity(outline.children.len());
-    for entry in &outline.children {
+    for (index, entry) in outline.children.iter().enumerate() {
         sequences.push(crate::add_task_in_mutation(
             &tx,
             actor,
@@ -474,7 +488,7 @@ pub fn decompose_task(
             &[],
             &entry.tags,
             entry.priority,
-            entry.why.as_deref(),
+            outline.why_for(index),
         )?);
     }
     for (index, resolved) in dependencies.iter().enumerate() {
@@ -489,7 +503,7 @@ pub fn decompose_task(
                 sequences[index],
                 on,
                 true,
-                outline.children[index].why.as_deref(),
+                outline.why_for(index),
             )?;
         }
     }
@@ -500,7 +514,7 @@ pub fn decompose_task(
                 &tx,
                 actor,
                 sequences[index],
-                entry.why.as_deref(),
+                outline.why_for(index),
                 true,
                 session,
             )?;

@@ -32,6 +32,10 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Changed
 
+- Starting work never requires a rationale: `add --start` and
+  `decompose --start-ready` accept a missing `--why` like `start` does. A task
+  outline may carry one top-level `why` that every child without its own
+  inherits.
 - Authority selection: `--db` or `PAPERTIGER_DB`; else `--project-root <root>`,
   which names `<root>/state/papertiger.sqlite`; else the nearest
   `state/papertiger.sqlite` above the working directory, the way Git finds a

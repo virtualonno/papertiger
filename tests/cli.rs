@@ -902,6 +902,21 @@ fn every_write_records_a_reported_model_and_the_harness_supplies_the_rest() {
 }
 
 #[test]
+fn add_start_needs_no_rationale() {
+    let db = TestDatabase::new("add-start-no-why");
+    assert_success(&papertiger(&db.0, &["init"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Quick fix", "--start"],
+    ));
+    let show = papertiger(&db.0, &["show", "F-1", "--json"]);
+    assert_success(&show);
+    let show: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(show["task"]["status"], "in_progress");
+}
+
+#[test]
 fn brief_bounds_a_long_intent_and_points_at_show() {
     let db = TestDatabase::new("brief-long-intent");
     let run = |args: &[&str]| {
@@ -1996,20 +2011,6 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
         ],
     ));
 
-    let missing_why = papertiger(
-        &db.0,
-        &[
-            "add",
-            "--kind",
-            "feature",
-            "missing rationale",
-            "--plan",
-            "work",
-            "--start",
-        ],
-    );
-    assert!(!missing_why.status.success());
-    assert!(String::from_utf8_lossy(&missing_why.stderr).contains("add --start requires --why"));
     let before_refusal = papertiger(&db.0, &["log", "--json"]);
     assert_success(&before_refusal);
     let before_refusal: serde_json::Value = serde_json::from_slice(&before_refusal.stdout).unwrap();
