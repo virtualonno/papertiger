@@ -2997,11 +2997,23 @@
                   },
                   "result": {
                     "type": "string"
+                  },
+                  "review": {
+                    "description": "Review of the result; null when its completion is not in history.",
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/claim_review"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
                   "task",
-                  "result"
+                  "result",
+                  "review"
                 ],
                 "additionalProperties": false
               }

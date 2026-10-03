@@ -969,7 +969,10 @@ fn open_existing_refuses_missing_database_without_creating_it() {
     );
     assert!(message.contains("with `init`"), "{message}");
     assert!(message.contains("same authority selectors"), "{message}");
-    assert!(message.contains("restore an export"), "{message}");
+    assert!(
+        message.contains("restore it from an export by running `init` and then `import <dump>`"),
+        "{message}"
+    );
     assert!(!path.exists(), "failed open must not create the database");
 }
 
@@ -989,7 +992,10 @@ fn cli_status_refuses_missing_database_without_creating_it() {
         stderr.contains("no Papertiger authority exists"),
         "{stderr}"
     );
-    assert!(stderr.contains("restore an export"), "{stderr}");
+    assert!(
+        stderr.contains("restore it from an export by running `init` and then `import <dump>`"),
+        "{stderr}"
+    );
     assert!(stderr.contains("same authority selectors"), "{stderr}");
     assert!(
         !path.exists(),

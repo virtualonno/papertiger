@@ -194,6 +194,14 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   the command quietly with success instead of a panic (exit 101), in both
   `papertiger` and `papertiger-mise`. A mutation whose receipt could not be
   printed has still committed; do not replay it.
+- A goal held by a disputed result now explains itself: `done` names each
+  blocker with the command that clears it (a dependency, an external gate, or
+  a disputed result to confirm with `review --result` or revise after
+  `reopen`), `brief` marks a disputed result among its outcomes (JSON
+  outcomes carry the result's `review`), `audit` no longer reports such a goal
+  as `parent_lagging`, and text `focus` says how many blocked tasks it hid.
+- A missing-authority refusal now spells out restoring from an export as
+  `init` followed by `import <dump>`.
 - `show` names the pickup owner's state (`owner running`, `owner ended` or
   `owner state unknown`) instead of always adding "liveness unknown", which
   contradicted a running or ended owner on the same line.

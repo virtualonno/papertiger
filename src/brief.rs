@@ -47,6 +47,8 @@ pub struct BriefObligation {
 pub struct BriefOutcome {
     pub task: TaskSummary,
     pub result: String,
+    /// Review of the result; absent when its completion is not in history.
+    pub review: Option<ClaimReview>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,6 +166,7 @@ pub fn brief(conn: &Connection, seq: i64) -> Result<Brief> {
                 BriefOutcome {
                     task: TaskSummary::from(task),
                     result: result.to_owned(),
+                    review: task_review(conn, task)?.result,
                 },
             ));
         }

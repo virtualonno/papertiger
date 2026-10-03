@@ -882,10 +882,16 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
     if !brief.outcomes.entries.is_empty() {
         pt::outln!("outcomes:");
         for outcome in &brief.outcomes.entries {
+            let review = outcome
+                .review
+                .as_ref()
+                .map(|review| disputed_marker("result ", review))
+                .unwrap_or_default();
             pt::outln!(
-                "  {} {}: {}",
+                "  {} {}{}: {}",
                 outcome.task.handle,
                 outcome.task.title,
+                review,
                 preview(&outcome.result)
             );
         }
@@ -2264,7 +2270,30 @@ fn run_planner(cli: Cli) -> Result<()> {
             if json {
                 pt::outln!("{}", serde_json::to_string_pretty(&response)?);
             } else if response.projection.entries.is_empty() {
-                pt::outln!("nothing actionable");
+                // Say when the only open work is blocked rather than absent.
+                let hidden = if include_blocked {
+                    0
+                } else {
+                    pt::focus(
+                        &conn,
+                        plan_id,
+                        usize::MAX,
+                        true,
+                        kind.as_deref(),
+                        unreviewed,
+                        session.as_deref(),
+                    )?
+                    .projection
+                    .entries
+                    .len()
+                };
+                if hidden == 0 {
+                    pt::outln!("nothing actionable");
+                } else {
+                    pt::outln!(
+                        "nothing actionable; {hidden} blocked task(s) hidden: run `papertiger focus --plan {slug} --include-blocked`"
+                    );
+                }
             } else {
                 pt::outln!("focus {slug}");
                 let mut current = None::<String>;

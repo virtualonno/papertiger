@@ -501,6 +501,95 @@ fn tag_and_dependency_edits_take_an_optional_reason_and_transitions_keep_theirs(
 }
 
 #[test]
+fn a_goal_held_by_a_disputed_result_says_why_and_how_to_clear_it() {
+    let db = TestDatabase::new("held-goal");
+    let as_session = |session: &str, args: &[&str]| {
+        support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+            .arg("--db")
+            .arg(&db.0)
+            .args(args)
+            .env("PAPERTIGER_SESSION", session)
+            .output()
+            .expect("run papertiger")
+    };
+    let ok = |output: Output| {
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    ok(as_session("author", &["init"]));
+    ok(as_session("author", &["plan", "add", "app", "App"]));
+    ok(as_session(
+        "author",
+        &["add", "--kind", "goal", "Ship export"],
+    ));
+    ok(as_session(
+        "author",
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "--parent",
+            "G-1",
+            "Write the exporter",
+        ],
+    ));
+    ok(as_session(
+        "author",
+        &["done", "F-2", "--result", "Exporter writes JSON"],
+    ));
+    ok(as_session(
+        "reviewer",
+        &[
+            "review",
+            "F-2",
+            "--result",
+            "--verdict",
+            "disputed",
+            "--why",
+            "Empty tables crash",
+        ],
+    ));
+
+    let refused = as_session("author", &["done", "G-1", "--result", "Shipped"]);
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains("G-1 cannot be completed yet: F-2's result is disputed")
+            && error.contains("papertiger review F-2 --result --verdict confirmed")
+            && error.contains("papertiger reopen F-2"),
+        "{error}"
+    );
+    let focus = ok(as_session("author", &["focus"]));
+    assert!(
+        focus.contains("nothing actionable; 1 blocked task(s) hidden")
+            && focus.contains("--include-blocked"),
+        "{focus}"
+    );
+    let audit = ok(as_session("author", &["audit"]));
+    assert!(!audit.contains("parent_lagging"), "{audit}");
+    let brief = ok(as_session("author", &["brief", "G-1"]));
+    assert!(
+        brief.contains("F-2 Write the exporter [result disputed · human]: Exporter writes JSON"),
+        "{brief}"
+    );
+    let brief: serde_json::Value =
+        serde_json::from_str(&ok(as_session("author", &["brief", "G-1", "--json"]))).unwrap();
+    assert_eq!(
+        brief["outcomes"]["entries"][0]["review"]["state"],
+        "disputed"
+    );
+
+    let missing = db.0.with_extension("missing.sqlite");
+    let import = papertiger(&missing, &["import", "dump.json"]);
+    assert!(!import.status.success());
+    assert!(
+        String::from_utf8_lossy(&import.stderr).contains("running `init` and then `import <dump>`"),
+        "{}",
+        String::from_utf8_lossy(&import.stderr)
+    );
+}
+
+#[test]
 fn claims_show_their_review_state_and_a_disputed_result_holds_its_dependents() {
     let db = TestDatabase::new("reviews");
     let as_session = |session: &str, model: &str, args: &[&str]| {
@@ -541,10 +630,7 @@ fn claims_show_their_review_state_and_a_disputed_result_holds_its_dependents() {
 
     let list = ok(strong(&["list"]));
     assert!(
-        list.contains(
-            "F-1 Cache plan reads
-"
-        ) && !list.contains("unreviewed"),
+        list.contains("F-1 Cache plan reads\n") && !list.contains("unreviewed"),
         "review is optional, so an unreviewed claim carries no marker: {list}"
     );
     let unreviewed = ok(strong(&["list", "--unreviewed"]));

@@ -794,6 +794,13 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         .query_map([], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     for seq in rows {
+        // A disputed child result holds the parent's closure on purpose.
+        let held = crate::focus::entry_blockers(conn, &get_task(conn, seq)?)?
+            .iter()
+            .any(|blocker| blocker.starts_with("disputed-result:"));
+        if held {
+            continue;
+        }
         push(
             "parent_lagging",
             format!(

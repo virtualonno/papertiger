@@ -93,6 +93,25 @@ pub(crate) fn start_task_in_mutation(
     Ok(())
 }
 
+/// What holds a task, with the command that clears it.
+fn explain_blocker(handle: &str, blocker: &str) -> String {
+    if let Some(dependency) = blocker.strip_prefix("dep:") {
+        format!(
+            "dependency {dependency} is not done (finish it, or `papertiger dep remove {handle} {dependency}`)"
+        )
+    } else if let Some(gate) = blocker.strip_prefix("external:") {
+        format!(
+            "external gate '{gate}' is open (`papertiger gate resolve {handle} {gate} --evidence <locator>` or `papertiger gate waive {handle} {gate} --why <reason>`)"
+        )
+    } else if let Some(disputed) = blocker.strip_prefix("disputed-result:") {
+        format!(
+            "{disputed}'s result is disputed (another session confirms it with `papertiger review {disputed} --result --verdict confirmed --why <reason>`, or `papertiger reopen {disputed} --why <reason>` to revise it)"
+        )
+    } else {
+        blocker.to_owned()
+    }
+}
+
 pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&str>) -> Result<()> {
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
@@ -109,9 +128,13 @@ pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&s
     let blockers = entry_blockers(&tx, &task)?;
     if !blockers.is_empty() {
         bail!(
-            "{} cannot be completed while {} remain open",
+            "{} cannot be completed yet: {}",
             task.handle,
-            blockers.join(", ")
+            blockers
+                .iter()
+                .map(|blocker| explain_blocker(&task.handle, blocker))
+                .collect::<Vec<_>>()
+                .join("; ")
         );
     }
     let open = open_gates(&tx, task.task_id)?;
