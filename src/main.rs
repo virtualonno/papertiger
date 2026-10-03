@@ -91,9 +91,6 @@ enum Cmd {
         plan: Option<String>,
         #[command(flatten)]
         intent: IntentArgs,
-        /// Who supplied the stored meaning: user, agent, or external
-        #[arg(long, value_name = "user|agent|external")]
-        intent_source: Option<String>,
         /// Kind of outcome: goal, feature, change, bug, probe, decision, or release
         #[arg(long)]
         kind: String,
@@ -117,7 +114,7 @@ enum Cmd {
     },
     /// Create a parent's child tasks and their dependencies from a JSON outline in one atomic call
     #[command(
-        after_help = "Outline: papertiger.task_outline.v1 in `papertiger schema`. Each child has a batch-local \"key\", a \"title\" and a \"kind\", and optionally \"intent\", \"intent_source\", \"why\", \"tags\", \"priority\" and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
+        after_help = "Outline: papertiger.task_outline.v1 in `papertiger schema`. Each child has a batch-local \"key\", a \"title\" and a \"kind\", and optionally \"intent\", \"why\", \"tags\", \"priority\" and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
     )]
     Decompose {
         /// Parent task: N, #N or its handle (e.g. G-N)
@@ -193,12 +190,6 @@ enum Cmd {
         title: Option<String>,
         #[command(flatten)]
         intent: IntentArgs,
-        /// Who supplied the replacement intent meaning: user, agent, or external
-        #[arg(long, value_name = "user|agent|external")]
-        intent_source: Option<String>,
-        /// Remove a previously recorded intent source
-        #[arg(long, conflicts_with = "intent_source")]
-        clear_intent_source: bool,
         /// Replace the parent with this task
         #[arg(long, conflicts_with = "clear_parent")]
         parent: Option<String>,
@@ -238,9 +229,6 @@ enum Cmd {
         task: String,
         #[command(flatten)]
         result: ResultArgs,
-        /// Who supplied the result: user, agent, or external
-        #[arg(long, value_name = "user|agent|external")]
-        result_source: Option<String>,
     },
     /// Reopen a finished task
     Reopen {
@@ -324,9 +312,6 @@ enum Cmd {
     Note {
         #[command(flatten)]
         text: NoteTextArgs,
-        /// Who supplied the note meaning: user, agent, or external
-        #[arg(long, value_name = "user|agent|external")]
-        source: Option<String>,
         /// Attach the note to this task number
         #[arg(long)]
         task: Option<String>,
@@ -926,20 +911,10 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
         pt::outln!("  path: {}", context.ancestry.join(" › "));
     }
     if !task.intent.is_empty() {
-        let label = task
-            .intent_source
-            .as_deref()
-            .map(|source| format!("intent [{source}]"))
-            .unwrap_or_else(|| "intent".to_owned());
-        pt::outln!("  {label}: {}", task.intent.replace('\n', "\n  "));
+        pt::outln!("  intent: {}", task.intent.replace('\n', "\n  "));
     }
     if let Some(result) = task.result.as_deref() {
-        let label = task
-            .result_source
-            .as_deref()
-            .map(|source| format!("result [{source}]"))
-            .unwrap_or_else(|| "result".to_owned());
-        pt::outln!("  {label}: {}", result.replace('\n', "\n  "));
+        pt::outln!("  result: {}", result.replace('\n', "\n  "));
     }
     pt::outln!("  kind: {}", task.kind);
     for (label, event) in [
@@ -1663,7 +1638,6 @@ fn run_planner(cli: Cli) -> Result<()> {
             title,
             plan,
             intent,
-            intent_source,
             kind,
             parent,
             dep,
@@ -1689,7 +1663,6 @@ fn run_planner(cli: Cli) -> Result<()> {
                 pt::TaskCreation {
                     title: &title,
                     intent: &intent,
-                    intent_source: intent_source.as_deref(),
                     kind: &kind,
                     parent,
                     deps: &deps,
@@ -1884,8 +1857,6 @@ fn run_planner(cli: Cli) -> Result<()> {
             task,
             title,
             intent,
-            intent_source,
-            clear_intent_source,
             parent,
             clear_parent,
             kind,
@@ -1903,11 +1874,6 @@ fn run_planner(cli: Cli) -> Result<()> {
                     .transpose()?
             };
             let seq = pt::resolve_task_ref(&conn, &task)?;
-            let intent_source = if clear_intent_source {
-                Some(None)
-            } else {
-                intent_source.as_deref().map(Some)
-            };
             let changed = pt::edit_task(
                 &conn,
                 &actor,
@@ -1915,7 +1881,6 @@ fn run_planner(cli: Cli) -> Result<()> {
                 pt::TaskEdit {
                     title: title.as_deref(),
                     intent: intent.as_deref(),
-                    intent_source,
                     parent,
                     kind: kind.as_deref(),
                     priority,
@@ -1939,20 +1904,10 @@ fn run_planner(cli: Cli) -> Result<()> {
             pt::move_tasks_to_plan(&conn, &actor, &sequences, &plan, &why)?;
             mutation_output!("moved {} task(s) to {plan}", sequences.len());
         }
-        Cmd::Done {
-            task,
-            result,
-            result_source,
-        } => {
+        Cmd::Done { task, result } => {
             let result = result.optional()?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
-            pt::complete_task(
-                &conn,
-                &actor,
-                seq,
-                result.as_deref(),
-                result_source.as_deref(),
-            )?;
+            pt::complete_task(&conn, &actor, seq, result.as_deref())?;
             mutation_output!("#{seq} done");
         }
         Cmd::Reopen { task, why } => {
@@ -2370,12 +2325,12 @@ fn run_planner(cli: Cli) -> Result<()> {
             pt::outln!("{slug}");
             print_tree(&conn, plan_id, None, 1, visible.as_ref())?;
         }
-        Cmd::Note { text, source, task } => {
+        Cmd::Note { text, task } => {
             let text = text.required()?;
             let task_seq = task
                 .map(|task| pt::resolve_task_ref(&conn, &task))
                 .transpose()?;
-            pt::add_note(&conn, &actor, task_seq, &text, source.as_deref())?;
+            pt::add_note(&conn, &actor, task_seq, &text)?;
             mutation_output!("noted");
         }
         Cmd::Log {

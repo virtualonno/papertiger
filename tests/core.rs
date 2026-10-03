@@ -281,7 +281,6 @@ fn typed_kinds_refuse_legacy_assignment_and_bugs_record_their_cause() {
     let retype = |kind| pt::TaskEdit {
         title: None,
         intent: None,
-        intent_source: None,
         parent: None,
         kind: Some(kind),
         priority: None,
@@ -290,18 +289,11 @@ fn typed_kinds_refuse_legacy_assignment_and_bugs_record_their_cause() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("cannot be assigned"), "{error}");
-    let error = pt::complete_task(&conn, "test", bug, None, None)
+    let error = pt::complete_task(&conn, "test", bug, None)
         .unwrap_err()
         .to_string();
     assert!(error.contains("completing bug task"), "{error}");
-    pt::complete_task(
-        &conn,
-        "test",
-        bug,
-        Some("Empty plans skipped the guard"),
-        None,
-    )
-    .unwrap();
+    pt::complete_task(&conn, "test", bug, Some("Empty plans skipped the guard")).unwrap();
     assert_eq!(pt::task_kind_letter("bug"), Some('B'));
     assert_eq!(pt::task_kind_letter("work"), Some('W'));
     assert_eq!(pt::task_kind_letter("chore"), None);
@@ -345,7 +337,7 @@ fn downgrade_to_v13(path: &std::path::Path) {
            SELECT task_id, seq, plan_id, parent_id, title, intent,
                   CASE kind WHEN 'feature' THEN 'work' ELSE kind END,
                   result, status, priority, created_at, updated_at, replacement_task_id,
-                  intent_source, result_source, pickup_session, pickup_at
+                  NULL, NULL, pickup_session, pickup_at
              FROM tasks;
          DROP TABLE tasks;
          ALTER TABLE tasks_v13 RENAME TO tasks;
@@ -427,7 +419,6 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
         pt::TaskEdit {
             title: None,
             intent: None,
-            intent_source: None,
             parent: None,
             kind: Some("bug"),
             priority: None,
@@ -1104,7 +1095,7 @@ fn task_lifecycle_and_gate_honesty_rule() {
     pt::add_gate(&conn, "test", seq, "smoke", "test", "smoke test passes").unwrap();
     pt::start_task(&conn, "test", seq, None, None).unwrap();
     // done refused while gate open
-    let err = pt::complete_task(&conn, "test", seq, None, None).unwrap_err();
+    let err = pt::complete_task(&conn, "test", seq, None).unwrap_err();
     assert!(err.to_string().contains("open gate"));
     // bad locator shape refused
     let err = pt::resolve_gate(&conn, "test", seq, "smoke", "no-scheme", None, None).unwrap_err();
@@ -1119,7 +1110,7 @@ fn task_lifecycle_and_gate_honesty_rule() {
         None,
     )
     .unwrap();
-    pt::complete_task(&conn, "test", seq, None, None).unwrap();
+    pt::complete_task(&conn, "test", seq, None).unwrap();
     assert_eq!(pt::get_task(&conn, seq).unwrap().status, "done");
 }
 
@@ -1232,7 +1223,7 @@ fn dependency_cycles_rejected_and_readiness_derived() {
     let c_entry = all.iter().find(|e| e.task.seq == c).unwrap();
     assert_eq!(c_entry.blockers, vec![format!("dep:#{b}")]);
     // completing a readies b (priority ordering: c still blocked)
-    pt::complete_task(&conn, "test", a, None, None).unwrap();
+    pt::complete_task(&conn, "test", a, None).unwrap();
     let ready = pt::ready_tasks(&conn, plan, 10, false).unwrap();
     assert_eq!(
         ready.iter().map(|e| e.task.seq).collect::<Vec<_>>(),
@@ -1348,13 +1339,13 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
     pt::start_task(&conn, "test", dependency, None, None).unwrap();
     // Explicit resumption is allowed; pickup is advisory, not an exclusive hold.
     pt::start_task(&conn, "test", dependency, None, None).unwrap();
-    pt::complete_task(&conn, "test", dependency, None, None).unwrap();
+    pt::complete_task(&conn, "test", dependency, None).unwrap();
     assert_exact_error(
         pt::start_task(&conn, "test", dependency, None, None),
         &format!("#{dependency} is done; use `reopen` before starting it"),
     );
     assert_exact_error(
-        pt::complete_task(&conn, "test", dependency, None, None),
+        pt::complete_task(&conn, "test", dependency, None),
         &format!("#{dependency} is already done"),
     );
     assert_exact_error(
@@ -1377,14 +1368,10 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
     )
     .unwrap();
     assert_exact_error(
-        pt::complete_task(&conn, "test", decision, None, None),
+        pt::complete_task(&conn, "test", decision, None),
         &format!(
             "completing decision task #{decision} requires --result or --result-file so the measured or selected outcome survives the session"
         ),
-    );
-    assert_exact_error(
-        pt::complete_task(&conn, "test", decision, None, Some("agent")),
-        "--result-source requires --result or --result-file with a durable outcome",
     );
     assert_exact_error(
         pt::validate_meaning_source(Some("operator")),
@@ -1397,7 +1384,7 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
         &format!("plan is paused; set it active before starting task #{blocked}"),
     );
     assert_exact_error(
-        pt::complete_task(&conn, "test", blocked, None, None),
+        pt::complete_task(&conn, "test", blocked, None),
         &format!("plan is paused; set it active before completing proposed task #{blocked}"),
     );
 }
@@ -1574,7 +1561,7 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
         pt::add_gate(&conn, "test", seq, name, "review", "retained evidence").unwrap();
         pt::resolve_gate(&conn, "test", seq, name, locator, sha256, None).unwrap();
         if index % 2 == 1 {
-            pt::complete_task(&conn, "test", seq, None, None).unwrap();
+            pt::complete_task(&conn, "test", seq, None).unwrap();
         }
     }
 
@@ -1800,7 +1787,7 @@ fn audit_flags_dead_deps_and_lagging_parents() {
         },
     )
     .unwrap();
-    pt::complete_task(&conn, "test", child, None, None).unwrap();
+    pt::complete_task(&conn, "test", child, None).unwrap();
     let findings = pt::audit(&conn).unwrap();
     let kinds: Vec<&str> = findings.iter().map(|f| f.kind.as_str()).collect();
     assert!(kinds.contains(&"dep_on_dead"), "{kinds:?}");
@@ -1837,7 +1824,7 @@ fn export_import_roundtrip_preserves_graph() {
     .unwrap();
     pt::add_gate(&conn, "test", a, "smoke", "test", "passes").unwrap();
     pt::resolve_gate(&conn, "test", a, "smoke", "file:e.json", None, None).unwrap();
-    pt::complete_task(&conn, "test", a, None, None).unwrap();
+    pt::complete_task(&conn, "test", a, None).unwrap();
     let dump = pt::export(&conn, None).unwrap();
     let json = serde_json::to_string(&dump).unwrap();
 
@@ -1887,15 +1874,6 @@ fn import_refuses_resolved_gate_without_evidence() {
 #[test]
 fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
     for (fixture, expected) in [
-        (
-            r#"{
-                "schema":"papertiger.dump.v11",
-                "plans":[{"slug":"p","title":"P"}],
-                "tasks":[{"seq":1,"plan":"p","title":"task",
-                    "result":"  ","result_source":"agent"}]
-            }"#,
-            "result_source without a durable result",
-        ),
         (
             r#"{
                 "schema":"papertiger.dump.v11",
@@ -1953,13 +1931,12 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
             "schema":"papertiger.dump.v11",
             "plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"task","kind":"feature","intent":"asked",
-                "intent_source":" user ","tags":[" alpha "]}]
+                "tags":[" alpha "]}]
         }"#,
     )
     .unwrap();
     pt::import(&normalized, "restore", &dump).unwrap();
-    let task = pt::get_task(&normalized, 1).unwrap();
-    assert_eq!(task.intent_source.as_deref(), Some("user"));
+    assert_eq!(pt::get_task(&normalized, 1).unwrap().intent, "asked");
     assert_eq!(
         pt::task_context(&normalized, 1).unwrap().tags,
         vec!["alpha"]
@@ -2294,14 +2271,7 @@ fn evidence_and_waiver_reasons_are_durable() {
     .unwrap_err();
     assert!(bad.to_string().contains("64 lowercase"));
     pt::waive_gate(&conn, "test", task, "g", "upstream fixture unavailable").unwrap();
-    pt::add_note(
-        &conn,
-        "test",
-        Some(task),
-        "cold-readable handoff note",
-        None,
-    )
-    .unwrap();
+    pt::add_note(&conn, "test", Some(task), "cold-readable handoff note").unwrap();
     let dump = pt::export(&conn, None).unwrap();
     assert!(!dump.events.is_empty());
 
@@ -2540,7 +2510,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
         .unwrap();
     assert_eq!(entry.readiness, "blocked");
 
-    pt::complete_task(&conn, "test", prerequisite, None, None).unwrap();
+    pt::complete_task(&conn, "test", prerequisite, None).unwrap();
     assert!(pt::start_task(&conn, "test", decision, None, None).is_err());
     pt::resolve_blocker(
         &conn,
@@ -2553,13 +2523,12 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
     )
     .unwrap();
     pt::start_task(&conn, "test", decision, None, None).unwrap();
-    assert!(pt::complete_task(&conn, "test", decision, None, None).is_err());
+    assert!(pt::complete_task(&conn, "test", decision, None).is_err());
     pt::complete_task(
         &conn,
         "test",
         decision,
         Some("Use a bounded interface and reject implicit compatibility."),
-        None,
     )
     .unwrap();
     assert_eq!(
@@ -2608,7 +2577,7 @@ fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
         "the task was narrowed so the fixture is no longer applicable",
     )
     .unwrap();
-    pt::complete_task(&conn, "test", task, None, None).unwrap();
+    pt::complete_task(&conn, "test", task, None).unwrap();
     assert!(pt::audit(&conn).unwrap().is_empty());
 }
 
@@ -2650,7 +2619,6 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
         "test",
         task,
         Some("The first hypothesis was falsified."),
-        None,
     )
     .unwrap();
 
@@ -2682,7 +2650,7 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
     let context = pt::task_context(&conn, task).unwrap();
     assert_eq!(context.gates[0].status, "open");
     assert_eq!(context.gates[0].evidence_locator, None);
-    assert!(pt::complete_task(&conn, "test", task, Some("premature"), None).is_err());
+    assert!(pt::complete_task(&conn, "test", task, Some("premature")).is_err());
 }
 
 #[test]
@@ -2706,8 +2674,8 @@ fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
         },
     )
     .unwrap();
-    pt::complete_task(&conn, "test", child, None, None).unwrap();
-    pt::complete_task(&conn, "test", parent, None, None).unwrap();
+    pt::complete_task(&conn, "test", child, None).unwrap();
+    pt::complete_task(&conn, "test", parent, None).unwrap();
     assert!(
         pt::add_task(
             &conn,
@@ -2750,8 +2718,8 @@ fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
         },
     )
     .unwrap();
-    pt::complete_task(&conn, "test", prerequisite, None, None).unwrap();
-    pt::complete_task(&conn, "test", dependent, None, None).unwrap();
+    pt::complete_task(&conn, "test", prerequisite, None).unwrap();
+    pt::complete_task(&conn, "test", dependent, None).unwrap();
     assert!(
         pt::reopen_task(&conn, "test", prerequisite, "recheck evidence").is_err(),
         "reopening a prerequisite must not silently invalidate a completed dependent"
@@ -2812,7 +2780,6 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
         "test",
         task,
         Some("Select engine B because it satisfies the bounded latency target."),
-        None,
     )
     .unwrap();
 
@@ -3045,7 +3012,7 @@ fn task_context_reports_event_truncation_instead_of_hiding_it() {
     )
     .unwrap();
     for index in 0..12 {
-        pt::add_note(&conn, "test", Some(task), &format!("note {index}"), None)
+        pt::add_note(&conn, "test", Some(task), &format!("note {index}"))
             .expect("record task note");
     }
 
@@ -3174,7 +3141,7 @@ fn import_canonicalizes_event_timestamps_and_preserves_lifecycle_history() {
     )
     .unwrap();
     pt::start_task(&conn, "agent", task, Some("begin"), None).unwrap();
-    pt::complete_task(&conn, "agent", task, None, None).unwrap();
+    pt::complete_task(&conn, "agent", task, None).unwrap();
     let expected = pt::task_activity(&conn, task).unwrap();
     let mut dump = pt::export(&conn, None).unwrap();
     for event in &mut dump.events {
@@ -3560,7 +3527,7 @@ fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
     )
     .unwrap();
     pt::start_task(&conn, "agent", first, Some("begin"), None).unwrap();
-    pt::add_note(&conn, "agent", Some(first), "latest evidence", None).unwrap();
+    pt::add_note(&conn, "agent", Some(first), "latest evidence").unwrap();
     let ordered = pt::list_tasks_by_activity(&conn, plan, None, None, None).unwrap();
     assert_eq!(ordered[0].seq, first);
     assert_eq!(ordered[1].seq, second);
@@ -3601,7 +3568,7 @@ fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
     );
     assert_eq!(activity.completed_event, None);
 
-    pt::complete_task(&conn, "agent", first, None, None).unwrap();
+    pt::complete_task(&conn, "agent", first, None).unwrap();
     let done = pt::task_activity(&conn, first).unwrap();
     assert!(done.completed_event.is_some());
     assert_eq!(done.started_event, None);
@@ -4287,8 +4254,6 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
     conn.execute_batch(
         "ALTER TABLE tasks DROP COLUMN pickup_at;
          ALTER TABLE tasks DROP COLUMN pickup_session;
-         ALTER TABLE tasks DROP COLUMN intent_source;
-         ALTER TABLE tasks DROP COLUMN result_source;
          ALTER TABLE tasks DROP COLUMN replacement_task_id;
          DROP VIEW canonical_events;
          DROP TABLE event_quarantines;
@@ -4323,7 +4288,7 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(exists, "missing v7 column {column}");
+        assert!(!exists, "v7 added {column} and v14 drops it again");
     }
     drop(conn);
     std::fs::remove_file(path).unwrap();
@@ -4347,7 +4312,7 @@ fn event_cursors_page_history_and_refuse_divergent_authorities() {
         pt::TaskCreation::new("second", "feature"),
     )
     .unwrap();
-    pt::add_note(&conn, "reviewer", Some(first), "fresh evidence", None).unwrap();
+    pt::add_note(&conn, "reviewer", Some(first), "fresh evidence").unwrap();
 
     let latest = pt::event_log(&conn, None, 2, None, None).unwrap();
     assert_eq!(latest.schema, "papertiger.event_log.v1");
@@ -4395,7 +4360,7 @@ fn event_cursors_page_history_and_refuse_divergent_authorities() {
     let empty_poll = pt::event_log(&conn, None, 10, None, Some(&head.token)).unwrap();
     assert!(empty_poll.events.is_empty());
     assert_eq!(empty_poll.continuation.as_ref().unwrap().token, head.token);
-    pt::add_note(&conn, "writer", None, "arrived after the empty poll", None).unwrap();
+    pt::add_note(&conn, "writer", None, "arrived after the empty poll").unwrap();
     let next_poll = pt::event_log(
         &conn,
         None,
@@ -4474,7 +4439,6 @@ fn task_activity_records_authors_without_creating_session_ownership() {
         "fresh-session",
         Some(task),
         "continued after reading live state",
-        None,
     )
     .unwrap();
 
@@ -4662,7 +4626,7 @@ fn audit_advises_duplicate_live_titles_and_single_plan_export_keeps_global_event
         )
         .unwrap();
     }
-    pt::add_note(&conn, "planner", None, "authority-global note", None).unwrap();
+    pt::add_note(&conn, "planner", None, "authority-global note").unwrap();
     let findings = pt::audit(&conn).unwrap();
     assert!(
         findings
@@ -4713,7 +4677,7 @@ fn recovery_export_file_is_atomic_hash_bound_and_refuses_unreviewed_replace() {
     assert!(error.to_string().contains("--replace"));
     assert_eq!(std::fs::read(&path).unwrap(), first_bytes);
 
-    pt::add_note(&conn, "planner", None, "new recovery state", None).unwrap();
+    pt::add_note(&conn, "planner", None, "new recovery state").unwrap();
     let updated = pt::export(&conn, None).unwrap();
     let updated_receipt = pt::write_export_file(&path, &updated, true).unwrap();
     assert_ne!(updated_receipt.sha256, receipt.sha256);

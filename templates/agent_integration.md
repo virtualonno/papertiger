@@ -294,7 +294,7 @@ so send non-ASCII text through a UTF-8 file or configure `$OutputEncoding`.
 
 ```bash
 papertiger add "Outcome" --kind feature --start \
-  --intent "Standalone purpose" --intent-source user \
+  --intent "Standalone purpose" \
   --why "Why this outcome starts now"
 papertiger start <task.seq> --why "Why execution starts now"
 papertiger gate resolve <task.seq> <name> \
@@ -313,11 +313,6 @@ section or phase labels for parts of the work.
 An intent stands alone: fold a source document's substance into it, for
 example with `--intent-file`, instead of citing a scratch or dated plan file
 that may not survive.
-
-Replacing intent that already has a source requires either a replacement
-`--intent-source` or `--clear-intent-source`; unchanged text keeps its stored
-source. Use `edit <task.seq> --clear-intent-source --why <reason>` to correct a
-mistaken attribution without erasing the intent or its revision history.
 
 `show --json` reports event-derived activity. `started_event` exists only while
 the task is currently in progress, and `completed_event` only while it is

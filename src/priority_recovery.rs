@@ -85,11 +85,7 @@ pub(crate) fn repair_text_priority(
     let Some(before) = before else {
         return Ok(false);
     };
-    if edit.title.is_some()
-        || edit.intent.is_some()
-        || edit.intent_source.is_some()
-        || edit.parent.is_some()
-        || edit.kind.is_some()
+    if edit.title.is_some() || edit.intent.is_some() || edit.parent.is_some() || edit.kind.is_some()
     {
         bail!(
             "priority recovery cannot be combined with other edits; run `papertiger edit {seq} --priority {priority} --why <reason>` first"

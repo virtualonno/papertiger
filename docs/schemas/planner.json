@@ -59,20 +59,6 @@
         "rejected"
       ]
     },
-    "meaning_source": {
-      "anyOf": [
-        {
-          "enum": [
-            "user",
-            "agent",
-            "external"
-          ]
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "model": {
       "anyOf": [
         {
@@ -206,9 +192,6 @@
         "intent": {
           "type": "string"
         },
-        "intent_source": {
-          "$ref": "#/$defs/meaning_source"
-        },
         "result": {
           "anyOf": [
             {
@@ -218,9 +201,6 @@
               "type": "null"
             }
           ]
-        },
-        "result_source": {
-          "$ref": "#/$defs/meaning_source"
         },
         "pickup": {
           "$ref": "#/$defs/pickup"
@@ -234,9 +214,7 @@
         "kind",
         "priority",
         "intent",
-        "intent_source",
         "result",
-        "result_source",
         "pickup"
       ],
       "additionalProperties": false
@@ -1504,9 +1482,6 @@
         "intent": {
           "type": "string"
         },
-        "intent_source": {
-          "$ref": "#/$defs/meaning_source"
-        },
         "kind": {
           "enum": [
             "goal",
@@ -1528,9 +1503,6 @@
               "type": "null"
             }
           ]
-        },
-        "result_source": {
-          "$ref": "#/$defs/meaning_source"
         },
         "status": {
           "$ref": "#/$defs/task_status"
@@ -2554,16 +2526,6 @@
               },
               "intent": {
                 "type": "string"
-              },
-              "intent_source": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/meaning_source"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
               },
               "why": {
                 "anyOf": [

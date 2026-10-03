@@ -1504,8 +1504,6 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
             "work",
             "--intent",
             "implement one durable outcome",
-            "--intent-source",
-            "user",
             "--start",
             "--why",
             "the outcome is ready",
@@ -1516,7 +1514,6 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
     assert_success(&show);
     let show: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
     assert_eq!(show["task"]["status"], "in_progress");
-    assert_eq!(show["task"]["intent_source"], "user");
     let lifecycle = show["recent_events"].as_array().unwrap();
     assert_eq!(lifecycle.len(), 2);
     assert_eq!(lifecycle[0]["kind"], "status");
@@ -1655,195 +1652,6 @@ fn dependencies_that_finish_only_after_their_dependent_are_refused() {
         &db.0,
         &["reopen", "7", "--why", "needed again"],
     ));
-}
-
-#[test]
-fn meaning_provenance_is_correctable_visible_and_transferable() {
-    let db = TestDatabase::new("meaning-provenance");
-    assert_success(&papertiger(&db.0, &["init"]));
-    assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
-
-    let source_without_intent = papertiger(
-        &db.0,
-        &[
-            "add",
-            "--kind",
-            "feature",
-            "invalid source",
-            "--plan",
-            "work",
-            "--intent-source",
-            "agent",
-        ],
-    );
-    assert!(!source_without_intent.status.success());
-    assert!(
-        String::from_utf8_lossy(&source_without_intent.stderr)
-            .contains("--intent-source requires --intent or --intent-file")
-    );
-
-    assert_success(&papertiger(
-        &db.0,
-        &[
-            "add",
-            "--kind",
-            "feature",
-            "attributed outcome",
-            "--plan",
-            "work",
-            "--intent",
-            "operator requested outcome",
-            "--intent-source",
-            "user",
-            "--start",
-            "--why",
-            "begin attributed work",
-        ],
-    ));
-    let unproven_rewrite = papertiger(
-        &db.0,
-        &[
-            "edit",
-            "1",
-            "--intent",
-            "agent rewrote the stored meaning",
-            "--why",
-            "exercise explicit source requirement",
-        ],
-    );
-    assert!(!unproven_rewrite.status.success());
-    let stderr = String::from_utf8_lossy(&unproven_rewrite.stderr);
-    assert!(stderr.contains("--intent-source <user|agent|external>"));
-    assert!(stderr.contains("--clear-intent-source"));
-    assert_success(&papertiger(
-        &db.0,
-        &[
-            "edit",
-            "1",
-            "--intent-source",
-            "external",
-            "--why",
-            "correct the source attribution",
-        ],
-    ));
-
-    let unsafe_clear = papertiger(
-        &db.0,
-        &[
-            "edit",
-            "1",
-            "--intent",
-            "",
-            "--why",
-            "attempt to strand provenance",
-        ],
-    );
-    assert!(!unsafe_clear.status.success());
-    assert!(String::from_utf8_lossy(&unsafe_clear.stderr).contains("--clear-intent-source"));
-
-    assert_success(&papertiger(
-        &db.0,
-        &[
-            "note",
-            "--text",
-            "operator confirmed the boundary",
-            "--task",
-            "1",
-            "--source",
-            "user",
-        ],
-    ));
-    assert_success(&papertiger(
-        &db.0,
-        &[
-            "done",
-            "1",
-            "--result",
-            "verified implementation",
-            "--result-source",
-            "agent",
-        ],
-    ));
-
-    let show = papertiger(&db.0, &["show", "1", "--json"]);
-    assert_success(&show);
-    let show: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
-    assert_eq!(show["task"]["intent_source"], "external");
-    assert_eq!(show["task"]["result_source"], "agent");
-    assert_eq!(
-        show["recent_events"][1]["payload"]["meaning_source"],
-        "user"
-    );
-
-    let human = papertiger(&db.0, &["show", "1"]);
-    assert_success(&human);
-    let human = String::from_utf8(human.stdout).unwrap();
-    assert!(human.contains("intent [external]: operator requested outcome"));
-    assert!(human.contains("result [agent]: verified implementation"));
-    assert_eq!(
-        human
-            .matches("result [agent]: verified implementation")
-            .count(),
-        1
-    );
-
-    let export = papertiger(&db.0, &["export"]);
-    assert_success(&export);
-    let dump_path = db.0.with_extension("dump.json");
-    std::fs::write(&dump_path, &export.stdout).unwrap();
-    let restored = TestDatabase::new("meaning-provenance-restored");
-    assert_success(&papertiger(&restored.0, &["init"]));
-    let import = papertiger(&restored.0, &["import", dump_path.to_str().unwrap()]);
-    assert_success(&import);
-    std::fs::remove_file(dump_path).unwrap();
-    let restored_show = papertiger(&restored.0, &["show", "1", "--json"]);
-    assert_success(&restored_show);
-    let restored_show: serde_json::Value = serde_json::from_slice(&restored_show.stdout).unwrap();
-    assert_eq!(restored_show["task"]["intent_source"], "external");
-    assert_eq!(restored_show["task"]["result_source"], "agent");
-
-    assert_success(&papertiger(
-        &restored.0,
-        &[
-            "edit",
-            "1",
-            "--clear-intent-source",
-            "--why",
-            "remove an incorrect attribution",
-        ],
-    ));
-    let cleared = papertiger(&restored.0, &["show", "1", "--json"]);
-    assert_success(&cleared);
-    let cleared: serde_json::Value = serde_json::from_slice(&cleared.stdout).unwrap();
-    assert_eq!(cleared["task"]["intent_source"], serde_json::Value::Null);
-    assert_eq!(
-        cleared["recent_events"][0]["payload"]["changes"]["intent_source"]["before"],
-        "external"
-    );
-    assert_eq!(
-        cleared["recent_events"][0]["payload"]["changes"]["intent_source"]["after"],
-        serde_json::Value::Null
-    );
-
-    let connection = rusqlite::Connection::open(&restored.0).unwrap();
-    // Explicit API admission for intentional disposable-fixture construction.
-    papertiger::begin_mutation(&connection)
-        .unwrap()
-        .commit()
-        .unwrap();
-    connection
-        .pragma_update(None, "ignore_check_constraints", true)
-        .unwrap();
-    connection
-        .execute(
-            "UPDATE tasks SET intent_source='fabricated' WHERE seq=1",
-            [],
-        )
-        .unwrap();
-    drop(connection);
-    let audit = papertiger(&restored.0, &["audit"]);
-    assert_success(&audit);
-    assert!(String::from_utf8_lossy(&audit.stdout).contains("invalid_meaning_source"));
 }
 
 #[test]
@@ -2724,8 +2532,6 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
             "--start",
             "--intent",
             "One outcome remains in its initiating authority while implementation enters another repository.",
-            "--intent-source",
-            "user",
             "--why",
             "Exercise explicit receipt-bound authority selection from a foreign installed project.",
         ])

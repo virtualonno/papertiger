@@ -24,10 +24,8 @@ pub struct Task {
     pub replacement_task_id: Option<i64>,
     pub title: String,
     pub intent: String,
-    pub intent_source: Option<String>,
     pub kind: String,
     pub result: Option<String>,
-    pub result_source: Option<String>,
     pub status: String,
     pub priority: i64,
     pub pickup: Option<TaskPickup>,
@@ -35,7 +33,7 @@ pub struct Task {
 
 pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
     let seq = r.get(1)?;
-    let kind: String = r.get(8)?;
+    let kind: String = r.get(7)?;
     Ok(Task {
         task_id: r.get(0)?,
         seq,
@@ -45,15 +43,13 @@ pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         replacement_task_id: r.get(4)?,
         title: r.get(5)?,
         intent: r.get(6)?,
-        intent_source: r.get(7)?,
         kind,
-        result: r.get(9)?,
-        result_source: r.get(10)?,
-        status: r.get(11)?,
-        priority: priority_recovery::read_priority(r, 1, 12)?,
+        result: r.get(8)?,
+        status: r.get(9)?,
+        priority: priority_recovery::read_priority(r, 1, 10)?,
         pickup: match (
-            r.get::<_, Option<String>>(13)?,
-            r.get::<_, Option<String>>(14)?,
+            r.get::<_, Option<String>>(11)?,
+            r.get::<_, Option<String>>(12)?,
         ) {
             (None, None) => None,
             (session, Some(at)) => Some(TaskPickup { session, at }),
@@ -62,7 +58,7 @@ pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
     })
 }
 
-pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, intent_source, kind, result, result_source, status, priority, pickup_session, pickup_at";
+pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, kind, result, status, priority, pickup_session, pickup_at";
 
 /// Validate a stored kind, which may be the legacy `work`.
 pub(crate) fn validate_task_kind(kind: &str) -> Result<()> {
@@ -148,10 +144,6 @@ pub fn validate_meaning_source(source: Option<&str>) -> Result<Option<&str>> {
         );
     }
     Ok(Some(source))
-}
-
-pub(crate) fn meaning_source_requires_text(text: Option<&str>, source: Option<&str>) -> bool {
-    source.is_none() || text.is_some_and(|text| !text.trim().is_empty())
 }
 
 pub(crate) fn validate_task_title(title: &str) -> Result<&str> {

@@ -176,11 +176,9 @@ fn tasks_table(name: &str) -> String {
   replacement_task_id INTEGER REFERENCES tasks(task_id),
   title TEXT NOT NULL,
   intent TEXT NOT NULL DEFAULT '',
-  intent_source TEXT CHECK (intent_source IN ('user','agent','external')),
   kind TEXT NOT NULL
     CHECK (kind IN ('goal','feature','change','bug','probe','decision','release','work')),
   result TEXT,
-  result_source TEXT CHECK (result_source IN ('user','agent','external')),
   status TEXT NOT NULL DEFAULT 'proposed'
     CHECK (status IN ('proposed','in_progress','done','retired','rejected')),
   priority INTEGER NOT NULL DEFAULT 0,
@@ -194,11 +192,13 @@ fn tasks_table(name: &str) -> String {
     )
 }
 
-const TASK_COLUMNS_V14: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title,     intent, intent_source, kind, result, result_source, status, priority, created_at, updated_at,     pickup_session, pickup_at";
+const TASK_COLUMNS_V14: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title,     intent, kind, result, status, priority, created_at, updated_at, pickup_session, pickup_at";
 
 /// Typed task kinds widen the kind CHECK, so the tasks table is rebuilt.
 /// Stored kinds keep their values: `probe` and `decision` keep their meaning
-/// and `work` becomes the legacy kind. Every trigger is dropped first and the
+/// and `work` becomes the legacy kind. The intent and result source columns
+/// are dropped: authorship and review state replace them, and the sources
+/// already recorded stay in the creation and completion event payloads. Every trigger is dropped first and the
 /// canonical guards are reinstalled after; the caller has turned foreign-key
 /// enforcement off and this step verifies the references before returning.
 fn migrate_v14(tx: &Connection) -> Result<()> {

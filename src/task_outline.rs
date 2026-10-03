@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::task_graph::{WaitGraph, describe_chain, first_cycle, or_remove_dependency};
 use crate::{
-    begin_mutation, get_task, meaning_source_requires_text, parse_task_ref, plan_status,
-    validate_assignable_task_kind, validate_meaning_source, validate_tag, validate_task_title,
+    begin_mutation, get_task, parse_task_ref, plan_status, validate_assignable_task_kind,
+    validate_tag, validate_task_title,
 };
 
 pub const TASK_OUTLINE_SCHEMA: &str = "papertiger.task_outline.v1";
@@ -39,8 +39,6 @@ pub struct OutlineEntry {
     pub title: String,
     #[serde(default)]
     pub intent: String,
-    #[serde(default)]
-    pub intent_source: Option<String>,
     #[serde(default)]
     pub why: Option<String>,
     pub kind: String,
@@ -301,13 +299,6 @@ pub fn decompose_task(
         if let Err(error) = validate_assignable_task_kind(&entry.kind) {
             problems.push(format!("{label}: {error}"));
         }
-        match validate_meaning_source(entry.intent_source.as_deref()) {
-            Err(error) => problems.push(format!("{label}: {error}")),
-            Ok(source) if !meaning_source_requires_text(Some(&entry.intent), source) => {
-                problems.push(format!("{label}: intent_source requires a nonblank intent"))
-            }
-            Ok(_) => {}
-        }
         let mut seen_tags = HashSet::new();
         for tag in &entry.tags {
             match validate_tag(tag) {
@@ -470,7 +461,6 @@ pub fn decompose_task(
             parent.plan_id,
             &entry.title,
             &entry.intent,
-            entry.intent_source.as_deref(),
             &entry.kind,
             Some(parent_seq),
             &[],

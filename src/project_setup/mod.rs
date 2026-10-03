@@ -1972,10 +1972,10 @@ mod tests {
         ] {
             let text = std::str::from_utf8(bytes).expect("managed text is UTF-8");
             assert!(
-                text.contains("--intent-source user")
+                text.contains("--model")
                     && (text.contains("before task completion")
                         || text.contains("Before completion, record any commit")),
-                "{name} must preserve known user provenance and inward commit association ordering"
+                "{name} must teach reported model authorship and inward commit association ordering"
             );
         }
     }

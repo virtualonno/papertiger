@@ -3,31 +3,15 @@
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, Transaction, params};
 
-use crate::{begin_mutation, get_task, mutation, now, validate_meaning_source};
+use crate::{begin_mutation, get_task, mutation, now};
 
-pub fn add_note(
-    conn: &Connection,
-    actor: &str,
-    task_seq: Option<i64>,
-    text: &str,
-    meaning_source: Option<&str>,
-) -> Result<()> {
-    let meaning_source = validate_meaning_source(meaning_source)?;
+pub fn add_note(conn: &Connection, actor: &str, task_seq: Option<i64>, text: &str) -> Result<()> {
     let tx = begin_mutation(conn)?;
     let (entity, entity_id) = match task_seq {
         Some(seq) => ("task", Some(get_task(&tx, seq)?.task_id)),
         None => ("plan", None),
     };
-    let payload = meaning_source.map(|source| serde_json::json!({"meaning_source": source}));
-    record_event_in_mutation(
-        &tx,
-        actor,
-        entity,
-        entity_id,
-        "note",
-        Some(text),
-        payload.as_ref(),
-    )?;
+    record_event_in_mutation(&tx, actor, entity, entity_id, "note", Some(text), None)?;
     tx.commit()?;
     Ok(())
 }

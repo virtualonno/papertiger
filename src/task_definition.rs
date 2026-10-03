@@ -6,9 +6,9 @@ use std::collections::HashSet;
 
 use crate::{
     MEANING_SOURCES, TASK_DEFINITION_REVISION_SCHEMA, TASK_KINDS, begin_mutation, find_cycle,
-    get_task, kind_requires_result, meaning_source_requires_text, now, plan_status,
-    priority_recovery, record_event_in_mutation, resolve_plan, start_task_in_mutation, task_graph,
-    validate_assignable_task_kind, validate_meaning_source, validate_tag, validate_task_title,
+    get_task, kind_requires_result, now, plan_status, priority_recovery, record_event_in_mutation,
+    resolve_plan, start_task_in_mutation, task_graph, validate_assignable_task_kind, validate_tag,
+    validate_task_title,
 };
 
 /// Everything a new task records. Start from [`TaskCreation::new`] and set
@@ -16,7 +16,6 @@ use crate::{
 pub struct TaskCreation<'a> {
     pub title: &'a str,
     pub intent: &'a str,
-    pub intent_source: Option<&'a str>,
     pub kind: &'a str,
     pub parent: Option<i64>,
     pub deps: &'a [i64],
@@ -33,7 +32,6 @@ impl<'a> TaskCreation<'a> {
         Self {
             title,
             intent: "",
-            intent_source: None,
             kind,
             parent: None,
             deps: &[],
@@ -89,7 +87,6 @@ pub fn add_task<'a>(
         plan_id,
         creation.title,
         creation.intent,
-        creation.intent_source,
         creation.kind,
         creation.parent,
         creation.deps,
@@ -111,7 +108,6 @@ pub(crate) fn add_task_in_mutation(
     plan_id: i64,
     title: &str,
     intent: &str,
-    intent_source: Option<&str>,
     kind: &str,
     parent: Option<i64>,
     deps: &[i64],
@@ -120,10 +116,6 @@ pub(crate) fn add_task_in_mutation(
     why: Option<&str>,
 ) -> Result<i64> {
     validate_assignable_task_kind(kind)?;
-    let intent_source = validate_meaning_source(intent_source)?;
-    if !meaning_source_requires_text(Some(intent), intent_source) {
-        bail!("--intent-source requires --intent or --intent-file with nonblank stored meaning");
-    }
     let title = validate_task_title(title)?;
     let status = plan_status(tx, plan_id)?;
     if matches!(status.as_str(), "done" | "retired") {
@@ -149,19 +141,9 @@ pub(crate) fn add_task_in_mutation(
     let t = now();
     tx.execute(
         "INSERT INTO tasks
-         (seq, plan_id, parent_id, title, intent, intent_source, kind, status, priority, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'proposed', ?8, ?9, ?9)",
-        params![
-            seq,
-            plan_id,
-            parent_id,
-            title,
-            intent,
-            intent_source,
-            kind,
-            priority,
-            t
-        ],
+         (seq, plan_id, parent_id, title, intent, kind, status, priority, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'proposed', ?7, ?8, ?8)",
+        params![seq, plan_id, parent_id, title, intent, kind, priority, t],
     )?;
     let id = tx.last_insert_rowid();
     record_event_in_mutation(
@@ -175,7 +157,6 @@ pub(crate) fn add_task_in_mutation(
             "seq": seq,
             "title": title,
             "kind": kind,
-            "intent_source": intent_source,
         })),
     )?;
     for d in deps {
@@ -194,7 +175,6 @@ pub(crate) fn add_task_in_mutation(
 pub struct TaskEdit<'a> {
     pub title: Option<&'a str>,
     pub intent: Option<&'a str>,
-    pub intent_source: Option<Option<&'a str>>,
     pub parent: Option<Option<i64>>,
     pub kind: Option<&'a str>,
     pub priority: Option<i64>,
@@ -292,13 +272,12 @@ pub fn edit_task(
     }
     if edit.title.is_none()
         && edit.intent.is_none()
-        && edit.intent_source.is_none()
         && edit.parent.is_none()
         && edit.kind.is_none()
         && edit.priority.is_none()
     {
         bail!(
-            "task edit requires at least one of --title, --intent, --intent-source, --clear-intent-source, --parent, --kind, or --priority"
+            "task edit requires at least one of --title, --intent, --parent, --clear-parent, --kind, or --priority"
         );
     }
     if let Some(kind) = edit.kind {
@@ -310,29 +289,6 @@ pub fn edit_task(
         return Ok(vec!["priority"]);
     }
     let task = get_task(&tx, seq)?;
-    let intent_source = edit
-        .intent_source
-        .map(validate_meaning_source)
-        .transpose()?
-        .flatten();
-    if edit.intent.is_some_and(|intent| intent != task.intent)
-        && task.intent_source.is_some()
-        && edit.intent_source.is_none()
-    {
-        bail!(
-            "replacing sourced intent requires --intent-source <user|agent|external> or --clear-intent-source"
-        );
-    }
-    let resulting_intent = edit.intent.unwrap_or(&task.intent);
-    let resulting_source = edit
-        .intent_source
-        .map(|_| intent_source)
-        .unwrap_or(task.intent_source.as_deref());
-    if !meaning_source_requires_text(Some(resulting_intent), resulting_source) {
-        bail!(
-            "intent source requires nonblank intent; supply --intent with stored meaning and --intent-source, or omit --intent-source"
-        );
-    }
     let edited_at = now();
     let mut changed = Vec::new();
     let mut changes = serde_json::Map::new();
@@ -361,17 +317,6 @@ pub fn edit_task(
         changes.insert(
             "intent".into(),
             serde_json::json!({"before": task.intent, "after": new}),
-        );
-    }
-    if edit.intent_source.is_some() && intent_source != task.intent_source.as_deref() {
-        tx.execute(
-            "UPDATE tasks SET intent_source=?1, updated_at=?2 WHERE task_id=?3",
-            params![intent_source, edited_at, task.task_id],
-        )?;
-        changed.push("intent_source");
-        changes.insert(
-            "intent_source".into(),
-            serde_json::json!({"before": task.intent_source, "after": intent_source}),
         );
     }
     if let Some(new) = edit.kind

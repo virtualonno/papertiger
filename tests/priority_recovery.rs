@@ -6,7 +6,6 @@ fn no_edit() -> pt::TaskEdit<'static> {
     pt::TaskEdit {
         title: None,
         intent: None,
-        intent_source: None,
         parent: None,
         kind: None,
         priority: None,

@@ -5,8 +5,7 @@ use rusqlite::{Connection, Transaction, params};
 
 use crate::{
     Task, TaskPickup, begin_mutation, entry_blockers, find_cycle, get_task, kind_requires_result,
-    now, pickup, plan_status, record_event_in_mutation, task_graph, validate_meaning_source,
-    validate_session,
+    now, pickup, plan_status, record_event_in_mutation, task_graph, validate_session,
 };
 
 pub fn start_task(
@@ -82,7 +81,6 @@ pub(crate) fn start_task_in_mutation(
             status: "in_progress",
             why,
             result: None,
-            result_source: None,
             replacement: None,
             pickup: Some(&pickup),
         },
@@ -90,14 +88,7 @@ pub(crate) fn start_task_in_mutation(
     Ok(())
 }
 
-pub fn complete_task(
-    conn: &Connection,
-    actor: &str,
-    seq: i64,
-    result: Option<&str>,
-    result_source: Option<&str>,
-) -> Result<()> {
-    let result_source = validate_meaning_source(result_source)?;
+pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&str>) -> Result<()> {
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     if matches!(task.status.as_str(), "done" | "retired" | "rejected") {
@@ -133,9 +124,6 @@ pub fn complete_task(
         );
     }
     let result = result.map(str::trim).filter(|text| !text.is_empty());
-    if result.is_none() && result_source.is_some() {
-        bail!("--result-source requires --result or --result-file with a durable outcome");
-    }
     if kind_requires_result(&task.kind) && result.is_none() {
         bail!(
             "completing {} task #{seq} requires --result or --result-file so the measured or selected outcome survives the session",
@@ -150,7 +138,6 @@ pub fn complete_task(
             status: "done",
             why: result,
             result,
-            result_source,
             replacement: None,
             pickup: None,
         },
@@ -217,7 +204,6 @@ pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Resul
             status: "proposed",
             why: Some(why),
             result: None,
-            result_source: None,
             replacement: None,
             pickup: None,
         },
@@ -340,7 +326,6 @@ fn terminate_task(
             status,
             why: Some(why),
             result: Some(why),
-            result_source: None,
             replacement: replacement.as_ref(),
             pickup: None,
         },
@@ -366,7 +351,6 @@ struct TaskTransition<'a> {
     status: &'a str,
     why: Option<&'a str>,
     result: Option<&'a str>,
-    result_source: Option<&'a str>,
     replacement: Option<&'a Task>,
     pickup: Option<&'a TaskPickup>,
 }
@@ -381,18 +365,16 @@ fn transition_task(
         status,
         why,
         result,
-        result_source,
         replacement,
         pickup,
     } = transition;
     tx.execute(
         "UPDATE tasks
-            SET status=?1, result=?2, result_source=?3, replacement_task_id=?4, updated_at=?5, pickup_session=?7, pickup_at=?8
-          WHERE task_id=?6",
+            SET status=?1, result=?2, replacement_task_id=?3, updated_at=?4, pickup_session=?6, pickup_at=?7
+          WHERE task_id=?5",
         params![
             status,
             result,
-            result_source,
             replacement.map(|task| task.task_id),
             now(),
             task.task_id,
@@ -405,7 +387,6 @@ fn transition_task(
         "from": task.status,
         "to": status,
         "result": result,
-        "result_source": result_source,
         "previous_pickup": task.pickup,
         "pickup": pickup,
     });

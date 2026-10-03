@@ -65,7 +65,6 @@ struct StoredBinding {
     task_status: String,
     task_kind: String,
     task_result: Option<String>,
-    task_result_source: Option<String>,
     task_replacement_seq: Option<i64>,
 }
 
@@ -93,8 +92,7 @@ pub(crate) fn verify_all_evidence(
     let mut bindings = Vec::new();
     let mut statement = conn.prepare(
         "SELECT task.seq, gate.name, gate.evidence_locator, gate.evidence_sha256,
-                task.status, task.kind, task.result, task.result_source,
-                replacement.seq
+                task.status, task.kind, task.result, replacement.seq
            FROM gates gate
            JOIN tasks task ON task.task_id=gate.task_id
            LEFT JOIN tasks replacement ON replacement.task_id=task.replacement_task_id
@@ -113,16 +111,14 @@ pub(crate) fn verify_all_evidence(
                     task_status: row.get(4)?,
                     task_kind: row.get(5)?,
                     task_result: row.get(6)?,
-                    task_result_source: row.get(7)?,
-                    task_replacement_seq: row.get(8)?,
+                    task_replacement_seq: row.get(7)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?,
     );
     let mut statement = conn.prepare(
         "SELECT task.seq, blocker.name, blocker.evidence_locator, blocker.evidence_sha256,
-                task.status, task.kind, task.result, task.result_source,
-                replacement.seq
+                task.status, task.kind, task.result, replacement.seq
            FROM task_blockers blocker
            JOIN tasks task ON task.task_id=blocker.task_id
            LEFT JOIN tasks replacement ON replacement.task_id=task.replacement_task_id
@@ -141,8 +137,7 @@ pub(crate) fn verify_all_evidence(
                     task_status: row.get(4)?,
                     task_kind: row.get(5)?,
                     task_result: row.get(6)?,
-                    task_result_source: row.get(7)?,
-                    task_replacement_seq: row.get(8)?,
+                    task_replacement_seq: row.get(7)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?,
@@ -488,9 +483,6 @@ fn add_corrective_commands(
                 let mut arguments = vec!["done".into(), binding.task_seq.to_string()];
                 if let Some(task_result) = &binding.task_result {
                     arguments.extend(["--result".into(), task_result.clone()]);
-                    if let Some(source) = &binding.task_result_source {
-                        arguments.extend(["--result-source".into(), source.clone()]);
-                    }
                 } else if crate::kind_requires_result(&binding.task_kind) {
                     arguments.extend(["--result".into(), "<durable-outcome>".into()]);
                 }

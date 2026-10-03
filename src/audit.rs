@@ -7,10 +7,10 @@ use std::collections::HashMap;
 
 use crate::{
     ASSIGNABLE_TASK_KINDS, LEGACY_TASK_KIND, MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES,
-    TASK_STATUSES, TaskPickup, external_references, get_task, history_recovery,
-    meaning_source_requires_text, mise_projection, pickup, plan_move, priority_recovery,
-    suggested_task_kind, task_graph, valid_task_definition_revision_payload, validate_commit_oid,
-    validate_new_evidence_locator, validate_optional_sha256, write_guard,
+    TASK_STATUSES, TaskPickup, external_references, get_task, history_recovery, mise_projection,
+    pickup, plan_move, priority_recovery, suggested_task_kind, task_graph,
+    valid_task_definition_revision_payload, validate_commit_oid, validate_new_evidence_locator,
+    validate_optional_sha256, write_guard,
 };
 
 #[derive(Serialize)]
@@ -125,48 +125,6 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     }
     for (kind, detail) in mise_projection::audit_mise_projections(conn)? {
         push(&kind, detail);
-    }
-
-    let mut statement = conn.prepare(
-        "SELECT seq, intent, intent_source, result, result_source FROM tasks ORDER BY seq",
-    )?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    for (seq, intent, intent_source, result, result_source) in rows {
-        for (field, source) in [
-            ("intent_source", intent_source.as_deref()),
-            ("result_source", result_source.as_deref()),
-        ] {
-            if let Some(source) = source
-                && !MEANING_SOURCES.contains(&source)
-            {
-                push(
-                    "invalid_meaning_source",
-                    format!("#{seq} has invalid {field} '{source}'"),
-                );
-            }
-        }
-        if !meaning_source_requires_text(Some(&intent), intent_source.as_deref()) {
-            push(
-                "meaning_source_without_text",
-                format!("#{seq} has intent_source without nonblank intent"),
-            );
-        }
-        if !meaning_source_requires_text(result.as_deref(), result_source.as_deref()) {
-            push(
-                "meaning_source_without_text",
-                format!("#{seq} has result_source without a durable result"),
-            );
-        }
     }
 
     let mut live_titles: HashMap<(String, String), Vec<i64>> = HashMap::new();

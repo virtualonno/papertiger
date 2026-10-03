@@ -24,7 +24,7 @@ fn authority() -> Connection {
         pt::TaskCreation::new("Task", "feature"),
     )
     .unwrap();
-    pt::add_note(&conn, "test", Some(1), "canonical history", None).unwrap();
+    pt::add_note(&conn, "test", Some(1), "canonical history").unwrap();
     conn
 }
 
@@ -126,7 +126,6 @@ fn text_priorities_are_refused_on_insert_and_update() {
         pt::TaskEdit {
             title: None,
             intent: None,
-            intent_source: None,
             parent: None,
             kind: None,
             priority: Some(3),
@@ -280,7 +279,7 @@ fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
         refusal(&api, "UPDATE tasks SET priority=4")
             .contains("papertiger_write_requires_public_api")
     );
-    pt::add_note(&api, "agent", Some(1), "use the public API", None).unwrap();
+    pt::add_note(&api, "agent", Some(1), "use the public API").unwrap();
     assert!(pt::audit(&api).unwrap().is_empty());
     drop(api);
     drop(raw);
@@ -443,7 +442,7 @@ fn foreign_triggers_are_drift_and_repair_removes_them() {
     let conn = pt::open_existing(db).unwrap();
 
     support::author(&conn);
-    pt::add_note(&conn, "agent", Some(1), "after repair", None).unwrap();
+    pt::add_note(&conn, "agent", Some(1), "after repair").unwrap();
     assert_eq!(pt::get_task(&conn, 1).unwrap().title, "Task");
     assert!(pt::audit(&conn).unwrap().is_empty());
     let payload: String = conn

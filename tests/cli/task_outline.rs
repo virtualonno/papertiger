@@ -79,7 +79,7 @@ fn decompose_creates_children_edges_and_ready_starts_in_one_receipt() {
     ));
     let children = outline(json!([
         {"key": "persist", "title": "Persist records", "kind": "feature", "intent": "Records survive restarts",
-         "intent_source": "agent", "why": "Storage comes first", "deps": [1],
+         "why": "Storage comes first", "deps": [1],
          "tags": ["storage"], "priority": 3},
         {"key": "serve", "title": "Serve records", "kind": "feature", "why": "Clients read records",
          "deps": ["persist"]},
@@ -142,7 +142,6 @@ fn decompose_creates_children_edges_and_ready_starts_in_one_receipt() {
     assert_eq!(persisted["parent"]["seq"], 3);
     assert_eq!(persisted["tags"], json!(["storage"]));
     assert_eq!(persisted["task"]["priority"], 3);
-    assert_eq!(persisted["task"]["intent_source"], "agent");
     let measured = json_of(&papertiger(&db.0, &["show", "6", "--json"]));
     assert_eq!(measured["task"]["kind"], "probe");
     let mut dependencies = measured["dependencies"]
@@ -232,14 +231,14 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         {"key": "1bad", "title": "Third", "kind": "feature"},
         {"key": "c", "title": " first ", "kind": "feature"},
         {"key": "d", "title": "Fourth", "kind": "chore"},
-        {"key": "e", "title": "Fifth", "kind": "feature", "intent_source": "agent"},
+        {"key": "e", "title": "Fifth", "kind": "feature"},
         {"key": "f", "title": "Sixth", "kind": "feature", "deps": ["missing", "#1", 1, 4, 3, 2, 5, "f", 99, true]},
         {"key": "g", "title": "Seventh", "kind": "feature", "why": "  "},
         {"key": "h", "title": "Eighth", "kind": "feature", "deps": ["i"]},
         {"key": "i", "title": "Ninth", "kind": "feature", "deps": ["j"]},
         {"key": "j", "title": "Tenth", "kind": "feature", "deps": ["h"]},
         {"key": "k", "title": "", "kind": "feature"},
-        {"key": "l", "title": "Eleventh", "kind": "feature", "intent": "Has an intent", "intent_source": "bot"},
+        {"key": "l", "title": "Eleventh", "kind": "feature", "intent": "Has an intent"},
         {"key": "m", "title": "Twelfth", "kind": "feature", "tags": ["", "t".repeat(65), "dup", " dup "]},
         {"key": "n", "title": "Thirteenth", "kind": "feature", "deps": ["h", "h", 99, 99.0]},
         {"key": "o", "title": "   ", "kind": "feature"}
@@ -254,7 +253,6 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         "child 3 (\"1bad\"): key must be 1-64 ASCII letters",
         "child 4 (\"c\"): title repeats child 1 (\"a\")",
         "child 5 (\"d\"): unknown task kind 'chore'",
-        "child 6 (\"e\"): intent_source requires a nonblank intent",
         "child 7 (\"f\"): dependency \"missing\" names no key in this outline",
         "child 7 (\"f\"): dependency \"#1\" is a string; write an existing task as the integer 1",
         "child 7 (\"f\"): dependency #1 is retired",
@@ -270,7 +268,6 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         "child 8 (\"g\"): why must be nonblank",
         "sibling dependencies form a cycle: \"h\" -> \"i\" -> \"j\" -> \"h\"",
         "child 12 (\"k\"): task title must not be blank",
-        "child 13 (\"l\"): unknown meaning source 'bot' (expected user|agent|external)",
         "child 14 (\"m\"): tag must not be blank",
         "child 14 (\"m\"): tag has 65 characters; shorten it to at most 64 characters",
         "child 14 (\"m\"): repeats tag \"dup\"; list each tag once",

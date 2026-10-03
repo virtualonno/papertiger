@@ -214,9 +214,7 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   expiry, heartbeat, or harness integration. It does not detect liveness or
   guarantee exclusive execution; concurrent explicit starts can both succeed.
 - `add --start` creates and starts a task atomically, rolling back task and
-  events on readiness failure. Intent, result, and note text may separately
-  record a `user`, `agent`, or `external` meaning source without confusing it
-  with the actor that performed the mutation.
+  events on readiness failure.
 - Optional caller-resolved commit associations support local task/commit lookup
   without invoking Git or coupling commits to completion.
 - `retire <old> --into <canonical> --why ...` records measured task

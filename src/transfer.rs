@@ -9,10 +9,9 @@ use crate::{
     CommitAssociation, ExternalReference, GATE_KINDS, MiseProjectionDump, TASK_COLS, TASK_STATUSES,
     Task, TaskBlocker, TaskPickup, add_dep_inner, begin_mutation, commit_associations,
     entry_blockers, external_reference, external_references, find_cycle, get_task,
-    history_recovery, invalid_replacement_terminals, live_child_sequences,
-    meaning_source_requires_text, mise_projection, now, pickup, plan_move,
-    record_event_in_mutation, replacement_repair_instruction, require_nonblank, task_blockers,
-    task_from_row, terminal_replacement_repair_instruction, validate_commit_oid,
+    history_recovery, invalid_replacement_terminals, live_child_sequences, mise_projection, now,
+    pickup, plan_move, record_event_in_mutation, replacement_repair_instruction, require_nonblank,
+    task_blockers, task_from_row, terminal_replacement_repair_instruction, validate_commit_oid,
     validate_meaning_source, validate_new_evidence_locator, validate_optional_sha256, validate_tag,
     validate_task_kind, validate_task_title,
 };
@@ -44,7 +43,9 @@ pub fn parse_dump_json(text: &str) -> Result<Dump> {
 }
 
 /// The only legacy dump conversion. v10 knew the task kinds `work`, `probe`
-/// and `decision`, which v11 stores unchanged (`work` as the legacy kind).
+/// and `decision`, which v11 stores unchanged (`work` as the legacy kind),
+/// and carried per-task `intent_source` and `result_source`, which v11
+/// drops: the creation and completion events keep the recorded sources.
 /// Events and Mise projection documents are historical records and pass
 /// through unchanged.
 pub fn convert_dump_v10(mut value: serde_json::Value) -> Result<serde_json::Value> {
@@ -52,6 +53,17 @@ pub fn convert_dump_v10(mut value: serde_json::Value) -> Result<serde_json::Valu
         bail!(
             "convert_dump_v10 accepts only papertiger.dump.v10; re-export with the Papertiger release that produced the dump"
         );
+    }
+    if let Some(tasks) = value
+        .get_mut("tasks")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for task in tasks {
+            if let Some(task) = task.as_object_mut() {
+                task.remove("intent_source");
+                task.remove("result_source");
+            }
+        }
     }
     value["schema"] = DUMP_SCHEMA.into();
     Ok(value)
@@ -80,14 +92,10 @@ pub struct TaskDump {
     pub title: String,
     #[serde(default)]
     pub intent: String,
-    #[serde(default)]
-    pub intent_source: Option<String>,
     #[serde(default = "default_work")]
     pub kind: String,
     #[serde(default)]
     pub result: Option<String>,
-    #[serde(default)]
-    pub result_source: Option<String>,
     #[serde(default = "default_proposed")]
     pub status: String,
     #[serde(default)]
@@ -271,10 +279,8 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                 plan: slug.clone(),
                 title: t.title,
                 intent: t.intent,
-                intent_source: t.intent_source,
                 kind: t.kind,
                 result: t.result,
-                result_source: t.result_source,
                 status: t.status,
                 priority: t.priority,
                 parent_seq,
@@ -528,32 +534,6 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
             bail!("task '{}' has unknown status '{}'", td.title, td.status);
         }
         validate_task_kind(&td.kind)?;
-        let intent_source =
-            validate_meaning_source(td.intent_source.as_deref()).with_context(|| {
-                format!(
-                    "import task '{}' has invalid intent_source {:?}",
-                    td.title, td.intent_source
-                )
-            })?;
-        let result_source =
-            validate_meaning_source(td.result_source.as_deref()).with_context(|| {
-                format!(
-                    "import task '{}' has invalid result_source {:?}",
-                    td.title, td.result_source
-                )
-            })?;
-        if !meaning_source_requires_text(Some(&td.intent), intent_source) {
-            bail!(
-                "import: task '{}' has intent_source without nonblank stored intent",
-                td.title
-            );
-        }
-        if !meaning_source_requires_text(td.result.as_deref(), result_source) {
-            bail!(
-                "import: task '{}' has result_source without a durable result",
-                td.title
-            );
-        }
         if td.status == "done" && td.gates.iter().any(|gate| gate.status == "open") {
             bail!("import: done task '{}' has an open gate", td.title);
         }
@@ -561,7 +541,7 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
             bail!("import: done task '{}' has an open blocker", td.title);
         }
         if td.status == "done"
-            && matches!(td.kind.as_str(), "probe" | "decision")
+            && crate::kind_requires_result(&td.kind)
             && td
                 .result
                 .as_deref()
@@ -578,17 +558,15 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
         let t = now();
         tx.execute(
             "INSERT INTO tasks
-             (seq, plan_id, title, intent, intent_source, kind, result, result_source, status, priority, created_at, updated_at, pickup_session, pickup_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)",
+             (seq, plan_id, title, intent, kind, result, status, priority, created_at, updated_at, pickup_session, pickup_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10, ?11)",
             params![
                 seq,
                 plan_id,
                 td.title,
                 td.intent,
-                intent_source,
                 td.kind,
                 td.result,
-                result_source,
                 td.status,
                 td.priority,
                 t,

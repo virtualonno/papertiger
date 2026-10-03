@@ -96,6 +96,8 @@ pub const ASSIGNABLE_TASK_KINDS: [&str; 7] = [
     "goal", "feature", "change", "bug", "probe", "decision", "release",
 ];
 pub const LEGACY_TASK_KIND: &str = "work";
+/// Sources older events recorded for intent, result and note text; only
+/// history validation reads them now.
 pub const MEANING_SOURCES: [&str; 3] = ["user", "agent", "external"];
 pub const GATE_KINDS: [&str; 8] = [
     "test",
@@ -130,9 +132,9 @@ pub use events::add_note;
 pub(crate) use events::record_event_in_mutation;
 mod tasks;
 pub(crate) use tasks::{
-    TASK_COLS, meaning_source_requires_text, parse_task_ref, require_nonblank, task_from_row,
-    task_tags_by_id, validate_assignable_task_kind, validate_kind_filter, validate_tag,
-    validate_task_kind, validate_task_title,
+    TASK_COLS, parse_task_ref, require_nonblank, task_from_row, task_tags_by_id,
+    validate_assignable_task_kind, validate_kind_filter, validate_tag, validate_task_kind,
+    validate_task_title,
 };
 pub use tasks::{
     Task, get_task, kind_requires_result, leaf_tasks_with_status, list_tasks,

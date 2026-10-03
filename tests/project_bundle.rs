@@ -95,8 +95,6 @@ impl Fixture {
             "work",
             "--intent",
             "Preserve this outcome",
-            "--intent-source",
-            "user",
         ]);
         let task: Value = serde_json::from_str(&self.ok(&["show", "1", "--json"])).unwrap();
         let receipt_path = self.0.join("tools/papertiger/project-install.json");

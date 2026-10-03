@@ -37,7 +37,7 @@ fn model_history_and_receipts_capture_only_committed_operations() {
         seq = task(&conn, "proposal");
         pt::add_gate(&conn, "recorder", seq, "proof", "test", "must pass").unwrap();
         let before = serde_json::to_value(recorder.receipt().unwrap()).unwrap();
-        assert!(pt::complete_task(&conn, "other", seq, Some("unsupported success"), None).is_err());
+        assert!(pt::complete_task(&conn, "other", seq, Some("unsupported success")).is_err());
         assert_eq!(
             serde_json::to_value(recorder.receipt().unwrap()).unwrap(),
             before
@@ -53,7 +53,7 @@ fn model_history_and_receipts_capture_only_committed_operations() {
         }
         .unwrap();
         pt::waive_gate(&conn, "reviewer", seq, "proof", "bounded fixture waiver").unwrap();
-        pt::complete_task(&conn, "reviewer", seq, Some("verified outcome"), None).unwrap();
+        pt::complete_task(&conn, "reviewer", seq, Some("verified outcome")).unwrap();
         assert_eq!(
             recorder
                 .receipt()
@@ -172,7 +172,7 @@ fn reasoning_effort_follows_each_author_and_survives_recovery() {
         pt::add_gate(&conn, "creator", seq, "proof", "test", "must pass").unwrap();
         let before = serde_json::to_value(recorder.receipt().unwrap()).unwrap();
         assert_eq!(before["events"][0]["event"]["reasoning_effort"], "high");
-        assert!(pt::complete_task(&conn, "creator", seq, Some("unsupported"), None).is_err());
+        assert!(pt::complete_task(&conn, "creator", seq, Some("unsupported")).is_err());
         assert_eq!(
             serde_json::to_value(recorder.receipt().unwrap()).unwrap(),
             before
@@ -190,7 +190,7 @@ fn reasoning_effort_follows_each_author_and_survives_recovery() {
             activity.last_event.unwrap().reasoning_effort.as_deref(),
             Some("medium")
         );
-        pt::complete_task(&conn, "reviewer", seq, Some("verified"), None).unwrap();
+        pt::complete_task(&conn, "reviewer", seq, Some("verified")).unwrap();
     }
     let activity = pt::task_activity(&conn, seq).unwrap();
     let created = activity.created_event.unwrap();
@@ -360,7 +360,7 @@ fn relocation_preserves_edges_gate_refusals_cursors_and_scoped_recovery() {
     assert_eq!(context.plan.slug, "new");
     assert_eq!(context.parent.unwrap().seq, parent);
     assert_eq!(context.gates[0].status, "open");
-    assert!(pt::complete_task(&conn, "author", child, Some("not proven"), None).is_err());
+    assert!(pt::complete_task(&conn, "author", child, Some("not proven")).is_err());
     assert!(
         pt::move_tasks_to_plan(&conn, "author", &[child, parent, duplicate], "new", "no-op")
             .is_err()
@@ -433,7 +433,7 @@ fn references_are_exact_evented_inward_links_not_completion_evidence() {
         pt::task_context(&conn, seq).unwrap().external_references[0],
         reference
     );
-    assert!(pt::complete_task(&conn, "author", seq, Some("reference is not proof"), None).is_err());
+    assert!(pt::complete_task(&conn, "author", seq, Some("reference is not proof")).is_err());
     pt::move_tasks_to_plan(&conn, "author", &[seq], "new", "relocate evidence owner").unwrap();
     let dump = pt::export(&conn, None).unwrap();
     let restored = rusqlite::Connection::open_in_memory().unwrap();

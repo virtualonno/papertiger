@@ -34,6 +34,14 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   captures receipts. Audit reports malformed authorship as
   `invalid_event_authorship`. A subagent inherits its parent's environment;
   pass `--model` where a launch-time model could be wrong.
+- `--intent-source`, `--clear-intent-source`, `--result-source` and
+  `note --source` are removed, with the tasks table's `intent_source` and
+  `result_source` columns (dropped by the v14 rebuild) and the matching dump
+  and outline fields; `papertiger.dump.v10` conversion strips them. Recorded
+  sources stay in the creation, completion and note event payloads, which
+  history validation still checks. Authorship and review state replace them.
+  Library: `complete_task` and `add_note` lose their source argument, and
+  `TaskCreation`/`TaskEdit` lose `intent_source`.
 - `show` and `focus` place each task by its ancestors: a `path: G-1 › F-2`
   line in `show`, an `[in G-1 › F-2]` suffix in `focus`, and an `ancestry`
   list of handles (root first) in both JSON documents. Hierarchy stays a
