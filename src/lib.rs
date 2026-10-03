@@ -9,7 +9,9 @@ use std::{
 };
 
 mod digest;
+mod stdout;
 pub use digest::{sha256, sha256_bytes, validate_sha256};
+pub use stdout::{OutputClosed, is_output_closed, print_stdout, write_stdout};
 mod atomic_file;
 pub use atomic_file::{atomic_create_file, atomic_replace_file};
 mod export_file;

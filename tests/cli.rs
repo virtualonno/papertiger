@@ -453,6 +453,56 @@ fn init_refuses_json_and_names_its_plain_text_report() {
 struct TestDatabase(PathBuf);
 
 #[test]
+fn a_reader_that_closes_the_pipe_ends_output_without_failure() {
+    let db = TestDatabase::new("closed-pipe");
+    assert_success(&papertiger(&db.0, &["init"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
+    assert_success(&papertiger(&db.0, &["add", "Parent outcome"]));
+    let children: Vec<_> = (0..256)
+        .map(|index| {
+            serde_json::json!({
+                "key": format!("c{index}"),
+                "title": format!("Child outcome {index} with a title long enough to fill the pipe buffer quickly"),
+            })
+        })
+        .collect();
+    let outline = serde_json::json!({
+        "schema": "papertiger.task_outline.v1",
+        "children": children,
+    });
+    assert_success(&papertiger_with_stdin(
+        &db.0,
+        &["decompose", "1", "--outline-file", "-"],
+        &outline.to_string(),
+    ));
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        .arg("--db")
+        .arg(&db.0)
+        .arg("list")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn papertiger");
+    let mut stdout = child.stdout.take().expect("papertiger stdout");
+    let mut first = [0u8; 8];
+    std::io::Read::read_exact(&mut stdout, &mut first).expect("read the first bytes");
+    drop(stdout);
+    let output = child.wait_with_output().expect("wait for papertiger");
+    assert!(
+        output.status.success(),
+        "a closed reader must end output quietly, got {:?}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn orientation_reads_leave_the_authority_bytes_unchanged() {
     let db = TestDatabase::new("orientation-reads");
     assert_success(&papertiger(&db.0, &["init"]));

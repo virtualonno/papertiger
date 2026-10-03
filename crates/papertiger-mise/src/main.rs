@@ -653,6 +653,9 @@ enum PromotionCommand {
 
 fn main() {
     if let Err(error) = run(Cli::parse()) {
+        if papertiger::is_output_closed(&error) {
+            return;
+        }
         eprintln!("error: {}", render_error(&error));
         std::process::exit(1);
     }
@@ -726,13 +729,13 @@ fn run(cli: Cli) -> Result<()> {
                     ]);
                     args
                 }))?;
-            println!("{}", serde_json::to_string_pretty(&output)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&output)?);
         }
         Command::Improvement(command) => match command {
             ImprovementCommand::Paradigms { json } => {
                 let (registry, digest) = improvement::builtin_paradigm_registry()?;
                 if json {
-                    println!(
+                    papertiger::outln!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "schema": registry.schema,
@@ -741,9 +744,9 @@ fn run(cli: Cli) -> Result<()> {
                         }))?
                     );
                 } else {
-                    println!("{} {}", registry.schema, digest);
+                    papertiger::outln!("{} {}", registry.schema, digest);
                     for template in registry.templates {
-                        println!("{} v{}", template.key, template.version);
+                        papertiger::outln!("{} v{}", template.key, template.version);
                     }
                 }
             }
@@ -754,7 +757,7 @@ fn run(cli: Cli) -> Result<()> {
                     .into_iter()
                     .find(|template| template.key == key)
                     .with_context(|| format!("unknown improvement paradigm '{key}'"))?;
-                println!(
+                papertiger::outln!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "registry_sha256": digest,
@@ -766,7 +769,7 @@ fn run(cli: Cli) -> Result<()> {
                 let bytes = std::fs::read(&file)
                     .with_context(|| format!("read improvement registry {}", file.display()))?;
                 let registry = improvement::validate_paradigm_registry(&bytes)?;
-                println!(
+                papertiger::outln!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "schema": registry.schema,
@@ -781,7 +784,7 @@ fn run(cli: Cli) -> Result<()> {
                     format!("read project improvement brief {}", file.display())
                 })?;
                 let brief = improvement::validate_project_improvement_brief(&bytes)?;
-                println!(
+                papertiger::outln!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "authority": brief.authority,
@@ -816,7 +819,7 @@ fn run(cli: Cli) -> Result<()> {
                 std::fs::write(&output, &bytes).with_context(|| {
                     format!("write non-admitted improvement draft {}", output.display())
                 })?;
-                println!(
+                papertiger::outln!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "authority": draft.authority,
@@ -890,13 +893,13 @@ fn run(cli: Cli) -> Result<()> {
                 corrective_command,
             };
             if json {
-                println!("{}", serde_json::to_string_pretty(&status)?);
+                papertiger::outln!("{}", serde_json::to_string_pretty(&status)?);
             } else {
-                print_project_status(&status);
+                print_project_status(&status)?;
             }
         }
         Command::ExecutionStatus => {
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&host_execution_status()?)?
             );
@@ -909,11 +912,13 @@ fn run(cli: Cli) -> Result<()> {
             }
             let connection = open_for_init(&cli.db)?;
             match init_at(&connection, &cli.db)? {
-                AuthorityInitOutcome::Created => println!("initialized {}", cli.db.display()),
-                AuthorityInitOutcome::Migrated { from, to } => {
-                    println!("migrated {} from schema v{from} to v{to}", cli.db.display())
+                AuthorityInitOutcome::Created => {
+                    papertiger::outln!("initialized {}", cli.db.display())
                 }
-                AuthorityInitOutcome::Current => println!(
+                AuthorityInitOutcome::Migrated { from, to } => {
+                    papertiger::outln!("migrated {} from schema v{from} to v{to}", cli.db.display())
+                }
+                AuthorityInitOutcome::Current => papertiger::outln!(
                     "{} is already a papertiger-mise authority at schema v{}; nothing changed",
                     cli.db.display(),
                     papertiger_mise::SCHEMA_VERSION
@@ -926,7 +931,7 @@ fn run(cli: Cli) -> Result<()> {
             let admission = verify_campaign_admission(&manifest_path)?;
             let connection = open_existing(&cli.db)?;
             let outcome = admit_verified_campaign(&connection, &cli.actor, &admission)?;
-            println!(
+            papertiger::outln!(
                 "campaign {} {} ({})",
                 admission.campaign_id(),
                 match outcome {
@@ -938,7 +943,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Campaign(CampaignCommand::Preflight { manifest }) => {
             let report = preflight_campaign_admission(&manifest);
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&report)?);
             if !report.ready {
                 bail!(
                     "campaign preflight found {} defect(s); {}",
@@ -967,7 +972,7 @@ fn run(cli: Cli) -> Result<()> {
             let outcome = admit_verified_successor(&connection, &cli.actor, &verified)?;
             let record = successor_admission(&connection, verified.campaign_id())?
                 .context("successor admission committed without an immutable receipt")?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "outcome": match outcome {
@@ -983,20 +988,20 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Campaign(CampaignCommand::SourceBinding { repository }) => {
             let binding = inspect_source_binding(&repository)?;
-            println!("{}", serde_json::to_string_pretty(&binding)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&binding)?);
         }
         Command::Campaign(CampaignCommand::Show { campaign_id }) => {
             let connection = open_existing(&cli.db)?;
             let record = campaign(&connection, &campaign_id)?
                 .with_context(|| format!("unknown campaign '{campaign_id}'"))?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Campaign(CampaignCommand::ShowSuccessor { campaign_id }) => {
             let connection = open_existing(&cli.db)?;
             let record = successor_admission(&connection, &campaign_id)?.with_context(|| {
                 format!("campaign '{campaign_id}' is not an admitted successor")
             })?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Campaign(CampaignCommand::FixtureBundle {
             repository,
@@ -1025,7 +1030,7 @@ fn run(cli: Cli) -> Result<()> {
             let canonical = descriptor.canonical_bytes()?;
             std::fs::write(&output, &canonical)
                 .with_context(|| format!("write fixture bundle {}", output.display()))?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "output": output,
@@ -1054,7 +1059,7 @@ fn run(cli: Cli) -> Result<()> {
                 &reservation_id,
                 &requests,
             )?;
-            println!("reservation {reservation_id} {outcome:?}");
+            papertiger::outln!("reservation {reservation_id} {outcome:?}");
         }
         Command::Budget(BudgetCommand::Settle {
             campaign_id,
@@ -1090,7 +1095,7 @@ fn run(cli: Cli) -> Result<()> {
                 &settlements,
                 note.as_deref(),
             )?;
-            println!("reservation {reservation_id} {outcome:?}");
+            papertiger::outln!("reservation {reservation_id} {outcome:?}");
         }
         Command::Budget(BudgetCommand::Release {
             campaign_id,
@@ -1106,11 +1111,11 @@ fn run(cli: Cli) -> Result<()> {
                 &reservation_id,
                 &why,
             )?;
-            println!("reservation {reservation_id} {outcome:?}");
+            papertiger::outln!("reservation {reservation_id} {outcome:?}");
         }
         Command::Budget(BudgetCommand::Show { campaign_id }) => {
             let connection = open_existing(&cli.db)?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&budget_balances(&connection, &campaign_id)?)?
             );
@@ -1129,7 +1134,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             std::fs::write(&output, &bytes)
                 .with_context(|| format!("write candidate material {}", output.display()))?;
-            println!("{}", String::from_utf8(bytes)?);
+            papertiger::outln!("{}", String::from_utf8(bytes)?);
         }
         Command::Candidate(CandidateCommand::Record {
             proposal,
@@ -1153,7 +1158,7 @@ fn run(cli: Cli) -> Result<()> {
                 &bound,
                 &material_object,
             )?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "created": created,
@@ -1177,7 +1182,7 @@ fn run(cli: Cli) -> Result<()> {
                 &candidate_id,
                 &worktree,
             )?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Candidate(CandidateCommand::AbandonMaterialization {
             candidate_id,
@@ -1193,13 +1198,13 @@ fn run(cli: Cli) -> Result<()> {
                 &reservation,
                 &why,
             )?;
-            println!("materialization {candidate_id} {outcome:?}");
+            papertiger::outln!("materialization {candidate_id} {outcome:?}");
         }
         Command::Candidate(CandidateCommand::Show { candidate_id }) => {
             let connection = open_existing(&cli.db)?;
             let record = candidate(&connection, &candidate_id)?
                 .with_context(|| format!("unknown candidate '{candidate_id}'"))?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Candidate(CandidateCommand::Adjudicate { candidate_id }) => {
             let connection = open_existing(&cli.db)?;
@@ -1207,7 +1212,7 @@ fn run(cli: Cli) -> Result<()> {
                 adjudicate_deterministic_candidate(&connection, &cli.actor, &candidate_id)?;
             let record = candidate(&connection, &candidate_id)?
                 .context("candidate disappeared during adjudication")?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "candidate": record,
@@ -1219,18 +1224,18 @@ fn run(cli: Cli) -> Result<()> {
             let spec: SupervisedTrialSpec = read_json(&spec)?;
             let connection = open_existing(&cli.db)?;
             let outcome = execute_workspace_trial(&connection, &cli.actor, &objects, &spec)?;
-            println!("{}", serde_json::to_string_pretty(&outcome)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&outcome)?);
         }
         Command::Trial(TrialCommand::Recover { trial_id, objects }) => {
             let connection = open_existing(&cli.db)?;
             let outcome = recover_workspace_trial(&connection, &cli.actor, &objects, &trial_id)?;
-            println!("trial {trial_id} {outcome:?}");
+            papertiger::outln!("trial {trial_id} {outcome:?}");
         }
         Command::Trial(TrialCommand::Abandon { trial_id, why }) => {
             let why = why.required()?;
             let connection = open_existing(&cli.db)?;
             let outcome = abandon_owned_trial(&connection, &cli.actor, &trial_id, &why)?;
-            println!("trial {trial_id} {outcome:?}");
+            papertiger::outln!("trial {trial_id} {outcome:?}");
         }
         Command::Trial(TrialCommand::Cancel { trial_id, why }) => {
             let why = why.required()?;
@@ -1242,7 +1247,7 @@ fn run(cli: Cli) -> Result<()> {
                 &trial_id,
                 &why,
             )?;
-            println!("{}", serde_json::to_string_pretty(&request)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&request)?);
         }
         Command::Trial(TrialCommand::Show { trial_id }) => {
             let connection = open_existing(&cli.db)?;
@@ -1254,14 +1259,14 @@ fn run(cli: Cli) -> Result<()> {
                 CancellationTarget::Trial,
                 &trial_id,
             )?)?;
-            println!("{}", serde_json::to_string_pretty(&value)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&value)?);
         }
         Command::Paired(PairedCommand::Prepare { spec, objects }) => {
             let spec: PreparePairedCohortSpec = read_json(&spec)?;
             let connection = open_existing(&cli.db)?;
             let (outcome, record) =
                 prepare_paired_cohort(&connection, &cli.actor, &objects, &spec)?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "outcome": outcome,
@@ -1286,19 +1291,19 @@ fn run(cli: Cli) -> Result<()> {
                 slot,
                 &revealed_order_seed,
             )?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Paired(PairedCommand::ExecuteNext { cohort_id, objects }) => {
             let connection = open_existing(&cli.db)?;
             let outcome =
                 execute_next_paired_execution(&connection, &cli.actor, &objects, &cohort_id)?;
-            println!("{}", serde_json::to_string_pretty(&outcome)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&outcome)?);
         }
         Command::Paired(PairedCommand::Adjudicate { cohort_id, objects }) => {
             let connection = open_existing(&cli.db)?;
             let (cohort, adjudication) =
                 adjudicate_paired_cohort(&connection, &cli.actor, &objects, &cohort_id)?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "cohort": cohort,
@@ -1325,7 +1330,7 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             let verified =
                 verify_nomination_integrity(&connection, &objects, &nomination.nomination_id)?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "nomination": nomination,
@@ -1340,17 +1345,17 @@ fn run(cli: Cli) -> Result<()> {
             let connection = open_existing(&cli.db)?;
             let record =
                 recover_paired_execution(&connection, &cli.actor, &objects, &execution_id)?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Paired(PairedCommand::ShowCohort { cohort_id }) => {
             let connection = open_existing(&cli.db)?;
             let record = paired_cohort(&connection, &cohort_id)?
                 .with_context(|| format!("unknown paired cohort '{cohort_id}'"))?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Paired(PairedCommand::ListCohorts { campaign_id }) => {
             let connection = open_existing(&cli.db)?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&paired_cohorts(&connection, &campaign_id)?)?
             );
@@ -1365,7 +1370,7 @@ fn run(cli: Cli) -> Result<()> {
                 &execution_id,
                 &why,
             )?;
-            println!("{}", serde_json::to_string_pretty(&request)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&request)?);
         }
         Command::Paired(PairedCommand::ShowExecution { execution_id }) => {
             let connection = open_existing(&cli.db)?;
@@ -1377,11 +1382,11 @@ fn run(cli: Cli) -> Result<()> {
                 CancellationTarget::PairedExecution,
                 &execution_id,
             )?)?;
-            println!("{}", serde_json::to_string_pretty(&value)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&value)?);
         }
         Command::Paired(PairedCommand::ListExecutions { cohort_id }) => {
             let connection = open_existing(&cli.db)?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&paired_executions(&connection, &cohort_id)?)?
             );
@@ -1397,7 +1402,7 @@ fn run(cli: Cli) -> Result<()> {
                 bytes,
             };
             let body = read_object(&objects, &object)?;
-            std::io::stdout().write_all(&body)?;
+            papertiger::write_stdout(&body)?;
         }
         Command::Evidence(EvidenceCommand::RecordHistorical {
             binding,
@@ -1409,7 +1414,7 @@ fn run(cli: Cli) -> Result<()> {
             let connection = open_existing(&cli.db)?;
             let (outcome, record) =
                 record_historical_shadow(&connection, &cli.actor, &objects, &binding, &request)?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "outcome": outcome,
@@ -1427,7 +1432,7 @@ fn run(cli: Cli) -> Result<()> {
             let connection = open_existing(&cli.db)?;
             let (outcome, record) =
                 record_domain_shadow(&connection, &cli.actor, &objects, &binding, &request)?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "outcome": outcome,
@@ -1442,7 +1447,7 @@ fn run(cli: Cli) -> Result<()> {
             let connection = open_existing(&cli.db)?;
             let record = domain_shadow(&connection, &objects, &evidence_id)?
                 .with_context(|| format!("unknown domain shadow '{evidence_id}'"))?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Evidence(EvidenceCommand::ReadHistorical {
             evidence_id,
@@ -1451,7 +1456,7 @@ fn run(cli: Cli) -> Result<()> {
             let connection = open_existing(&cli.db)?;
             let record = historical_shadow(&connection, &objects, &evidence_id)?
                 .with_context(|| format!("unknown historical shadow '{evidence_id}'"))?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Projection(ProjectionCommand::Export {
             nomination,
@@ -1481,7 +1486,7 @@ fn run(cli: Cli) -> Result<()> {
             if let Some(path) = output {
                 std::fs::write(&path, &bytes)
                     .with_context(|| format!("write Mise planner projection {}", path.display()))?;
-                println!(
+                papertiger::outln!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "output": path,
@@ -1518,11 +1523,11 @@ fn run(cli: Cli) -> Result<()> {
                     evidence_sha256: sha256,
                 },
             )?;
-            println!("{}", serde_json::to_string_pretty(&proof)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&proof)?);
         }
         Command::Promotion(PromotionCommand::List { campaign }) => {
             let connection = open_existing(&cli.db)?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&nominations(&connection, campaign.as_deref())?)?
             );
@@ -1533,7 +1538,7 @@ fn run(cli: Cli) -> Result<()> {
         }) => {
             let connection = open_existing(&cli.db)?;
             let verified = verify_nomination_integrity(&connection, &objects, &nomination_id)?;
-            println!("{}", serde_json::to_string_pretty(&verified)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&verified)?);
         }
         Command::Promotion(PromotionCommand::DeriveParent {
             nomination,
@@ -1544,7 +1549,7 @@ fn run(cli: Cli) -> Result<()> {
             let successor = existing_or_verified_successor(&connection, &successor_manifest)?;
             let preserved =
                 preserve_parent_promotion_proof(&connection, &objects, &nomination, &successor)?;
-            println!("{}", serde_json::to_string_pretty(&preserved)?);
+            papertiger::outln!("{}", serde_json::to_string_pretty(&preserved)?);
         }
         Command::Promotion(PromotionCommand::VerifyParent {
             papertiger_db,
@@ -1571,7 +1576,7 @@ fn run(cli: Cli) -> Result<()> {
                     evidence_sha256: sha256,
                 },
             )?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "proof": proof,
@@ -1590,7 +1595,7 @@ fn run(cli: Cli) -> Result<()> {
                 derive_promotion_proof(&cli.db, &objects, &containment_policy, &nomination)?;
             let proof_sha256 = proof.sha256()?;
             let evidence_locator = proof.evidence_locator()?;
-            println!(
+            papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "proof": proof,
@@ -1632,38 +1637,41 @@ fn absolute_from(root: &std::path::Path, path: &std::path::Path) -> PathBuf {
     }
 }
 
-fn print_project_status(status: &ProjectStatus) {
-    println!("project {}", status.project_root);
-    println!("database {}", status.database);
-    println!(
+fn print_project_status(status: &ProjectStatus) -> Result<()> {
+    papertiger::outln!("project {}", status.project_root);
+    papertiger::outln!("database {}", status.database);
+    papertiger::outln!(
         "object store {} (directory present: {}; content not verified)",
-        status.object_store, status.object_store_present
+        status.object_store,
+        status.object_store_present
     );
     let Some(authority) = &status.authority else {
-        println!("authority uninitialized");
+        papertiger::outln!("authority uninitialized");
         if let Some(command) = &status.corrective_command {
-            println!("initialize deliberately: {command}");
+            papertiger::outln!("initialize deliberately: {command}");
         }
-        return;
+        return Ok(());
     };
-    println!(
+    papertiger::outln!(
         "authority schema v{}: {} campaign(s), {} nomination(s)",
-        authority.schema_version, authority.campaign_count, authority.nomination_count
+        authority.schema_version,
+        authority.campaign_count,
+        authority.nomination_count
     );
-    println!(
+    papertiger::outln!(
         "open: {} reservation(s), {} deterministic trial(s), {} paired cohort(s)",
         authority.open_reservation_count,
         authority.active_trial_count,
         authority.active_paired_cohort_count
     );
     if authority.integrity_failure_count > 0 {
-        println!(
+        papertiger::outln!(
             "integrity failures: {} (inspect before continuing)",
             authority.integrity_failure_count
         );
     }
     if !authority.candidate_dispositions.is_empty() {
-        println!(
+        papertiger::outln!(
             "candidates: {}",
             authority
                 .candidate_dispositions
@@ -1674,14 +1682,17 @@ fn print_project_status(status: &ProjectStatus) {
         );
     }
     for campaign in &authority.recent_campaigns {
-        println!(
+        papertiger::outln!(
             "campaign {} {} {}",
-            campaign.campaign_id, campaign.admitted_at, campaign.manifest_sha256
+            campaign.campaign_id,
+            campaign.admitted_at,
+            campaign.manifest_sha256
         );
     }
     if authority.recent_campaigns_truncated {
-        println!("(older campaigns omitted)");
+        papertiger::outln!("(older campaigns omitted)");
     }
+    Ok(())
 }
 
 fn status_metadata(path: &std::path::Path) -> Result<Option<std::fs::Metadata>> {

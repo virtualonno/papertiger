@@ -6,6 +6,13 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A reader that closes the output early (`papertiger list | head`) now ends
+  the command quietly with success instead of a panic (exit 101), in both
+  `papertiger` and `papertiger-mise`. A mutation whose receipt could not be
+  printed has still committed; do not replay it.
+
 ## [0.20.0] - 2026-09-24
 
 Planner schema v13 and Mise schema v10 are unchanged; no `init` is needed.

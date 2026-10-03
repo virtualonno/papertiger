@@ -838,7 +838,7 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
     if t.kind != "work" {
         extra.push_str(&format!(" [{}]", t.kind));
     }
-    println!(
+    pt::outln!(
         "{} #{} {}{}",
         status_glyph(&t.status),
         t.seq,
@@ -859,10 +859,10 @@ fn pickup_label(pickup: Option<&pt::TaskPickup>) -> String {
     }
 }
 
-fn print_task_context(context: &pt::TaskContext) {
+fn print_task_context(context: &pt::TaskContext) -> Result<()> {
     let task = &context.task;
     if let Some(pickup) = &task.pickup {
-        println!(
+        pt::outln!(
             "pickup:{}; advisory, liveness unknown",
             pickup_label(Some(pickup))
         );
@@ -909,7 +909,7 @@ fn print_task_context(context: &pt::TaskContext) {
     if task.kind != "work" {
         extra.push_str(&format!(" [{}]", task.kind));
     }
-    println!(
+    pt::outln!(
         "{} #{} {}{}",
         status_glyph(&task.status),
         task.seq,
@@ -922,7 +922,7 @@ fn print_task_context(context: &pt::TaskContext) {
             .as_deref()
             .map(|source| format!("intent [{source}]"))
             .unwrap_or_else(|| "intent".to_owned());
-        println!("  {label}: {}", task.intent.replace('\n', "\n  "));
+        pt::outln!("  {label}: {}", task.intent.replace('\n', "\n  "));
     }
     if let Some(result) = task.result.as_deref() {
         let label = task
@@ -930,9 +930,9 @@ fn print_task_context(context: &pt::TaskContext) {
             .as_deref()
             .map(|source| format!("result [{source}]"))
             .unwrap_or_else(|| "result".to_owned());
-        println!("  {label}: {}", result.replace('\n', "\n  "));
+        pt::outln!("  {label}: {}", result.replace('\n', "\n  "));
     }
-    println!("  kind: {}", task.kind);
+    pt::outln!("  kind: {}", task.kind);
     for (label, event) in [
         ("created", context.activity.created_event.as_ref()),
         ("last event", context.activity.last_event.as_ref()),
@@ -940,7 +940,7 @@ fn print_task_context(context: &pt::TaskContext) {
         ("completed event", context.activity.completed_event.as_ref()),
     ] {
         if let Some(event) = event {
-            println!(
+            pt::outln!(
                 "  {label}: {} by {}{} (@{})",
                 event.at,
                 event.actor,
@@ -954,7 +954,7 @@ fn print_task_context(context: &pt::TaskContext) {
         }
     }
     if let Some(parent) = &context.parent {
-        println!(
+        pt::outln!(
             "  parent {} #{} {}",
             status_glyph(&parent.status),
             parent.seq,
@@ -962,7 +962,7 @@ fn print_task_context(context: &pt::TaskContext) {
         );
     }
     if let Some(replacement) = &context.replacement {
-        println!(
+        pt::outln!(
             "  replacement {} #{} {}",
             status_glyph(&replacement.status),
             replacement.seq,
@@ -970,13 +970,13 @@ fn print_task_context(context: &pt::TaskContext) {
         );
     }
     if task.priority != 0 {
-        println!("  priority: {}", task.priority);
+        pt::outln!("  priority: {}", task.priority);
     }
     if !context.tags.is_empty() {
-        println!("  tags: {}", context.tags.join(", "));
+        pt::outln!("  tags: {}", context.tags.join(", "));
     }
     for dependency in &context.dependencies {
-        println!(
+        pt::outln!(
             "  depends {} #{} {}",
             status_glyph(&dependency.status),
             dependency.seq,
@@ -999,9 +999,15 @@ fn print_task_context(context: &pt::TaskContext) {
             .as_ref()
             .map(|note| format!(" ({note})"))
             .unwrap_or_default();
-        println!(
+        pt::outln!(
             "  gate [{}] {} ({}): {}{}{}{}",
-            gate.status, gate.name, gate.kind, gate.requirement, evidence, digest, note
+            gate.status,
+            gate.name,
+            gate.kind,
+            gate.requirement,
+            evidence,
+            digest,
+            note
         );
     }
     for blocker in &context.blockers {
@@ -1020,9 +1026,14 @@ fn print_task_context(context: &pt::TaskContext) {
             .as_ref()
             .map(|note| format!(" ({note})"))
             .unwrap_or_default();
-        println!(
+        pt::outln!(
             "  blocker [{}] {}: {}{}{}{}",
-            blocker.status, blocker.name, blocker.condition, evidence, digest, note
+            blocker.status,
+            blocker.name,
+            blocker.condition,
+            evidence,
+            digest,
+            note
         );
     }
     for commit in &context.commit_associations {
@@ -1031,13 +1042,15 @@ fn print_task_context(context: &pt::TaskContext) {
             .as_ref()
             .map(|note| format!(" ({note})"))
             .unwrap_or_default();
-        println!(
+        pt::outln!(
             "  commit {} {}{}",
-            commit.repository, commit.commit_oid, note
+            commit.repository,
+            commit.commit_oid,
+            note
         );
     }
     for reference in &context.external_references {
-        println!(
+        pt::outln!(
             "  reference [{}] {}{}",
             reference.kind,
             reference.locator,
@@ -1049,7 +1062,7 @@ fn print_task_context(context: &pt::TaskContext) {
         );
     }
     for projection in &context.mise_projections {
-        println!(
+        pt::outln!(
             "  Mise [{}] {} candidate {} campaign {}{}",
             projection.projection.disposition.as_str(),
             projection.projection_sha256,
@@ -1064,7 +1077,7 @@ fn print_task_context(context: &pt::TaskContext) {
         );
     }
     for child in &context.children {
-        println!(
+        pt::outln!(
             "  child {} #{} {}",
             status_glyph(&child.status),
             child.seq,
@@ -1078,7 +1091,7 @@ fn print_task_context(context: &pt::TaskContext) {
         .take(5)
         .collect::<Vec<_>>();
     for event in notes.into_iter().rev() {
-        println!(
+        pt::outln!(
             "  note {} {}: {}",
             short_event_time(&event.at),
             event.actor,
@@ -1090,11 +1103,12 @@ fn print_task_context(context: &pt::TaskContext) {
         );
     }
     if context.recent_events_truncated {
-        println!(
+        pt::outln!(
             "  (older events omitted: papertiger log --task {})",
             task.seq
         );
     }
+    Ok(())
 }
 
 /// Windows gives the main thread 1 MiB, which clap's derived command tree for
@@ -1114,7 +1128,10 @@ fn main() -> Result<()> {
 fn cli_main() -> Result<()> {
     user_setup::verify_runtime()?;
     let cli = Cli::parse();
-    run(cli).map_err(pt::normalize_sqlite_lock_error)
+    match run(cli) {
+        Err(error) if pt::is_output_closed(&error) => Ok(()),
+        result => result.map_err(pt::normalize_sqlite_lock_error),
+    }
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -1131,7 +1148,7 @@ fn run(cli: Cli) -> Result<()> {
                     "setup-user selects its own installation and personal authority; omit planning selectors and use --home <directory>"
                 );
             }
-            println!(
+            pt::outln!(
                 "{}",
                 serde_json::to_string_pretty(&user_setup::run(home.as_deref(), *dry_run, false)?)?
             );
@@ -1149,7 +1166,7 @@ fn run(cli: Cli) -> Result<()> {
                     "uninstall-user preserves planning data; omit planning selectors and use --home <directory>"
                 );
             }
-            println!(
+            pt::outln!(
                 "{}",
                 serde_json::to_string_pretty(&user_setup::run(home.as_deref(), *dry_run, true)?)?
             );
@@ -1169,7 +1186,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         pt::validate_session(session)?;
     }
     if matches!(cli.cmd, Cmd::Schema) {
-        println!(
+        pt::outln!(
             "{}",
             include_str!("../docs/schemas/planner.json").trim_end()
         );
@@ -1234,7 +1251,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         );
     }
     macro_rules! mutation_output {
-        ($($args:tt)*) => { if !json { println!($($args)*); } };
+        ($($args:tt)*) => { if !json { pt::outln!($($args)*); } };
     }
 
     if let Cmd::SetupProject {
@@ -1267,19 +1284,20 @@ fn run_planner(cli: Cli) -> Result<()> {
             skill_target: *skill_target,
         })?;
         if json {
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            pt::outln!("{}", serde_json::to_string_pretty(&result)?);
         } else {
             let mode = if result.dry_run { "planned" } else { "applied" };
-            println!(
+            pt::outln!(
                 "papertiger {} project setup at {}",
-                mode, result.project_root
+                mode,
+                result.project_root
             );
             for action in &result.actions {
-                println!("  {:?} {}", action.action, action.path);
+                pt::outln!("  {:?} {}", action.action, action.path);
             }
-            println!("next:");
+            pt::outln!("next:");
             for action in &result.next_actions {
-                println!("  - {action}");
+                pt::outln!("  - {action}");
             }
         }
         return Ok(());
@@ -1311,23 +1329,24 @@ fn run_planner(cli: Cli) -> Result<()> {
             dry_run: *dry_run,
         })?;
         if json {
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            pt::outln!("{}", serde_json::to_string_pretty(&result)?);
         } else {
             let mode = if result.dry_run { "planned" } else { "applied" };
-            println!(
+            pt::outln!(
                 "papertiger {} project uninstall at {}",
-                mode, result.project_root
+                mode,
+                result.project_root
             );
             for action in &result.actions {
-                println!("  {:?} {}", action.action, action.path);
+                pt::outln!("  {:?} {}", action.action, action.path);
             }
-            println!("retained:");
+            pt::outln!("retained:");
             for retained in &result.retained {
-                println!("  - {retained}");
+                pt::outln!("  - {retained}");
             }
-            println!("next:");
+            pt::outln!("next:");
             for action in &result.next_actions {
-                println!("  - {action}");
+                pt::outln!("  - {action}");
             }
         }
         return Ok(());
@@ -1379,12 +1398,12 @@ fn run_planner(cli: Cli) -> Result<()> {
         let conn = pt::open_for_init(&db_path)?;
         match pt::init_at(&conn, &db_path)? {
             pt::InitOutcome::Created => {
-                println!("initialized {db_path} (schema v{})", pt::SCHEMA_VERSION)
+                pt::outln!("initialized {db_path} (schema v{})", pt::SCHEMA_VERSION)
             }
             pt::InitOutcome::Migrated { from, to } => {
-                println!("migrated {db_path} from schema v{from} to v{to}")
+                pt::outln!("migrated {db_path} from schema v{from} to v{to}")
             }
-            pt::InitOutcome::Current => println!(
+            pt::InitOutcome::Current => pt::outln!(
                 "{db_path} is already a Papertiger authority at schema v{}; nothing changed",
                 pt::SCHEMA_VERSION
             ),
@@ -1395,9 +1414,9 @@ fn run_planner(cli: Cli) -> Result<()> {
     if let Cmd::Backup { output } = &cli.cmd {
         let receipt = pt::backup_authority(std::path::Path::new(&db_path), output)?;
         if json {
-            println!("{}", serde_json::to_string_pretty(&receipt)?);
+            pt::outln!("{}", serde_json::to_string_pretty(&receipt)?);
         } else {
-            println!(
+            pt::outln!(
                 "backed up {} to {} (schema v{}, {} bytes, SHA-256 {}); historical task and evidence semantics were preserved without validation",
                 receipt.source,
                 receipt.output,
@@ -1422,7 +1441,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             pt::repair_write_guards(&conn, &actor, why)?
         };
         if json {
-            println!(
+            pt::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "schema": "papertiger.guard_repair.v1",
@@ -1432,7 +1451,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 }))?
             );
         } else if drifted.is_empty() {
-            println!("write guards are intact; nothing changed");
+            pt::outln!("write guards are intact; nothing changed");
         } else {
             let verb = if *dry_run {
                 "would reinstall"
@@ -1445,7 +1464,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     (pt::GuardDriftState::Foreign, false) => "removed",
                     _ => verb,
                 };
-                println!("{action} {} trigger {}", guard.state.as_str(), guard.name);
+                pt::outln!("{action} {} trigger {}", guard.state.as_str(), guard.name);
             }
         }
         return Ok(());
@@ -1490,23 +1509,23 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Status {} => {
             let status = pt::status_response(&conn, &db_path)?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&status)?);
+                pt::outln!("{}", serde_json::to_string_pretty(&status)?);
                 return Ok(());
             }
-            println!(
+            pt::outln!(
                 "papertiger {} | schema v{} | {}",
                 status.authority.papertiger_version,
                 status.authority.schema_version,
                 status.authority.resolved_path
             );
             if status.active_plans.is_empty() {
-                println!(
+                pt::outln!(
                     "no active plans; inspect `papertiger plan list` or create one with `papertiger plan add <slug> <title>`"
                 );
             }
             for active in &status.active_plans {
                 let counts = &active.counts;
-                println!(
+                pt::outln!(
                     "plan {}: {} [proposed {}, in_progress {}, done {}, retired {}, rejected {}]",
                     active.plan.slug,
                     active.plan.title,
@@ -1517,7 +1536,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     counts.rejected
                 );
                 for entry in &active.in_progress.parents.entries {
-                    println!(
+                    pt::outln!(
                         "> parent #{} {}{}",
                         entry.task.seq,
                         entry.task.title,
@@ -1525,7 +1544,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     );
                 }
                 for entry in &active.in_progress.leaves.entries {
-                    println!(
+                    pt::outln!(
                         "> leaf #{} {}{}",
                         entry.task.seq,
                         entry.task.title,
@@ -1533,10 +1552,10 @@ fn run_planner(cli: Cli) -> Result<()> {
                     );
                 }
                 for entry in &active.ready.entries {
-                    println!("· #{} {}", entry.task.seq, entry.task.title);
+                    pt::outln!("· #{} {}", entry.task.seq, entry.task.title);
                 }
                 if !active.ready.complete {
-                    println!(
+                    pt::outln!(
                         "  ... {} ready task(s) omitted; run `{}`",
                         active.ready.omitted_count,
                         active
@@ -1548,7 +1567,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 }
             }
             for note in &status.recent_notes.entries {
-                println!(
+                pt::outln!(
                     "note @{} {} {}: {}",
                     note.event_id,
                     short_event_time(&note.at),
@@ -1557,7 +1576,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 );
             }
             if !status.recent_notes.complete {
-                println!(
+                pt::outln!(
                     "... {} older note(s) omitted; run `{}` and follow its event cursor",
                     status.recent_notes.omitted_count,
                     status
@@ -1581,7 +1600,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             PlanCmd::List { plan } => {
                 let plans = pt::plan_inventory(&conn, plan.as_deref())?;
                 if json {
-                    println!(
+                    pt::outln!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "schema": "papertiger.plan_list.v1", "total": plans.len(), "plans": plans
@@ -1589,7 +1608,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     );
                 } else {
                     for plan in plans {
-                        println!("{:8} {}: {}", plan.status, plan.slug, plan.title);
+                        pt::outln!("{:8} {}: {}", plan.status, plan.slug, plan.title);
                     }
                 }
             }
@@ -1700,16 +1719,16 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Show { task, no_history } => {
             let seq = pt::parse_task_ref(&task)?;
             if no_history {
-                println!(
+                pt::outln!(
                     "{}",
                     serde_json::to_string_pretty(&pt::task_current(&conn, seq)?)?
                 );
             } else {
                 let context = pt::task_context(&conn, seq)?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&context)?);
+                    pt::outln!("{}", serde_json::to_string_pretty(&context)?);
                 } else {
-                    print_task_context(&context);
+                    print_task_context(&context)?;
                 }
             }
         }
@@ -1731,10 +1750,10 @@ fn run_planner(cli: Cli) -> Result<()> {
                     after_cursor.as_deref(),
                 )?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&response)?);
+                    pt::outln!("{}", serde_json::to_string_pretty(&response)?);
                 } else {
                     for item in &response.tasks {
-                        println!(
+                        pt::outln!(
                             "{} #{} [{}; {}] {}",
                             status_glyph(&item.task.status),
                             item.task.seq,
@@ -1743,9 +1762,9 @@ fn run_planner(cli: Cli) -> Result<()> {
                             item.task.title
                         );
                     }
-                    println!("{} total; {} remaining", response.total, response.remaining);
+                    pt::outln!("{} total; {} remaining", response.total, response.remaining);
                     if let Some(command) = &response.continuation_command {
-                        println!("continue with: {}", command.replacen(" --json", "", 1));
+                        pt::outln!("continue with: {}", command.replacen(" --json", "", 1));
                     }
                 }
                 return Ok(());
@@ -1758,7 +1777,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     tag.as_deref(),
                     &sort,
                 )?;
-                println!("{}", serde_json::to_string_pretty(&response)?);
+                pt::outln!("{}", serde_json::to_string_pretty(&response)?);
                 return Ok(());
             }
             let (plan_id, _) = pt::resolve_plan(&conn, plan.as_deref())?;
@@ -1785,24 +1804,24 @@ fn run_planner(cli: Cli) -> Result<()> {
                 pt::search_tasks(&conn, &query, plan.as_deref(), status.as_deref(), limit)?;
             if json {
                 if compact {
-                    println!("{}", serde_json::to_string_pretty(&response.compact())?);
+                    pt::outln!("{}", serde_json::to_string_pretty(&response.compact())?);
                     return Ok(());
                 }
-                println!("{}", serde_json::to_string_pretty(&response)?);
+                pt::outln!("{}", serde_json::to_string_pretty(&response)?);
                 return Ok(());
             }
             if response.results.is_empty() {
-                println!("no matching tasks");
+                pt::outln!("no matching tasks");
             }
             for result in &response.results {
-                println!(
+                pt::outln!(
                     "{} #{} [{}] {}",
                     status_glyph(&result.task.status),
                     result.task.seq,
                     result.plan,
                     result.task.title
                 );
-                println!(
+                pt::outln!(
                     "  matched {} (score {}); {}: {}",
                     result.matched_fields.join(", "),
                     result.score,
@@ -1811,7 +1830,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 );
             }
             if response.truncated {
-                println!(
+                pt::outln!(
                     "{} matches; showing {}. Increase --limit up to 200.",
                     response.total_matches,
                     response.results.len()
@@ -1982,7 +2001,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     })?
                     .collect::<rusqlite::Result<_>>()?;
                 for (name, kind, status, req) in rows {
-                    println!("[{status}] {name} ({kind}): {req}");
+                    pt::outln!("[{status}] {name} ({kind}): {req}");
                 }
             }
         },
@@ -2043,7 +2062,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             BlockerCmd::List { task } => {
                 let task = pt::get_task(&conn, pt::parse_task_ref(&task)?)?;
                 for blocker in pt::task_blockers(&conn, task.task_id)? {
-                    println!(
+                    pt::outln!(
                         "[{}] {}: {}{}",
                         blocker.status,
                         blocker.name,
@@ -2094,22 +2113,24 @@ fn run_planner(cli: Cli) -> Result<()> {
             ReferenceCmd::List { task } => {
                 let references = pt::external_references(&conn, pt::parse_task_ref(&task)?)?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&references)?);
+                    pt::outln!("{}", serde_json::to_string_pretty(&references)?);
                 } else {
                     for reference in references {
-                        println!("[{}] {}", reference.kind, reference.locator);
+                        pt::outln!("[{}] {}", reference.kind, reference.locator);
                     }
                 }
             }
             ReferenceCmd::Find { locator } => {
                 let matches = pt::find_external_references(&conn, &locator)?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&matches)?);
+                    pt::outln!("{}", serde_json::to_string_pretty(&matches)?);
                 } else {
                     for item in matches {
-                        println!(
+                        pt::outln!(
                             "#{} [{}] {}",
-                            item.task_seq, item.reference.kind, item.task_title
+                            item.task_seq,
+                            item.reference.kind,
+                            item.task_title
                         );
                     }
                 }
@@ -2148,14 +2169,14 @@ fn run_planner(cli: Cli) -> Result<()> {
                 let seq = pt::parse_task_ref(&task)?;
                 let commits = pt::commit_associations(&conn, seq)?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&commits)?);
+                    pt::outln!("{}", serde_json::to_string_pretty(&commits)?);
                 } else {
                     for commit in commits {
                         let note = commit
                             .note
                             .map(|note| format!(" - {note}"))
                             .unwrap_or_default();
-                        println!(
+                        pt::outln!(
                             "{} {} {}{}",
                             short_event_time(&commit.recorded_at),
                             commit.repository,
@@ -2168,10 +2189,10 @@ fn run_planner(cli: Cli) -> Result<()> {
             CommitCmd::Find { commit_oid, repo } => {
                 let matches = pt::find_commit_associations(&conn, &commit_oid, repo.as_deref())?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&matches)?);
+                    pt::outln!("{}", serde_json::to_string_pretty(&matches)?);
                 } else {
                     for found in matches {
-                        println!(
+                        pt::outln!(
                             "#{} {} ({}) {}",
                             found.task_seq,
                             found.task_title,
@@ -2207,7 +2228,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 None => Some(pt::resolve_plan(&conn, None)?),
             };
             let Some((plan_id, slug)) = selected_plan else {
-                println!(
+                pt::outln!(
                     "{}",
                     serde_json::to_string_pretty(&pt::FocusResponse::no_active_plan())?
                 );
@@ -2215,15 +2236,15 @@ fn run_planner(cli: Cli) -> Result<()> {
             };
             let response = pt::focus(&conn, plan_id, limit, include_blocked, session.as_deref())?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&response)?);
+                pt::outln!("{}", serde_json::to_string_pretty(&response)?);
             } else if response.projection.entries.is_empty() {
-                println!("nothing actionable");
+                pt::outln!("nothing actionable");
             } else {
-                println!("focus {slug}");
+                pt::outln!("focus {slug}");
                 let mut current = None::<String>;
                 for entry in response.projection.entries {
                     if current.as_deref() != Some(entry.readiness.as_str()) {
-                        println!("{}:", entry.readiness);
+                        pt::outln!("{}:", entry.readiness);
                         current = Some(entry.readiness.clone());
                     }
                     let blockers = if entry.blockers.is_empty() {
@@ -2231,7 +2252,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     } else {
                         format!(" [blocked by {}]", entry.blockers.join(" "))
                     };
-                    println!(
+                    pt::outln!(
                         "  #{} {} [priority {} unlocks {} downstream {} gates {}]{}{}",
                         entry.task.seq,
                         entry.task.title,
@@ -2246,7 +2267,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 if response.projection.omitted_count > 0
                     && let Some(command) = response.projection.continuation_command
                 {
-                    println!(
+                    pt::outln!(
                         "  ... {} actionable task(s) omitted; run `{command}`",
                         response.projection.omitted_count
                     );
@@ -2269,7 +2290,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         },
         Cmd::Tree { plan } => {
             let (plan_id, slug) = pt::resolve_plan(&conn, plan.as_deref())?;
-            println!("{slug}");
+            pt::outln!("{slug}");
             print_tree(&conn, plan_id, None, 1)?;
         }
         Cmd::Note { text, source, task } => {
@@ -2293,7 +2314,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 after_cursor.as_deref(),
             )?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&log)?);
+                pt::outln!("{}", serde_json::to_string_pretty(&log)?);
                 return Ok(());
             }
             for event in &log.events {
@@ -2307,7 +2328,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     .as_ref()
                     .map(|payload| format!(" {payload}"))
                     .unwrap_or_default();
-                println!(
+                pt::outln!(
                     "@{} {} {} {}/{}{}{}",
                     event.event_id,
                     short_event_time(&event.at),
@@ -2326,7 +2347,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 } else {
                     "--before-cursor"
                 };
-                println!(
+                pt::outln!(
                     "more events available: papertiger log {flag} {}{}",
                     cursor.token,
                     task_seq
@@ -2338,22 +2359,22 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Audit => {
             let findings = pt::audit(&conn)?;
             if json {
-                println!(
+                pt::outln!(
                     "{}",
                     serde_json::json!({"schema": "papertiger.audit.v1", "findings": findings})
                 );
                 return Ok(());
             }
             if findings.is_empty() {
-                println!("no findings");
+                pt::outln!("no findings");
             }
             for f in findings {
-                println!("[{}] {}", f.kind, f.detail);
+                pt::outln!("[{}] {}", f.kind, f.detail);
             }
         }
         Cmd::History { cmd } => match cmd {
             HistoryCmd::Inspect { event_id } => {
-                println!(
+                pt::outln!(
                     "{}",
                     serde_json::to_string_pretty(&pt::history_recovery::inspect(&conn, event_id)?)?
                 );
@@ -2371,7 +2392,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     &why,
                 )?;
                 if !json {
-                    println!(
+                    pt::outln!(
                         "quarantined event {event_id}; original retained verbatim in recovery event {recovery}; no historical timestamp, association, or task state was inferred"
                     );
                 }
@@ -2438,9 +2459,9 @@ fn run_planner(cli: Cli) -> Result<()> {
                 });
             }
             if json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
+                pt::outln!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                println!(
+                pt::outln!(
                     "evidence verification: {} total, {} verified, {} failed, {} unsupported ({})",
                     report.summary.binding_count,
                     report.summary.verified_count,
@@ -2452,17 +2473,17 @@ fn run_planner(cli: Cli) -> Result<()> {
                         "incomplete"
                     }
                 );
-                println!(
+                pt::outln!(
                     "status counts: {}",
                     serde_json::to_string(&report.summary.status_counts)?
                 );
                 if !report.summary.unsupported_scheme_counts.is_empty() {
-                    println!(
+                    pt::outln!(
                         "unsupported scheme counts: {}",
                         serde_json::to_string(&report.summary.unsupported_scheme_counts)?
                     );
                 }
-                println!(
+                pt::outln!(
                     "details: {} of {} eligible shown from index {}; {} remaining; classification={}, task-state={}",
                     report.projection.returned_count,
                     report.projection.eligible_count,
@@ -2472,7 +2493,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     report.projection.task_state.as_str()
                 );
                 for binding in &report.projection.bindings {
-                    println!(
+                    pt::outln!(
                         "  #{} {} '{}' [{}/{}] {}",
                         binding.task_seq,
                         binding.entity,
@@ -2482,10 +2503,10 @@ fn run_planner(cli: Cli) -> Result<()> {
                         binding.locator
                     );
                     if let Some(detail) = &binding.detail {
-                        println!("    {detail}");
+                        pt::outln!("    {detail}");
                     }
                     for command in &binding.corrective_commands {
-                        println!(
+                        pt::outln!(
                             "    corrective argv: {} {}",
                             command.program,
                             serde_json::to_string(&command.arguments)?
@@ -2493,7 +2514,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     }
                 }
                 if let Some(command) = &report.projection.continuation_command {
-                    println!(
+                    pt::outln!(
                         "  continuation argv: {} {}",
                         command.program,
                         serde_json::to_string(&command.arguments)?
@@ -2522,9 +2543,9 @@ fn run_planner(cli: Cli) -> Result<()> {
                     );
                 }
                 let receipt = pt::write_export_file(&output, &dump, replace)?;
-                println!("{}", serde_json::to_string_pretty(&receipt)?);
+                pt::outln!("{}", serde_json::to_string_pretty(&receipt)?);
             } else {
-                println!("{}", serde_json::to_string_pretty(&dump)?);
+                pt::outln!("{}", serde_json::to_string_pretty(&dump)?);
             }
         }
         Cmd::Import { file } => {
@@ -2559,12 +2580,12 @@ fn run_planner(cli: Cli) -> Result<()> {
                 let task_seq = pt::parse_task_ref(&task)?;
                 let records = pt::task_mise_projection_summaries(&conn, task_seq)?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&records)?);
+                    pt::outln!("{}", serde_json::to_string_pretty(&records)?);
                 } else if records.is_empty() {
-                    println!("task #{task_seq} has no Mise projections");
+                    pt::outln!("task #{task_seq} has no Mise projections");
                 } else {
                     for record in records {
-                        println!(
+                        pt::outln!(
                             "{} [{}] campaign {} candidate {}{}",
                             record.projection_sha256,
                             record.projection.disposition.as_str(),
@@ -2585,12 +2606,12 @@ fn run_planner(cli: Cli) -> Result<()> {
                     pt::mise_projection(&conn, &projection_sha256)?.with_context(|| {
                         format!("unknown Mise planner projection '{projection_sha256}'")
                     })?;
-                println!("{}", serde_json::to_string_pretty(&record)?);
+                pt::outln!("{}", serde_json::to_string_pretty(&record)?);
             }
         },
     }
     if json && let Some(recorder) = recorder {
-        println!("{}", serde_json::to_string_pretty(&recorder.receipt()?)?);
+        pt::outln!("{}", serde_json::to_string_pretty(&recorder.receipt()?)?);
     }
     Ok(())
 }
@@ -2683,7 +2704,7 @@ fn print_tree(conn: &Connection, plan_id: i64, parent: Option<i64>, depth: usize
         } else {
             String::new()
         };
-        println!(
+        pt::outln!(
             "{}{} #{seq} {title}{progress}",
             "  ".repeat(depth),
             status_glyph(&status)
