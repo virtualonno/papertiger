@@ -91,7 +91,10 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   `disputed-result:<handle>` blocker for its dependents and its parent.
   `list --unreviewed` and `focus --unreviewed` select claims needing review.
   JSON: `review` on show, focus entries (with `unreviewed_dependencies`) and
-  list items.
+  list items. Claims recorded before 1.0 are `legacy` (their events carry no
+  model source): their results are not flagged for review, open legacy
+  filings still are, and same-agent review of a legacy claim cannot be
+  detected.
 - `--intent-source`, `--clear-intent-source`, `--result-source` and
   `note --source` are removed, with the tasks table's `intent_source` and
   `result_source` columns (dropped by the v14 rebuild) and the matching dump

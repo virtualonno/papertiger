@@ -353,6 +353,42 @@ fn model_report_groups_claims_by_normalized_model_and_separates_same_model_revie
 }
 
 #[test]
+fn claims_recorded_before_authorship_was_required_are_legacy() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
+    let seq = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Cache reads", "feature"),
+    )
+    .unwrap();
+    pt::start_task(&conn, "test", seq, None, None).unwrap();
+    pt::complete_task(&conn, "test", seq, Some("reads cached")).unwrap();
+    let task = pt::get_task(&conn, seq).unwrap();
+    let review = pt::task_review(&conn, &task).unwrap();
+    assert!(!review.filing.legacy, "1.0 writes record a model source");
+    assert!(!review.result.as_ref().unwrap().legacy);
+
+    // A 0.20 completion recorded an opt-in model without a model source.
+    // Explicit API admission for intentional disposable-fixture construction.
+    pt::begin_mutation(&conn).unwrap().commit().unwrap();
+    conn.execute(
+        "INSERT INTO events
+         (at, actor, entity, entity_id, entity_plan, entity_seq, kind, why, payload)
+         SELECT '2026-01-01T00:00:00.000Z', 'old-agent', 'task', task_id, 'p', seq,
+                'status', NULL, '{\"to\":\"done\",\"model\":\"gpt-5\"}'
+           FROM tasks WHERE seq=?1",
+        [seq],
+    )
+    .unwrap();
+    let result = pt::task_review(&conn, &task).unwrap().result.unwrap();
+    assert!(result.legacy && result.is_legacy());
+    assert_eq!(result.state, pt::ReviewState::Unreviewed);
+    assert_eq!(result.author_model.as_deref(), Some("gpt-5"));
+}
+
+#[test]
 fn focus_ranks_now_before_next_before_later_within_readiness() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();

@@ -55,12 +55,16 @@ pub struct ClaimReview {
     /// Whether that reviewer ran the same model as the author, compared by
     /// [`normalized_model`]; absent when either model is unknown.
     pub same_model: Option<bool>,
+    /// Made before 1.0 required authorship: its event records no model
+    /// source, so any recorded model was opt-in and a review cannot tell
+    /// whether the reviewer is the same agent.
+    pub legacy: bool,
 }
 
 impl ClaimReview {
-    /// A claim recorded before authorship existed, with no later review.
-    pub fn is_legacy(&self) -> bool {
-        self.author_model.is_none() && self.reviewer_model.is_none()
+    /// A claim recorded before authorship was required.
+    pub const fn is_legacy(&self) -> bool {
+        self.legacy
     }
 }
 
@@ -135,6 +139,8 @@ struct Author {
     actor: String,
     session: Option<String>,
     model: Option<String>,
+    /// Absent on events recorded before authorship was required.
+    model_source: Option<String>,
 }
 
 impl Author {
@@ -177,6 +183,7 @@ fn task_events(conn: &Connection, seq: i64) -> Result<Vec<TaskEvent>> {
                     actor,
                     session: authorship.session,
                     model: authorship.model,
+                    model_source: authorship.model_source,
                 },
                 kind,
                 payload,
@@ -195,6 +202,7 @@ fn claim(author: &Author) -> ClaimReview {
         author_model: author.model.clone(),
         reviewer_model: None,
         same_model: None,
+        legacy: author.model_source.is_none(),
     }
 }
 
@@ -235,6 +243,7 @@ pub fn task_review(conn: &Connection, task: &Task) -> Result<TaskReview> {
             author_model: None,
             reviewer_model: None,
             same_model: None,
+            legacy: true,
         },
     };
     let by_other = |author: &Author| {
@@ -359,6 +368,7 @@ pub fn review_task(
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned),
         model: None,
+        model_source: None,
     };
     // A claim imported without its history has no known author to compare.
     if let Some(claim_author) = &claim_author

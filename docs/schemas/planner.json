@@ -2572,13 +2572,18 @@
             "boolean",
             "null"
           ]
+        },
+        "legacy": {
+          "description": "Recorded before 1.0 required authorship; same-agent review of it cannot be detected.",
+          "type": "boolean"
         }
       },
       "required": [
         "state",
         "author_model",
         "reviewer_model",
-        "same_model"
+        "same_model",
+        "legacy"
       ],
       "additionalProperties": false
     },

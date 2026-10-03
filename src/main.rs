@@ -962,6 +962,9 @@ fn claim_review_line(claim: &pt::ClaimReview) -> String {
         claim.state.as_str(),
         claim.author_model.as_deref().unwrap_or("model unknown")
     );
+    if claim.legacy {
+        line.push_str("; recorded before 1.0");
+    }
     if let Some(reviewer) = &claim.reviewer_model {
         line.push_str(&format!("; last checked by {reviewer}"));
         if claim.same_model == Some(true) {
