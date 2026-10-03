@@ -119,6 +119,9 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
 
 ### Added
 
+- The installed agent reference is rewritten for the 1.0 surface and cut from
+  about 26 KB to about 11 KB of use-only guidance; the skill teaches kinds,
+  handles, authorship, review and `brief`.
 - A test checks every `papertiger` invocation and command code span in the
   shipped skill, agent integration reference and README against the CLI's
   command tree, so a guide naming a removed command or flag fails the build.
