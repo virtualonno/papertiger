@@ -595,9 +595,9 @@ enum PromotionCommand {
         /// Successor campaign manifest JSON file.
         #[arg(long)]
         successor_manifest: PathBuf,
-        /// Papertiger task number owning the gate.
+        /// Papertiger task owning the gate: N, #N or its handle (e.g. F-N).
         #[arg(long)]
-        task: i64,
+        task: String,
         /// Closed gate name.
         #[arg(long)]
         gate: String,
@@ -630,9 +630,9 @@ enum PromotionCommand {
         /// Nomination ID.
         #[arg(long)]
         nomination: String,
-        /// Papertiger task number owning the gate.
+        /// Papertiger task owning the gate: N, #N or its handle (e.g. F-N).
         #[arg(long)]
-        task: i64,
+        task: String,
         /// Closed gate name.
         #[arg(long)]
         gate: String,
@@ -659,6 +659,15 @@ fn main() {
         eprintln!("error: {}", render_error(&error));
         std::process::exit(1);
     }
+}
+
+/// Resolve a planner task reference (`N`, `#N` or a handle) against the
+/// planner authority, opened read-only, so a stale handle is refused.
+fn planner_task_ref(papertiger_db: &std::path::Path, task: &str) -> Result<i64> {
+    let database = papertiger_db
+        .to_str()
+        .context("Papertiger database path is not valid UTF-8")?;
+    papertiger::resolve_task_ref(&papertiger::open_existing_read_only(database)?, task)
 }
 
 /// Render an error chain as `{:#}` does, except that an authority trigger's
@@ -1509,6 +1518,7 @@ fn run(cli: Cli) -> Result<()> {
             objects,
             containment_policy,
         }) => {
+            let task = planner_task_ref(&papertiger_db, &task)?;
             let containment_policy = read_containment_policy(&containment_policy)?;
             let proof = verify_promotion_gate(
                 &cli.db,
@@ -1561,6 +1571,7 @@ fn run(cli: Cli) -> Result<()> {
             sha256,
             objects,
         }) => {
+            let task = planner_task_ref(&papertiger_db, &task)?;
             let connection = open_existing_read_only(&cli.db)?;
             let successor = existing_or_verified_successor(&connection, &successor_manifest)?;
             let (proof, proof_object, verified_gate) = verify_parent_promotion_gate(

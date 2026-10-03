@@ -75,6 +75,8 @@ pub struct TaskActivity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskSummary {
     pub seq: i64,
+    /// Kind letter and number, e.g. `F-924`.
+    pub handle: String,
     pub title: String,
     pub status: String,
     pub kind: String,
@@ -100,6 +102,7 @@ impl From<&Task> for TaskSummary {
     fn from(task: &Task) -> Self {
         Self {
             seq: task.seq,
+            handle: task.handle.clone(),
             title: task.title.clone(),
             status: task.status.clone(),
             kind: task.kind.clone(),

@@ -97,7 +97,7 @@ enum Cmd {
         /// Kind of outcome: goal, feature, change, bug, probe, decision, or release
         #[arg(long)]
         kind: String,
-        /// Parent task number (N or #N)
+        /// Parent task: N, #N or its handle (e.g. G-N)
         #[arg(long)]
         parent: Option<String>,
         /// Dependencies, comma-separated task refs
@@ -120,7 +120,7 @@ enum Cmd {
         after_help = "Outline: papertiger.task_outline.v1 in `papertiger schema`. Each child has a batch-local \"key\", a \"title\" and a \"kind\", and optionally \"intent\", \"intent_source\", \"why\", \"tags\", \"priority\" and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
     )]
     Decompose {
-        /// Parent task number (N or #N)
+        /// Parent task: N, #N or its handle (e.g. G-N)
         parent: String,
         /// Read the papertiger.task_outline.v1 outline as UTF-8 from PATH, or stdin with '-'
         #[arg(long, value_name = "PATH|-")]
@@ -131,7 +131,7 @@ enum Cmd {
     },
     /// Show one task in full
     Show {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         /// Current state without historical payloads, as JSON (implies --json); use log --task N --json for rationale/history
         #[arg(long)]
@@ -180,7 +180,7 @@ enum Cmd {
     },
     /// Edit a task
     Edit {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         /// Replacement title
         #[arg(long)]
@@ -221,14 +221,14 @@ enum Cmd {
     },
     /// Start or resume unfinished work; record advisory session pickup without locking the task
     Start {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         #[command(flatten)]
         why: WhyArgs,
     },
     /// Complete a task after dependencies, blockers, gates, and children are closed
     Done {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         #[command(flatten)]
         result: ResultArgs,
@@ -238,14 +238,14 @@ enum Cmd {
     },
     /// Reopen a finished task
     Reopen {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         #[command(flatten)]
         why: WhyArgs,
     },
     /// Retire a task that is no longer worth doing, optionally into its replacement
     Retire {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         /// Same-plan task that replaces this work
         #[arg(long, value_name = "TASK")]
@@ -255,7 +255,7 @@ enum Cmd {
     },
     /// Reject a task or approach with its rationale; `reopen` can revisit it
     Reject {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         #[command(flatten)]
         why: WhyArgs,
@@ -409,7 +409,7 @@ enum HistoryCmd {
 enum ReferenceCmd {
     /// Record an inward locator without importing external status or fetching bytes
     Add {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         /// Locator of the external item, such as a URL or repository path
         locator: String,
@@ -425,7 +425,7 @@ enum ReferenceCmd {
     },
     /// Remove one reference with retained rationale
     Remove {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         /// Locator recorded on the task
         locator: String,
@@ -437,7 +437,7 @@ enum ReferenceCmd {
     },
     /// List inward references on one task
     List {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
     },
     /// Find tasks that name a locator
@@ -473,7 +473,7 @@ enum EvidenceCmd {
 enum CommitCmd {
     /// Associate one full commit object ID with a local task
     Add {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         /// Caller-resolved lowercase 40- or 64-hex commit object ID
         commit_oid: String,
@@ -486,7 +486,7 @@ enum CommitCmd {
     },
     /// Remove an incorrect association while retaining an evented correction
     Remove {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
         /// Previously recorded full commit object ID
         commit_oid: String,
@@ -498,7 +498,7 @@ enum CommitCmd {
     },
     /// List commit associations on one task
     List {
-        /// Task number (N or #N)
+        /// Task: N, #N or its handle (e.g. F-N)
         task: String,
     },
     /// Reverse lookup local tasks associated with one full commit object ID
@@ -515,14 +515,14 @@ enum CommitCmd {
 enum MiseCmd {
     /// Idempotently attach one verified projection document to its owning task
     Record {
-        /// Task number that owns the projection
+        /// Task (N, #N or handle) that owns the projection
         task: String,
         /// Projection JSON path, or '-' to read a Mise inspector pipeline from stdin
         projection: String,
     },
     /// List every reverified Mise projection attached to one task
     List {
-        /// Task number that owns the projections
+        /// Task (N, #N or handle) that owns the projections
         task: String,
     },
     /// Show one reverified projection by its SHA-256 identity
@@ -576,7 +576,7 @@ enum PlanCmd {
 enum GateCmd {
     /// Add a named proof obligation to a task
     Add {
-        /// Task number that owns the gate
+        /// Task (N, #N or handle) that owns the gate
         task: String,
         /// Stable gate name within the task
         name: String,
@@ -589,7 +589,7 @@ enum GateCmd {
     },
     /// Resolve an open gate with an evidence locator
     Resolve {
-        /// Task number that owns the gate
+        /// Task (N, #N or handle) that owns the gate
         task: String,
         /// Name of the open gate
         name: String,
@@ -605,7 +605,7 @@ enum GateCmd {
     },
     /// Waive an open gate with a rationale
     Waive {
-        /// Task number that owns the gate
+        /// Task (N, #N or handle) that owns the gate
         task: String,
         /// Name of the open gate
         name: String,
@@ -614,7 +614,7 @@ enum GateCmd {
     },
     /// Reopen a resolved or waived gate
     Reopen {
-        /// Task number that owns the gate
+        /// Task (N, #N or handle) that owns the gate
         task: String,
         /// Name of the terminal gate
         name: String,
@@ -623,7 +623,7 @@ enum GateCmd {
     },
     /// Remove an open gate that no longer models required proof
     Remove {
-        /// Task number that owns the gate
+        /// Task (N, #N or handle) that owns the gate
         task: String,
         /// Name of the open gate
         name: String,
@@ -632,7 +632,7 @@ enum GateCmd {
     },
     /// List every gate on one task
     List {
-        /// Task number that owns the gates
+        /// Task (N, #N or handle) that owns the gates
         task: String,
     },
 }
@@ -641,7 +641,7 @@ enum GateCmd {
 enum BlockerCmd {
     /// Add a named external blocker to a task
     Add {
-        /// Task number that owns the blocker
+        /// Task (N, #N or handle) that owns the blocker
         task: String,
         /// Stable blocker name within the task
         name: String,
@@ -651,7 +651,7 @@ enum BlockerCmd {
     },
     /// Resolve an open blocker with external evidence
     Resolve {
-        /// Task number that owns the blocker
+        /// Task (N, #N or handle) that owns the blocker
         task: String,
         /// Name of the open blocker
         name: String,
@@ -667,7 +667,7 @@ enum BlockerCmd {
     },
     /// Waive an open blocker with a rationale
     Waive {
-        /// Task number that owns the blocker
+        /// Task (N, #N or handle) that owns the blocker
         task: String,
         /// Name of the open blocker
         name: String,
@@ -676,7 +676,7 @@ enum BlockerCmd {
     },
     /// Reopen a resolved or waived blocker
     Reopen {
-        /// Task number that owns the blocker
+        /// Task (N, #N or handle) that owns the blocker
         task: String,
         /// Name of the terminal blocker
         name: String,
@@ -685,7 +685,7 @@ enum BlockerCmd {
     },
     /// Remove an open blocker that no longer models reality
     Remove {
-        /// Task number that owns the blocker
+        /// Task (N, #N or handle) that owns the blocker
         task: String,
         /// Name of the open blocker
         name: String,
@@ -694,7 +694,7 @@ enum BlockerCmd {
     },
     /// List every blocker on one task
     List {
-        /// Task number that owns the blockers
+        /// Task (N, #N or handle) that owns the blockers
         task: String,
     },
 }
@@ -703,7 +703,7 @@ enum BlockerCmd {
 enum TagCmd {
     /// Add a searchable tag to a task
     Add {
-        /// Task number to tag
+        /// Task to tag: N, #N or its handle
         task: String,
         /// Tag value
         tag: String,
@@ -712,7 +712,7 @@ enum TagCmd {
     },
     /// Remove a tag from a task
     Remove {
-        /// Task number to untag
+        /// Task to untag: N, #N or its handle
         task: String,
         /// Existing tag value
         tag: String,
@@ -835,13 +835,10 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
     if open_gate_count > 0 {
         extra.push_str(&format!(" [gates open: {open_gate_count}]"));
     }
-    if t.kind != "work" {
-        extra.push_str(&format!(" [{}]", t.kind));
-    }
     pt::outln!(
-        "{} #{} {}{}",
+        "{} {} {}{}",
         status_glyph(&t.status),
-        t.seq,
+        t.handle,
         t.title,
         extra
     );
@@ -888,7 +885,7 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
             " [deps: {}]",
             open_dependencies
                 .iter()
-                .map(|dependency| format!("#{}", dependency.seq))
+                .map(|dependency| dependency.handle.clone())
                 .collect::<Vec<_>>()
                 .join(" ")
         ));
@@ -906,13 +903,10 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
     if open_gate_count > 0 {
         extra.push_str(&format!(" [gates open: {open_gate_count}]"));
     }
-    if task.kind != "work" {
-        extra.push_str(&format!(" [{}]", task.kind));
-    }
     pt::outln!(
-        "{} #{} {}{}",
+        "{} {} {}{}",
         status_glyph(&task.status),
-        task.seq,
+        task.handle,
         task.title,
         extra
     );
@@ -955,17 +949,17 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
     }
     if let Some(parent) = &context.parent {
         pt::outln!(
-            "  parent {} #{} {}",
+            "  parent {} {} {}",
             status_glyph(&parent.status),
-            parent.seq,
+            parent.handle,
             parent.title
         );
     }
     if let Some(replacement) = &context.replacement {
         pt::outln!(
-            "  replacement {} #{} {}",
+            "  replacement {} {} {}",
             status_glyph(&replacement.status),
-            replacement.seq,
+            replacement.handle,
             replacement.title
         );
     }
@@ -977,9 +971,9 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
     }
     for dependency in &context.dependencies {
         pt::outln!(
-            "  depends {} #{} {}",
+            "  depends {} {} {}",
             status_glyph(&dependency.status),
-            dependency.seq,
+            dependency.handle,
             dependency.title
         );
     }
@@ -1078,9 +1072,9 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
     }
     for child in &context.children {
         pt::outln!(
-            "  child {} #{} {}",
+            "  child {} {} {}",
             status_glyph(&child.status),
-            child.seq,
+            child.handle,
             child.title
         );
     }
@@ -1537,22 +1531,22 @@ fn run_planner(cli: Cli) -> Result<()> {
                 );
                 for entry in &active.in_progress.parents.entries {
                     pt::outln!(
-                        "> parent #{} {}{}",
-                        entry.task.seq,
+                        "> parent {} {}{}",
+                        entry.task.handle,
                         entry.task.title,
                         pickup_label(entry.pickup.as_ref())
                     );
                 }
                 for entry in &active.in_progress.leaves.entries {
                     pt::outln!(
-                        "> leaf #{} {}{}",
-                        entry.task.seq,
+                        "> leaf {} {}{}",
+                        entry.task.handle,
                         entry.task.title,
                         pickup_label(entry.pickup.as_ref())
                     );
                 }
                 for entry in &active.ready.entries {
-                    pt::outln!("· #{} {}", entry.task.seq, entry.task.title);
+                    pt::outln!("· {} {}", entry.task.handle, entry.task.title);
                 }
                 if !active.ready.complete {
                     pt::outln!(
@@ -1656,10 +1650,12 @@ fn run_planner(cli: Cli) -> Result<()> {
             reject_multiple_stdin(&[("intent", intent.reads_stdin()), ("why", why.reads_stdin())])?;
             let intent = intent.optional()?.unwrap_or_default();
             let why = why.optional()?;
-            let parent = parent.map(|p| pt::parse_task_ref(&p)).transpose()?;
+            let parent = parent
+                .map(|p| pt::resolve_task_ref(&conn, &p))
+                .transpose()?;
             let deps: Vec<i64> = dep
                 .iter()
-                .map(|d| pt::parse_task_ref(d))
+                .map(|d| pt::resolve_task_ref(&conn, d))
                 .collect::<Result<_>>()?;
             let seq = pt::add_task(
                 &conn,
@@ -1680,10 +1676,11 @@ fn run_planner(cli: Cli) -> Result<()> {
                 },
             )?;
             let slug = pt::get_plan(&conn, pt::get_task(&conn, seq)?.plan_id)?.slug;
+            let handle = pt::task_handle(seq, &kind);
             if start {
-                mutation_output!("#{seq} added to {slug} and in progress");
+                mutation_output!("{handle} added to {slug} and in progress");
             } else {
-                mutation_output!("#{seq} added to {slug}");
+                mutation_output!("{handle} added to {slug}");
             }
         }
         Cmd::Decompose {
@@ -1691,7 +1688,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             outline_file,
             start_ready,
         } => {
-            let parent = pt::parse_task_ref(&parent)?;
+            let parent = pt::resolve_task_ref(&conn, &parent)?;
             let bytes =
                 read_input_bytes(&outline_file, "task outline", Some(pt::MAX_OUTLINE_BYTES))?;
             let outline = pt::parse_task_outline(&bytes)?;
@@ -1713,11 +1710,12 @@ fn run_planner(cli: Cli) -> Result<()> {
                 } else {
                     ""
                 };
-                mutation_output!("  {} -> #{}{started}", child.key, child.seq);
+                let handle = pt::get_task(&conn, child.seq)?.handle;
+                mutation_output!("  {} -> {handle}{started}", child.key);
             }
         }
         Cmd::Show { task, no_history } => {
-            let seq = pt::parse_task_ref(&task)?;
+            let seq = pt::resolve_task_ref(&conn, &task)?;
             if no_history {
                 pt::outln!(
                     "{}",
@@ -1754,9 +1752,9 @@ fn run_planner(cli: Cli) -> Result<()> {
                 } else {
                     for item in &response.tasks {
                         pt::outln!(
-                            "{} #{} [{}; {}] {}",
+                            "{} {} [{}; {}] {}",
                             status_glyph(&item.task.status),
-                            item.task.seq,
+                            item.task.handle,
                             item.plan.slug,
                             item.plan.status,
                             item.task.title
@@ -1815,9 +1813,9 @@ fn run_planner(cli: Cli) -> Result<()> {
             }
             for result in &response.results {
                 pt::outln!(
-                    "{} #{} [{}] {}",
+                    "{} {} [{}] {}",
                     status_glyph(&result.task.status),
-                    result.task.seq,
+                    result.task.handle,
                     result.plan,
                     result.task.title
                 );
@@ -1856,10 +1854,10 @@ fn run_planner(cli: Cli) -> Result<()> {
                 Some(None)
             } else {
                 parent
-                    .map(|parent| pt::parse_task_ref(&parent).map(Some))
+                    .map(|parent| pt::resolve_task_ref(&conn, &parent).map(Some))
                     .transpose()?
             };
-            let seq = pt::parse_task_ref(&task)?;
+            let seq = pt::resolve_task_ref(&conn, &task)?;
             let intent_source = if clear_intent_source {
                 Some(None)
             } else {
@@ -1883,7 +1881,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         }
         Cmd::Start { task, why } => {
             let why = why.optional()?;
-            let seq = pt::parse_task_ref(&task)?;
+            let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::start_task(&conn, &actor, seq, why.as_deref(), session.as_deref())?;
             mutation_output!("#{seq} in progress");
         }
@@ -1891,7 +1889,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             let why = why.required()?;
             let sequences = tasks
                 .iter()
-                .map(|task| pt::parse_task_ref(task))
+                .map(|task| pt::resolve_task_ref(&conn, task))
                 .collect::<Result<Vec<_>>>()?;
             pt::move_tasks_to_plan(&conn, &actor, &sequences, &plan, &why)?;
             mutation_output!("moved {} task(s) to {plan}", sequences.len());
@@ -1902,7 +1900,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             result_source,
         } => {
             let result = result.optional()?;
-            let seq = pt::parse_task_ref(&task)?;
+            let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::complete_task(
                 &conn,
                 &actor,
@@ -1914,14 +1912,17 @@ fn run_planner(cli: Cli) -> Result<()> {
         }
         Cmd::Reopen { task, why } => {
             let why = why.required()?;
-            let seq = pt::parse_task_ref(&task)?;
+            let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::reopen_task(&conn, &actor, seq, &why)?;
             mutation_output!("#{seq} reopened");
         }
         Cmd::Retire { task, into, why } => {
             let why = why.required()?;
-            let seq = pt::parse_task_ref(&task)?;
-            let replacement_seq = into.as_deref().map(pt::parse_task_ref).transpose()?;
+            let seq = pt::resolve_task_ref(&conn, &task)?;
+            let replacement_seq = into
+                .as_deref()
+                .map(|task| pt::resolve_task_ref(&conn, task))
+                .transpose()?;
             pt::retire_task(&conn, &actor, seq, replacement_seq, &why)?;
             if let Some(replacement_seq) = replacement_seq {
                 mutation_output!("#{seq} retired into #{replacement_seq}");
@@ -1931,7 +1932,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         }
         Cmd::Reject { task, why } => {
             let why = why.required()?;
-            let seq = pt::parse_task_ref(&task)?;
+            let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::reject_task(&conn, &actor, seq, &why)?;
             mutation_output!("#{seq} rejected");
         }
@@ -1942,7 +1943,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 kind,
                 requirement,
             } => {
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::add_gate(&conn, &actor, seq, &name, &kind, &requirement)?;
                 mutation_output!("gate '{name}' added to #{seq}");
             }
@@ -1953,7 +1954,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 sha256,
                 note,
             } => {
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 validate_new_evidence(
                     &evidence,
                     sha256.as_deref(),
@@ -1974,24 +1975,24 @@ fn run_planner(cli: Cli) -> Result<()> {
             }
             GateCmd::Waive { task, name, why } => {
                 let why = why.required()?;
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::waive_gate(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("gate '{name}' on #{seq} waived");
             }
             GateCmd::Reopen { task, name, why } => {
                 let why = why.required()?;
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::reopen_gate(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("gate '{name}' on #{seq} reopened");
             }
             GateCmd::Remove { task, name, why } => {
                 let why = why.required()?;
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::remove_gate(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("gate '{name}' removed from #{seq}");
             }
             GateCmd::List { task } => {
-                let t = pt::get_task(&conn, pt::parse_task_ref(&task)?)?;
+                let t = pt::get_task(&conn, pt::resolve_task_ref(&conn, &task)?)?;
                 let mut st = conn.prepare(
                     "SELECT name, kind, status, requirement FROM gates WHERE task_id=?1 ORDER BY gate_id",
                 )?;
@@ -2011,7 +2012,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 name,
                 condition,
             } => {
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::add_blocker(&conn, &actor, seq, &name, &condition)?;
                 mutation_output!("blocker '{name}' added to #{seq}");
             }
@@ -2022,7 +2023,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 sha256,
                 note,
             } => {
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 validate_new_evidence(
                     &evidence,
                     sha256.as_deref(),
@@ -2043,24 +2044,24 @@ fn run_planner(cli: Cli) -> Result<()> {
             }
             BlockerCmd::Waive { task, name, why } => {
                 let why = why.required()?;
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::waive_blocker(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("blocker '{name}' on #{seq} waived");
             }
             BlockerCmd::Reopen { task, name, why } => {
                 let why = why.required()?;
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::reopen_blocker(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("blocker '{name}' on #{seq} reopened");
             }
             BlockerCmd::Remove { task, name, why } => {
                 let why = why.required()?;
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::remove_blocker(&conn, &actor, seq, &name, &why)?;
                 mutation_output!("blocker '{name}' removed from #{seq}");
             }
             BlockerCmd::List { task } => {
-                let task = pt::get_task(&conn, pt::parse_task_ref(&task)?)?;
+                let task = pt::get_task(&conn, pt::resolve_task_ref(&conn, &task)?)?;
                 for blocker in pt::task_blockers(&conn, task.task_id)? {
                     pt::outln!(
                         "[{}] {}: {}{}",
@@ -2083,7 +2084,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 sha256,
                 note,
             } => {
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 let reference = pt::new_external_reference(
                     &kind,
                     &locator,
@@ -2099,7 +2100,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 kind,
                 why,
             } => {
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::remove_external_reference(
                     &conn,
                     &actor,
@@ -2111,7 +2112,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                 mutation_output!("reference {kind} '{locator}' removed from #{seq}");
             }
             ReferenceCmd::List { task } => {
-                let references = pt::external_references(&conn, pt::parse_task_ref(&task)?)?;
+                let references =
+                    pt::external_references(&conn, pt::resolve_task_ref(&conn, &task)?)?;
                 if json {
                     pt::outln!("{}", serde_json::to_string_pretty(&references)?);
                 } else {
@@ -2143,7 +2145,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 repo,
                 note,
             } => {
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::add_commit_association(
                     &conn,
                     &actor,
@@ -2161,12 +2163,12 @@ fn run_planner(cli: Cli) -> Result<()> {
                 why,
             } => {
                 let why = why.required()?;
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::remove_commit_association(&conn, &actor, seq, &repo, &commit_oid, &why)?;
                 mutation_output!("commit {commit_oid} ({repo}) removed from #{seq}");
             }
             CommitCmd::List { task } => {
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 let commits = pt::commit_associations(&conn, seq)?;
                 if json {
                     pt::outln!("{}", serde_json::to_string_pretty(&commits)?);
@@ -2206,13 +2208,19 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Dep { cmd } => match cmd {
             DepCmd::Add { task, on, why } => {
                 let why = why.required()?;
-                let (a, b) = (pt::parse_task_ref(&task)?, pt::parse_task_ref(&on)?);
+                let (a, b) = (
+                    pt::resolve_task_ref(&conn, &task)?,
+                    pt::resolve_task_ref(&conn, &on)?,
+                );
                 pt::add_dep(&conn, &actor, a, b, &why)?;
                 mutation_output!("#{a} now depends on #{b}");
             }
             DepCmd::Remove { task, on, why } => {
                 let why = why.required()?;
-                let (a, b) = (pt::parse_task_ref(&task)?, pt::parse_task_ref(&on)?);
+                let (a, b) = (
+                    pt::resolve_task_ref(&conn, &task)?,
+                    pt::resolve_task_ref(&conn, &on)?,
+                );
                 pt::remove_dep(&conn, &actor, a, b, &why)?;
                 mutation_output!("#{a} no longer depends on #{b}");
             }
@@ -2258,8 +2266,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                         String::new()
                     };
                     pt::outln!(
-                        "  #{} {} [priority {} unlocks {} downstream {} gates {}]{}{}{}",
-                        entry.task.seq,
+                        "  {} {} [priority {} unlocks {} downstream {} gates {}]{}{}{}",
+                        entry.task.handle,
                         entry.task.title,
                         entry.task.priority,
                         entry.immediate_unlock_count,
@@ -2283,13 +2291,13 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Tag { cmd } => match cmd {
             TagCmd::Add { task, tag, why } => {
                 let why = why.required()?;
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::add_tag(&conn, &actor, seq, &tag, &why)?;
                 mutation_output!("tag '{tag}' added to #{seq}");
             }
             TagCmd::Remove { task, tag, why } => {
                 let why = why.required()?;
-                let seq = pt::parse_task_ref(&task)?;
+                let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::remove_tag(&conn, &actor, seq, &tag, &why)?;
                 mutation_output!("tag '{tag}' removed from #{seq}");
             }
@@ -2301,7 +2309,9 @@ fn run_planner(cli: Cli) -> Result<()> {
         }
         Cmd::Note { text, source, task } => {
             let text = text.required()?;
-            let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
+            let task_seq = task
+                .map(|task| pt::resolve_task_ref(&conn, &task))
+                .transpose()?;
             pt::add_note(&conn, &actor, task_seq, &text, source.as_deref())?;
             mutation_output!("noted");
         }
@@ -2311,7 +2321,9 @@ fn run_planner(cli: Cli) -> Result<()> {
             before_cursor,
             after_cursor,
         } => {
-            let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
+            let task_seq = task
+                .map(|task| pt::resolve_task_ref(&conn, &task))
+                .transpose()?;
             let log = pt::event_log(
                 &conn,
                 task_seq,
@@ -2414,7 +2426,9 @@ fn run_planner(cli: Cli) -> Result<()> {
                     after_cursor,
                 },
         } => {
-            let task_seq = task.map(|task| pt::parse_task_ref(&task)).transpose()?;
+            let task_seq = task
+                .map(|task| pt::resolve_task_ref(&conn, &task))
+                .transpose()?;
             let project_root = match project_root {
                 Some(root) => root,
                 None => project_setup::discover_project_root(&std::env::current_dir()?)?
@@ -2562,7 +2576,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         }
         Cmd::Mise { cmd } => match cmd {
             MiseCmd::Record { task, projection } => {
-                let task_seq = pt::parse_task_ref(&task)?;
+                let task_seq = pt::resolve_task_ref(&conn, &task)?;
                 let bytes = read_input_bytes(&projection, "Mise planner projection", None)?;
                 let (outcome, record) =
                     pt::record_mise_projection(&conn, &actor, task_seq, &bytes)?;
@@ -2583,7 +2597,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 );
             }
             MiseCmd::List { task } => {
-                let task_seq = pt::parse_task_ref(&task)?;
+                let task_seq = pt::resolve_task_ref(&conn, &task)?;
                 let records = pt::task_mise_projection_summaries(&conn, task_seq)?;
                 if json {
                     pt::outln!("{}", serde_json::to_string_pretty(&records)?);
@@ -2705,17 +2719,17 @@ fn child_progress(conn: &Connection, task_id: i64) -> Result<String> {
 fn print_tree(conn: &Connection, plan_id: i64, parent: Option<i64>, depth: usize) -> Result<()> {
     let sql = match parent {
         Some(_) => {
-            "SELECT task_id, seq, title, status FROM tasks WHERE plan_id=?1 AND parent_id=?2 ORDER BY seq"
+            "SELECT task_id, seq, title, status, kind FROM tasks WHERE plan_id=?1 AND parent_id=?2 ORDER BY seq"
         }
         None => {
-            "SELECT task_id, seq, title, status FROM tasks WHERE plan_id=?1 AND parent_id IS NULL ORDER BY seq"
+            "SELECT task_id, seq, title, status, kind FROM tasks WHERE plan_id=?1 AND parent_id IS NULL ORDER BY seq"
         }
     };
     let mut st = conn.prepare(sql)?;
-    let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(i64, i64, String, String)> {
-        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+    let map = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(i64, i64, String, String, String)> {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
     };
-    let rows: Vec<(i64, i64, String, String)> = match parent {
+    let rows: Vec<(i64, i64, String, String, String)> = match parent {
         Some(p) => st
             .query_map(params![plan_id, p], map)?
             .collect::<rusqlite::Result<_>>()?,
@@ -2723,10 +2737,11 @@ fn print_tree(conn: &Connection, plan_id: i64, parent: Option<i64>, depth: usize
             .query_map(params![plan_id], map)?
             .collect::<rusqlite::Result<_>>()?,
     };
-    for (task_id, seq, title, status) in rows {
+    for (task_id, seq, title, status, kind) in rows {
         let progress = child_progress(conn, task_id)?;
+        let handle = pt::task_handle(seq, &kind);
         pt::outln!(
-            "{}{} #{seq} {title}{progress}",
+            "{}{} {handle} {title}{progress}",
             "  ".repeat(depth),
             status_glyph(&status)
         );

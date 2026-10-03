@@ -127,12 +127,13 @@ pub use events::add_note;
 pub(crate) use events::record_event_in_mutation;
 mod tasks;
 pub(crate) use tasks::{
-    TASK_COLS, meaning_source_requires_text, require_nonblank, task_from_row, task_tags_by_id,
-    validate_assignable_task_kind, validate_tag, validate_task_kind, validate_task_title,
+    TASK_COLS, meaning_source_requires_text, parse_task_ref, require_nonblank, task_from_row,
+    task_tags_by_id, validate_assignable_task_kind, validate_tag, validate_task_kind,
+    validate_task_title,
 };
 pub use tasks::{
     Task, get_task, kind_requires_result, leaf_tasks_with_status, list_tasks,
-    list_tasks_by_activity, parse_task_ref, suggested_task_kind, task_kind_letter,
+    list_tasks_by_activity, resolve_task_ref, suggested_task_kind, task_handle, task_kind_letter,
     validate_meaning_source,
 };
 mod plans;

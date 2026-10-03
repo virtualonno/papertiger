@@ -173,7 +173,7 @@ fn decompose_creates_children_edges_and_ready_starts_in_one_receipt() {
     assert_success(&plain);
     let plain = String::from_utf8(plain.stdout).unwrap();
     assert!(plain.contains("#3 decomposed into 1 child task(s):"));
-    assert!(plain.contains("follow -> #8"));
+    assert!(plain.contains("follow -> F-8"));
     assert_success(&papertiger(&db.0, &["audit"]));
 }
 

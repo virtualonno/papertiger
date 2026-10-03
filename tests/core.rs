@@ -2103,19 +2103,48 @@ fn plan_edits_are_evented_and_atomic() {
 }
 
 #[test]
-fn task_references_are_canonical_sequences_only() {
+fn task_references_are_canonical_sequences_or_matching_handles() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
+    pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Build", "feature"),
+    )
+    .unwrap();
+    pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Measure", "probe"),
+    )
+    .unwrap();
     for (task_ref, expected) in [
         ("1", 1),
         ("12", 12),
         ("#12", 12),
         ("9223372036854775807", i64::MAX),
+        ("F-1", 1),
+        ("f-1", 1),
+        ("P-2", 2),
     ] {
         assert_eq!(
-            pt::parse_task_ref(task_ref).unwrap(),
+            pt::resolve_task_ref(&conn, task_ref).unwrap(),
             expected,
             "{task_ref}"
         );
     }
+    let stale = pt::resolve_task_ref(&conn, "B-1").unwrap_err().to_string();
+    assert!(
+        stale.contains("does not match #1, which is a feature task (F-1); use F-1 or 1"),
+        "{stale}"
+    );
+    let unknown = pt::resolve_task_ref(&conn, "X-1").unwrap_err().to_string();
+    assert!(
+        unknown.contains("'X' is not a kind letter (expected one of GFCBPDRW)"),
+        "{unknown}"
+    );
 
     for task_ref in [
         "",
@@ -2134,10 +2163,16 @@ fn task_references_are_canonical_sequences_only() {
         "\u{661}\u{662}",
         "9223372036854775808",
         "MECH-BATCH-01",
+        "F-01",
+        "F-",
+        "F1",
+        "#F-1",
     ] {
-        let error = pt::parse_task_ref(task_ref).unwrap_err().to_string();
+        let error = pt::resolve_task_ref(&conn, task_ref)
+            .unwrap_err()
+            .to_string();
         assert!(
-            error.contains("expected task.seq as N or #N")
+            error.contains("expected N, #N, or a handle such as F-N")
                 && error.contains("canonical positive ASCII decimal"),
             "{task_ref:?}: {error}"
         );

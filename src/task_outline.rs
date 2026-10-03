@@ -253,6 +253,12 @@ pub fn decompose_task(
                 "{}: key must be 1-{MAX_OUTLINE_KEY_CHARS} ASCII letters, digits, '-' or '_', starting with a letter",
                 name(index)
             ));
+        } else if parse_task_ref(&entry.key).is_ok() {
+            problems.push(format!(
+                "{}: key {:?} reads as a task handle; choose a key that does not look like one, such as a word",
+                name(index),
+                entry.key
+            ));
         } else if let Some(first) = keys.insert(entry.key.as_str(), index) {
             problems.push(format!(
                 "{}: key repeats {}; give every child its own key",
@@ -344,9 +350,8 @@ pub fn decompose_task(
                             problems.push(format!("{label}: repeats dependency {key:?}"));
                         }
                     }
-                    None if parse_task_ref(key).is_ok() => problems.push(format!(
-                        "{label}: dependency {key:?} is a string; write an existing task as the integer {}",
-                        key.trim_start_matches('#')
+                    None if let Ok((seq, _)) = parse_task_ref(key) => problems.push(format!(
+                        "{label}: dependency {key:?} is a string; write an existing task as the integer {seq}"
                     )),
                     None => problems.push(format!(
                         "{label}: dependency {key:?} names no key in this outline"

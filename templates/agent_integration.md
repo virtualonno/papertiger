@@ -190,9 +190,11 @@ A `file:` locator plus SHA-256 is the byte receipt for retained evidence, not a
 Git snapshot. For a commit-backed outcome, bind an immutable audit receipt as
 evidence and record the repository's full commit object ID separately with
 `commit add`; neither identity substitutes for the other.
-`task.seq`, written as `N` or `#N`, is the only task identity and selector.
-Prefer bare `N`: it is portable across shells, while `#N` must be quoted where
-`#` begins a comment.
+`task.seq` is the only task identity. Output shows each task by its handle,
+the kind letter and number (`F-924`; JSON carries it as `handle` next to
+`seq`). Commands accept the handle, `N` or `#N`; prefer the handle or bare `N`,
+since `#N` must be quoted where `#` begins a comment. A handle whose letter no
+longer matches the task's kind is refused with the current handle.
 
 `task.seq` is private to one authority. Never write a Papertiger task number in
 a shared commit, pull request, changelog, release note, or public artifact. Such

@@ -246,9 +246,11 @@ apply even when several outcomes are requested in one session; intermediate
 steps inside one independently reviewable outcome do not need tasks. Domain
 evidence and issue trackers remain authoritative for their own facts.
 
-Task sequences are local selectors, not shared issue identifiers. Never place a
-Papertiger task number in a shared commit, pull request, changelog, or public
-artifact. Shared prose must stand alone; record stable external URLs and useful
+Task sequences are local selectors, not shared issue identifiers. Output shows
+each task by its handle, its kind letter and number (`F-924`); commands accept
+the handle, `N` or `#N`, and refuse a handle whose letter no longer matches the
+task's kind. Never place a Papertiger task number or handle in a shared commit,
+pull request, changelog, or public artifact. Shared prose must stand alone; record stable external URLs and useful
 Git snapshot associations inward in the private Papertiger authority.
 
 ## Install it in a project

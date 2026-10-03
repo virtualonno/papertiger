@@ -134,6 +134,11 @@
         "seq": {
           "type": "integer"
         },
+        "handle": {
+          "description": "Kind letter and task number, e.g. F-924; derived from kind and seq, never stored.",
+          "type": "string",
+          "pattern": "^[GFCBPDRW]-[1-9][0-9]*$"
+        },
         "title": {
           "type": "string"
         },
@@ -158,6 +163,7 @@
       },
       "required": [
         "seq",
+        "handle",
         "title",
         "status",
         "kind",
@@ -170,6 +176,11 @@
       "properties": {
         "seq": {
           "type": "integer"
+        },
+        "handle": {
+          "description": "Kind letter and task number, e.g. F-924; derived from kind and seq, never stored.",
+          "type": "string",
+          "pattern": "^[GFCBPDRW]-[1-9][0-9]*$"
         },
         "title": {
           "type": "string"
@@ -217,6 +228,7 @@
       },
       "required": [
         "seq",
+        "handle",
         "title",
         "status",
         "kind",

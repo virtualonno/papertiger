@@ -14,6 +14,8 @@ pub struct Task {
     #[serde(skip_serializing)]
     pub task_id: i64,
     pub seq: i64,
+    /// Kind letter and number, e.g. `F-924`; derived, never stored.
+    pub handle: String,
     #[serde(skip_serializing)]
     pub plan_id: i64,
     #[serde(skip_serializing)]
@@ -32,16 +34,19 @@ pub struct Task {
 }
 
 pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
+    let seq = r.get(1)?;
+    let kind: String = r.get(8)?;
     Ok(Task {
         task_id: r.get(0)?,
-        seq: r.get(1)?,
+        seq,
+        handle: task_handle(seq, &kind),
         plan_id: r.get(2)?,
         parent_id: r.get(3)?,
         replacement_task_id: r.get(4)?,
         title: r.get(5)?,
         intent: r.get(6)?,
         intent_source: r.get(7)?,
-        kind: r.get(8)?,
+        kind,
         result: r.get(9)?,
         result_source: r.get(10)?,
         status: r.get(11)?,
@@ -274,12 +279,37 @@ pub fn leaf_tasks_with_status(conn: &Connection, plan_id: i64, status: &str) -> 
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-pub fn parse_task_ref(task_ref: &str) -> Result<i64> {
-    let digits = task_ref.strip_prefix('#').unwrap_or(task_ref);
+/// Parse a task reference: `N`, `#N`, or a handle `F-N` whose letter names
+/// the task's kind. Returns the number and the handle letter, if any; only
+/// [`resolve_task_ref`] can check that letter against the authority.
+pub(crate) fn parse_task_ref(task_ref: &str) -> Result<(i64, Option<char>)> {
     let invalid = || {
         anyhow!(
-            "bad task reference '{task_ref}' (expected task.seq as N or #N, with N a canonical positive ASCII decimal)"
+            "bad task reference '{task_ref}' (expected N, #N, or a handle such as F-N, with N a canonical positive ASCII decimal)"
         )
+    };
+    let (letter, digits) = match task_ref.split_once('-') {
+        Some((letter, digits)) => {
+            let mut chars = letter.chars();
+            let (Some(letter), None) = (chars.next(), chars.next()) else {
+                return Err(invalid());
+            };
+            let letter = letter.to_ascii_uppercase();
+            if !TASK_KINDS
+                .iter()
+                .any(|kind| task_kind_letter(kind) == Some(letter))
+            {
+                bail!(
+                    "bad task handle '{task_ref}': '{letter}' is not a kind letter (expected one of {})",
+                    TASK_KINDS
+                        .iter()
+                        .filter_map(|kind| task_kind_letter(kind))
+                        .collect::<String>()
+                );
+            }
+            (Some(letter), digits)
+        }
+        None => (None, task_ref.strip_prefix('#').unwrap_or(task_ref)),
     };
     if digits.is_empty()
         || digits.starts_with('0')
@@ -287,5 +317,31 @@ pub fn parse_task_ref(task_ref: &str) -> Result<i64> {
     {
         return Err(invalid());
     }
-    digits.parse::<i64>().map_err(|_| invalid())
+    Ok((digits.parse::<i64>().map_err(|_| invalid())?, letter))
+}
+
+/// Resolve a task reference to its number. A handle's letter must match the
+/// task's current kind, so a reference made before a retype is refused with
+/// the current handle instead of silently naming different work.
+pub fn resolve_task_ref(conn: &Connection, task_ref: &str) -> Result<i64> {
+    let (seq, letter) = parse_task_ref(task_ref)?;
+    if let Some(letter) = letter {
+        let task = get_task(conn, seq)?;
+        let current = task_handle(seq, &task.kind);
+        if task_kind_letter(&task.kind) != Some(letter) {
+            bail!(
+                "task handle '{task_ref}' does not match #{seq}, which is a {} task ({current}); use {current} or {seq}",
+                task.kind
+            );
+        }
+    }
+    Ok(seq)
+}
+
+/// A task's handle: its kind letter and number, e.g. `F-924`.
+pub fn task_handle(seq: i64, kind: &str) -> String {
+    match task_kind_letter(kind) {
+        Some(letter) => format!("{letter}-{seq}"),
+        None => format!("#{seq}"),
+    }
 }

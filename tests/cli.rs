@@ -471,6 +471,63 @@ fn init_refuses_json_and_names_its_plain_text_report() {
 struct TestDatabase(PathBuf);
 
 #[test]
+fn handles_name_the_kind_resolve_like_numbers_and_refuse_when_stale() {
+    let db = TestDatabase::new("handles");
+    let run = |args: &[&str]| papertiger(&db.0, args);
+    assert_success(&run(&["init"]));
+    assert_success(&run(&["plan", "add", "work", "Work"]));
+    let added = run(&["add", "--kind", "bug", "Crash on empty plan"]);
+    assert_success(&added);
+    assert_eq!(
+        String::from_utf8_lossy(&added.stdout).trim(),
+        "B-1 added to work"
+    );
+    let show = run(&["show", "B-1", "--json"]);
+    assert_success(&show);
+    let show: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(show["task"]["handle"], "B-1");
+    assert_success(&run(&[
+        "tag",
+        "add",
+        "b-1",
+        "triage",
+        "--why",
+        "lowercase letters resolve",
+    ]));
+    assert_success(&run(&[
+        "edit",
+        "1",
+        "--kind",
+        "feature",
+        "--why",
+        "it was a missing feature",
+    ]));
+    let stale = run(&["show", "B-1"]);
+    assert!(!stale.status.success());
+    assert!(
+        String::from_utf8_lossy(&stale.stderr)
+            .contains("does not match #1, which is a feature task (F-1); use F-1 or 1"),
+        "{}",
+        String::from_utf8_lossy(&stale.stderr)
+    );
+    let outline = serde_json::json!({
+        "schema": "papertiger.task_outline.v1",
+        "children": [{"key": "f-2", "title": "Child", "kind": "change"}],
+    });
+    let refused = papertiger_with_stdin(
+        &db.0,
+        &["decompose", "F-1", "--outline-file", "-"],
+        &outline.to_string(),
+    );
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("key \"f-2\" reads as a task handle"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+}
+
+#[test]
 fn closed_children_count_as_closed_and_their_parent_surfaces_for_closing() {
     let db = TestDatabase::new("closed-children");
     let run = |args: &[&str]| {
@@ -533,10 +590,10 @@ fn closed_children_count_as_closed_and_their_parent_surfaces_for_closing() {
     run(&["reject", "4", "--why", "Approach does not hold"]);
     let tree = run(&["tree"]);
     assert!(
-        tree.contains("#1 Parent outcome (3/3 closed: 1 done, 1 retired, 1 rejected)"),
+        tree.contains("F-1 Parent outcome (3/3 closed: 1 done, 1 retired, 1 rejected)"),
         "{tree}"
     );
-    assert!(tree.contains("#5 Other parent (1/1)"), "{tree}");
+    assert!(tree.contains("F-5 Other parent (1/1)"), "{tree}");
     assert_eq!(
         focus_entries(&run(&["focus", "--json"])),
         vec![(1, 3), (5, 1)]
@@ -2707,13 +2764,13 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     let task_add = command_help(&["add"]);
     assert!(
         task_add.contains("Concise outcome-oriented task title")
-            && task_add.contains("Parent task number (N or #N)")
+            && task_add.contains("Parent task: N, #N or its handle (e.g. G-N)")
             && task_add.contains("Scheduling priority"),
         "{task_add}"
     );
     let gate_add = command_help(&["gate", "add"]);
     assert!(
-        gate_add.contains("Task number that owns the gate")
+        gate_add.contains("Task (N, #N or handle) that owns the gate")
             && gate_add.contains("Proof required to resolve the gate"),
         "{gate_add}"
     );
@@ -2725,12 +2782,15 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     );
     let mise_record = command_help(&["mise", "record"]);
     assert!(
-        mise_record.contains("Task number that owns the projection")
+        mise_record.contains("Task (N, #N or handle) that owns the projection")
             && mise_record.contains("Mise inspector pipeline from stdin"),
         "{mise_record}"
     );
     let show = command_help(&["show"]);
-    assert!(show.contains("Task number (N or #N)"), "{show}");
+    assert!(
+        show.contains("Task: N, #N or its handle (e.g. F-N)"),
+        "{show}"
+    );
     assert!(!show.contains("shell-portable"), "{show}");
     let reject = command_help(&["reject"]);
     assert!(
@@ -2922,7 +2982,7 @@ fn commit_lookup_lifecycle_json_and_activity_sort_are_agent_usable() {
     let list = papertiger(&db.0, &["list", "--plan", "work", "--sort", "activity"]);
     assert_success(&list);
     let text = String::from_utf8(list.stdout).unwrap();
-    assert!(text.lines().next().unwrap().contains("#1 first"));
+    assert!(text.lines().next().unwrap().contains("F-1 first"));
 
     let short = papertiger(&db.0, &["commit", "add", "1", "abc1234"]);
     assert!(!short.status.success());
@@ -3224,9 +3284,9 @@ fn retire_into_is_visible_without_redirecting_show() {
     let text = papertiger(&db.0, &["show", "1"]);
     assert_success(&text);
     let text = String::from_utf8(text.stdout).unwrap();
-    assert!(text.lines().next().unwrap().contains("#1 duplicate"));
+    assert!(text.lines().next().unwrap().contains("F-1 duplicate"));
     assert!(
-        text.contains("replacement ") && text.contains("#2 canonical"),
+        text.contains("replacement ") && text.contains("F-2 canonical"),
         "{text}"
     );
 
@@ -3620,8 +3680,8 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
     let human = papertiger(&db.0, &["status"]);
     assert_success(&human);
     let human = String::from_utf8(human.stdout).unwrap();
-    assert!(human.contains("> parent #1 Canonical parent 1"), "{human}");
-    assert!(human.contains("> leaf #2 Active leaf 1"), "{human}");
+    assert!(human.contains("> parent F-1 Canonical parent 1"), "{human}");
+    assert!(human.contains("> leaf F-2 Active leaf 1"), "{human}");
     assert!(human.contains("1 ready task(s) omitted"), "{human}");
     assert!(human.contains("1 older note(s) omitted"), "{human}");
 }

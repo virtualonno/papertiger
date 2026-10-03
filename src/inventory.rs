@@ -135,6 +135,7 @@ pub fn task_inventory(
                     },
                     task: TaskSummary {
                         seq: row.get(2)?,
+                        handle: crate::task_handle(row.get(2)?, &row.get::<_, String>(5)?),
                         title: row.get(3)?,
                         status: row.get(4)?,
                         kind: row.get(5)?,

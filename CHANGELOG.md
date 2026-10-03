@@ -20,6 +20,14 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   `legacy_task_kind` with a title-based suggestion and the `edit --kind`
   command that retypes it.
 - Bug tasks, like probes and decisions, require `--result` before `done`.
+- Tasks are shown by handle: kind letter and number, e.g. `F-924`, in `list`,
+  `show`, `status`, `focus`, `tree`, `search`, `list --status`, and the `add`
+  and `decompose` receipts; every JSON task and task summary carries `handle`
+  next to `seq`. Commands (and `papertiger-mise promotion verify-parent
+  --task`) accept the handle, upper or lower case, as well as `N` and `#N`. A
+  handle whose letter no longer matches the task's kind is refused with the
+  current handle. Refusal messages still name tasks as `#N`, which resolves.
+  Outline keys that read as handles are refused, so `deps` stay unambiguous.
 - The v14 migration rebuilds the tasks table to widen its kind constraint,
   reinstalls every write guard, and refuses if a foreign-key reference is
   broken. Dumps move to `papertiger.dump.v11`; `papertiger.dump.v9` is no

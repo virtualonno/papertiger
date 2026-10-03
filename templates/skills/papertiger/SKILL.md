@@ -50,8 +50,8 @@ papertiger decompose <N> --outline-file outline.json --start-ready --json
 ```
 
 Split a multi-part outcome into child tasks with one `decompose` call instead
-of inventing section or phase labels. Refer to local work by task number inside
-Papertiger and by its outcome everywhere else.
+of inventing section or phase labels. Refer to local work by its handle (`F-924`)
+inside Papertiger and by its outcome everywhere else.
 
 Read rejected history before reviving an approach. Choose `user`, `agent`, or
 `external` for the actual source of intent. An intent stands alone: fold a
