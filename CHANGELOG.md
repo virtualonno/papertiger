@@ -32,6 +32,9 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Changed
 
+- Text `log` prints one readable line per event: actor, model, the task's
+  handle, the event, its changed fields (each capped) and the rationale,
+  without repeating every event's authorship block; JSON is unchanged.
 - Text `focus`, `list` (including `list --unreviewed`) and `tree` without
   `--plan` cover each active plan in turn instead of refusing when several are
   active; `focus` shows 5 tasks per plan by default (20 for a single plan).

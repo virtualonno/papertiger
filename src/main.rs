@@ -921,12 +921,16 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
 /// One line of at most 160 characters, ending in `…` when the
 /// text was cut; `show` and `log` carry the full text.
 fn preview(text: &str) -> String {
-    const PREVIEW_CHARS: usize = 160;
+    clip(text, 160)
+}
+
+/// `text` on one line of at most `limit` characters, ending in `…` when cut.
+fn clip(text: &str, limit: usize) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= PREVIEW_CHARS {
+    if flat.chars().count() <= limit {
         return flat;
     }
-    let mut cut = flat.chars().take(PREVIEW_CHARS - 1).collect::<String>();
+    let mut cut = flat.chars().take(limit - 1).collect::<String>();
     cut.push('…');
     cut
 }
@@ -947,6 +951,78 @@ fn review_marker(prefix: &str, claim: &pt::ClaimReview, triage: bool) -> String 
         " [{prefix}{} · {}]",
         claim.state.as_str(),
         claim.author_model.as_deref().unwrap_or("model unknown")
+    )
+}
+
+/// One readable line per event: who, which task, what changed and why. The
+/// authorship fields every event carries are summarized as the model; JSON
+/// keeps the full payload.
+fn log_line(conn: &Connection, event: &pt::EventRecord) -> String {
+    // Fields every event carries, or that only restate another field.
+    const AUTHORSHIP: &[&str] = &[
+        "harness",
+        "model",
+        "model_source",
+        "reasoning_effort",
+        "session",
+        "seq",
+        "fields",
+        "revision_schema",
+    ];
+    let target = match (event.task_seq, &event.gate) {
+        (Some(seq), gate) => {
+            let handle = pt::seq_handle(conn, seq).unwrap_or_else(|_| format!("#{seq}"));
+            match gate {
+                Some(gate) => format!(" {handle} gate '{gate}'"),
+                None => format!(" {handle}"),
+            }
+        }
+        (None, _) => event
+            .plan
+            .as_ref()
+            .map(|plan| format!(" plan {plan}"))
+            .unwrap_or_default(),
+    };
+    let details = event
+        .payload
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .map(|payload| {
+            payload
+                .iter()
+                .filter(|(key, value)| {
+                    !AUTHORSHIP.contains(&key.as_str())
+                        && !value.is_null()
+                        // A result recorded as the rationale is shown once.
+                        && value.as_str() != event.why.as_deref()
+                })
+                .map(|(key, value)| match value {
+                    serde_json::Value::String(text) => format!("{key}={}", clip(text, 60)),
+                    other => format!("{key}={}", clip(&other.to_string(), 60)),
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|details| !details.is_empty())
+        .map(|details| format!(" {details}"))
+        .unwrap_or_default();
+    let model = event
+        .model
+        .as_ref()
+        .map(|model| format!(" [{model}]"))
+        .unwrap_or_default();
+    let why = event
+        .why
+        .as_ref()
+        .map(|why| format!(" - {}", preview(why)))
+        .unwrap_or_default();
+    format!(
+        "@{} {} {}{model}{target} {}/{}{details}{why}",
+        event.event_id,
+        short_event_time(&event.at),
+        event.actor,
+        event.entity,
+        event.kind,
     )
 }
 
@@ -2449,26 +2525,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 return Ok(());
             }
             for event in &log.events {
-                let why = event
-                    .why
-                    .as_ref()
-                    .map(|why| format!(" - {why}"))
-                    .unwrap_or_default();
-                let payload = event
-                    .payload
-                    .as_ref()
-                    .map(|payload| format!(" {payload}"))
-                    .unwrap_or_default();
-                pt::outln!(
-                    "@{} {} {} {}/{}{}{}",
-                    event.event_id,
-                    short_event_time(&event.at),
-                    event.actor,
-                    event.entity,
-                    event.kind,
-                    payload,
-                    why
-                );
+                pt::outln!("{}", log_line(&conn, event));
             }
             if log.truncated
                 && let Some(cursor) = &log.continuation

@@ -4001,7 +4001,10 @@ fn retire_into_is_visible_without_redirecting_show() {
     let log = papertiger(&db.0, &["log", "--task", "1"]);
     assert_success(&log);
     let log = String::from_utf8(log.stdout).unwrap();
-    assert!(log.contains("\"replacement_seq\":2"), "{log}");
+    assert!(
+        log.contains("F-1 task/status from=proposed replacement_seq=2 to=retired"),
+        "{log}"
+    );
     assert!(
         log.contains("the canonical task carries the outcome"),
         "{log}"
@@ -4021,7 +4024,7 @@ fn retire_into_is_visible_without_redirecting_show() {
     assert_success(&restored_log);
     let restored_log = String::from_utf8(restored_log.stdout).unwrap();
     assert!(
-        restored_log.contains("\"replacement_seq\":2")
+        restored_log.contains("replacement_seq=2")
             && restored_log.contains("the canonical task carries the outcome"),
         "{restored_log}"
     );
