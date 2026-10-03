@@ -117,6 +117,12 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   broken. Dumps move to `papertiger.dump.v11`; `papertiger.dump.v9` is no
   longer converted.
 
+### Added
+
+- A test checks every `papertiger` invocation and command code span in the
+  shipped skill, agent integration reference and README against the CLI's
+  command tree, so a guide naming a removed command or flag fails the build.
+
 ### Fixed
 
 - `tree` counts retired and rejected children as closed: a parent shows
