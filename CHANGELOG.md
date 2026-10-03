@@ -27,8 +27,8 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   required. `work` remains only on tasks recorded before typed kinds (letter
   W): it cannot be assigned, migration keeps existing `work`, `probe` and
   `decision` values unchanged, and `audit` reports each open `work` task as
-  `legacy_task_kind` with a title-based suggestion and the `edit --kind`
-  command that retypes it.
+  `legacy_task_kind` with a suggestion (`goal` for a task with children,
+  otherwise from the title) and the `edit --kind` command that retypes it.
 - Bug tasks, like probes and decisions, require `--result` before `done`.
 - Every planner write records its author, and a write without a model is
   refused, at the CLI and in the library (`set_authorship` before mutating).

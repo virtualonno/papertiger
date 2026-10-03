@@ -641,10 +641,13 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
         .find(|finding| finding.kind == "legacy_task_kind")
         .expect("open legacy work is reported");
     assert!(
-        legacy
-            .detail
-            .contains(&format!("papertiger edit {parent} --kind <kind>"))
-            && legacy.detail.contains("bug (suggested from the title"),
+        legacy.detail.starts_with(&format!("W-{parent} is open"))
+            && legacy
+                .detail
+                .contains(&format!("papertiger edit W-{parent} --kind <kind>"))
+            && legacy
+                .detail
+                .contains("goal (suggested because it has children"),
         "{}",
         legacy.detail
     );
@@ -666,7 +669,7 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
         pt::audit(&conn)
             .unwrap()
             .iter()
-            .all(|finding| !finding.detail.starts_with(&format!("#{parent} "))),
+            .all(|finding| !finding.detail.starts_with(&format!("W-{parent} "))),
         "the retyped task is no longer legacy work"
     );
     drop(conn);

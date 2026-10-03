@@ -8,8 +8,9 @@ use std::collections::HashMap;
 use crate::{
     ASSIGNABLE_TASK_KINDS, LEGACY_TASK_KIND, MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES,
     TASK_STATUSES, TaskPickup, external_references, get_task, history_recovery, mise_projection,
-    pickup, plan_move, suggested_task_kind, task_graph, valid_task_definition_revision_payload,
-    validate_commit_oid, validate_new_evidence_locator, validate_optional_sha256, write_guard,
+    pickup, plan_move, suggested_task_kind, task_graph, task_handle,
+    valid_task_definition_revision_payload, validate_commit_oid, validate_new_evidence_locator,
+    validate_optional_sha256, write_guard,
 };
 
 #[derive(Serialize)]
@@ -440,23 +441,33 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     }
 
     let mut st = conn.prepare(
-        "SELECT seq, title FROM tasks
+        "SELECT seq, title,
+                EXISTS(SELECT 1 FROM tasks child WHERE child.parent_id=tasks.task_id)
+           FROM tasks
           WHERE kind=?1 AND status IN ('proposed','in_progress')
           ORDER BY seq",
     )?;
-    let rows: Vec<(i64, String)> = st
+    let rows: Vec<(i64, String, bool)> = st
         .query_map(params![LEGACY_TASK_KIND], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?
         .collect::<rusqlite::Result<_>>()?;
-    for (seq, title) in rows {
-        let choice = suggested_task_kind(&title)
-            .map(|kind| format!("{kind} (suggested from the title; confirm it fits the outcome)"))
-            .unwrap_or_else(|| format!("one of {}", ASSIGNABLE_TASK_KINDS.join("|")));
+    for (seq, title, has_children) in rows {
+        // A task with children is a container whatever its title says.
+        let choice = if has_children {
+            "goal (suggested because it has children; confirm it fits the outcome)".to_owned()
+        } else {
+            suggested_task_kind(&title)
+                .map(|kind| {
+                    format!("{kind} (suggested from the title; confirm it fits the outcome)")
+                })
+                .unwrap_or_else(|| format!("one of {}", ASSIGNABLE_TASK_KINDS.join("|")))
+        };
+        let handle = task_handle(seq, LEGACY_TASK_KIND);
         push(
             "legacy_task_kind",
             format!(
-                "#{seq} is open with the legacy kind '{LEGACY_TASK_KIND}'; run `papertiger edit {seq} --kind <kind> --why <reason>` with {choice}"
+                "{handle} is open with the legacy kind '{LEGACY_TASK_KIND}'; run `papertiger edit {handle} --kind <kind> --why <reason>` with {choice}"
             ),
         );
     }
