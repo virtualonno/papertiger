@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::{
     PlanIdentity, StatusProjection, TASK_COLS, Task, TaskPickup, TaskSummary, get_plan, open_deps,
-    open_gates, pickup, task_ancestry, task_from_row, validate_session,
+    open_gates, pickup, seq_handle, task_ancestry, task_from_row, validate_session,
 };
 
 /// Handles of done dependencies whose results are unreviewed or disputed.
@@ -34,8 +34,8 @@ fn unreviewed_dependencies(conn: &Connection, task: &Task) -> Result<Vec<String>
 pub(crate) fn entry_blockers(conn: &Connection, task: &Task) -> Result<Vec<String>> {
     let mut blockers = open_deps(conn, task.task_id)?
         .into_iter()
-        .map(|dependency| format!("dep:#{dependency}"))
-        .collect::<Vec<_>>();
+        .map(|dependency| Ok(format!("dep:{}", seq_handle(conn, dependency)?)))
+        .collect::<Result<Vec<_>>>()?;
     let mut external = conn.prepare(
         "SELECT name FROM gates
           WHERE task_id=?1 AND kind='external' AND status='open' ORDER BY gate_id",

@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::evidence::{
     CorrectiveCommand, EvidenceBindingVerification, EvidenceClassification, verify_all_evidence,
 };
-use crate::{sha256, validate_sha256};
+use crate::{seq_handle, sha256, validate_sha256};
 
 pub const DEFAULT_EVIDENCE_PAGE: usize = 50;
 pub const MAX_EVIDENCE_PAGE: usize = 500;
@@ -171,7 +171,8 @@ pub fn verify_evidence(
         .transpose()?;
     let task_scope = options
         .task_seq
-        .map(|seq| format!(" on task #{seq}"))
+        .map(|seq| seq_handle(conn, seq).map(|handle| format!(" on task {handle}")))
+        .transpose()?
         .unwrap_or_default();
     Ok(EvidenceVerificationReport {
         schema: "papertiger.evidence_verification.v3".into(),

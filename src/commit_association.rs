@@ -45,12 +45,16 @@ pub fn add_commit_association(
             if error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
         {
             bail!(
-                "commit {commit_oid} in repository '{repository}' is already recorded on task #{seq}; inspect it with `papertiger commit list {seq}`"
+                "commit {commit_oid} in repository '{repository}' is already recorded on task {handle}; inspect it with `papertiger commit list {seq}`",
+                handle = task.handle
             );
         }
         Err(error) => {
             return Err(error).with_context(|| {
-                format!("record commit {commit_oid} in repository '{repository}' on task #{seq}")
+                format!(
+                    "record commit {commit_oid} in repository '{repository}' on task {}",
+                    task.handle
+                )
             });
         }
     }
@@ -95,7 +99,8 @@ pub fn remove_commit_association(
     )?;
     if removed == 0 {
         bail!(
-            "task #{seq} has no commit {commit_oid} in repository '{repository}'; inspect it with `papertiger commit list {seq}`"
+            "task {handle} has no commit {commit_oid} in repository '{repository}'; inspect it with `papertiger commit list {seq}`",
+            handle = task.handle
         );
     }
     record_event_in_mutation(

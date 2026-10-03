@@ -59,7 +59,7 @@ fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
     );
     assert!(!rows[2]["blockers"].as_array().unwrap().is_empty());
     assert_eq!(rows[3]["readiness"], "blocked");
-    assert_eq!(rows[3]["blockers"][0], format!("dep:#{ready}"));
+    assert_eq!(rows[3]["blockers"][0], format!("dep:F-{ready}"));
     assert!(rows[1]["pickup"].is_null());
     assert!(rows[1]["blockers"].as_array().unwrap().is_empty());
     // Narrative growth must not turn a selection read into a context dump.

@@ -141,7 +141,7 @@ pub fn remove_external_reference(
     let why = require_nonblank("reference removal --why", why)?;
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
-    let reference = external_references(&tx,seq)?.into_iter().find(|item| item.kind == kind && item.locator == locator).ok_or_else(|| anyhow::anyhow!("reference {kind} '{locator}' is absent from #{seq}; inspect `papertiger reference list {seq}`"))?;
+    let reference = external_references(&tx,seq)?.into_iter().find(|item| item.kind == kind && item.locator == locator).ok_or_else(|| anyhow::anyhow!("reference {kind} '{locator}' is absent from {handle}; inspect `papertiger reference list {seq}`", handle = task.handle))?;
     tx.execute(
         "DELETE FROM external_references WHERE task_id=?1 AND kind=?2 AND locator=?3",
         params![task.task_id, kind, locator],

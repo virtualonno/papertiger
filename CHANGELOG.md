@@ -48,7 +48,10 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   intent, ancestry, filing review, progress, the next ready leaves in focus
   order, open descendants with pickup and owner state, open gates, results
   of done descendants and the latest notes, each section bounded to 10 with
-  an omitted count.
+  an omitted count. Text output shows each result and note as one line of
+  at most 160 characters; JSON carries the full text.
+- `add --parent <task>` without `--plan` places the task in its parent's
+  plan instead of requiring a single active plan.
 - A pickup records its owner process (host, PID and birth identity) when
   the harness names it (`CLAUDE_PID`, `OPENCODE_PID`), and `focus`,
   `status` and `show` report `owner_state`: `ended` only when provable on
@@ -123,8 +126,16 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   next to `seq`. Commands (and `papertiger-mise promotion verify-parent
   --task`) accept the handle, upper or lower case, as well as `N` and `#N`. A
   handle whose letter no longer matches the task's kind is refused with the
-  current handle. Refusal messages still name tasks as `#N`, which resolves.
-  Outline keys that read as handles are refused, so `deps` stay unambiguous.
+  current handle. Outline keys that read as handles are refused, so `deps`
+  stay unambiguous.
+- Text output names tasks by handle: mutation receipts (`F-12 done`, `gate
+  'proof' on F-12 resolved`, `F-3 now depends on F-2`; an `edit --kind`
+  receipt shows the new letter), refusals, `[deps: ...]` lists, wait-chain
+  explanations and `audit` findings. Corrective commands inside messages keep
+  the bare number. Focus and ready `blockers` read `dep:<handle>`, matching
+  `disputed-result:<handle>`; JSON numeric fields are unchanged. Messages
+  about a task number that does not exist, and history checks that name an
+  event's recorded number, still show `#N`.
 - The v14 migration rebuilds the tasks table to widen its kind constraint,
   reinstalls every write guard, and refuses if a foreign-key reference is
   broken. Dumps move to `papertiger.dump.v11`; `papertiger.dump.v9` is no

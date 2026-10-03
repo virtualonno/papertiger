@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use crate::{
     MEANING_SOURCES, Priority, TASK_DEFINITION_REVISION_SCHEMA, TASK_KINDS, begin_mutation,
     find_cycle, get_task, kind_requires_result, now, plan_status, record_event_in_mutation,
-    resolve_plan, start_task_in_mutation, task_graph, validate_assignable_task_kind, validate_tag,
-    validate_task_title,
+    resolve_plan, seq_handle, start_task_in_mutation, task_graph, validate_assignable_task_kind,
+    validate_tag, validate_task_title,
 };
 
 /// Everything a new task records. Start from [`TaskCreation::new`] and set
@@ -79,7 +79,12 @@ pub fn add_task<'a>(
     let plan_id = match plan.into() {
         PlanSelector::Id(plan_id) => plan_id,
         PlanSelector::Slug(slug) => resolve_plan(&tx, Some(slug))?.0,
-        PlanSelector::Active => resolve_plan(&tx, None)?.0,
+        // A child belongs to its parent's plan; only a top-level task needs
+        // the single active plan.
+        PlanSelector::Active => match creation.parent {
+            Some(parent) => get_task(&tx, parent)?.plan_id,
+            None => resolve_plan(&tx, None)?.0,
+        },
     };
     let seq = add_task_in_mutation(
         &tx,
@@ -125,11 +130,12 @@ pub(crate) fn add_task_in_mutation(
         Some(p) => {
             let parent = get_task(tx, p)?;
             if parent.plan_id != plan_id {
-                bail!("parent #{p} belongs to a different plan");
+                bail!("parent {} belongs to a different plan", parent.handle);
             }
             if matches!(parent.status.as_str(), "done" | "retired" | "rejected") {
                 bail!(
-                    "parent #{p} is {}; reopen it before adding live children",
+                    "parent {} is {}; reopen it before adding live children",
+                    parent.handle,
                     parent.status
                 );
             }
@@ -354,22 +360,37 @@ pub fn edit_task(
             Some(parent_seq) => {
                 let new_parent = get_task(&tx, parent_seq)?;
                 if new_parent.task_id == task.task_id {
-                    bail!("#{seq} cannot be its own parent");
+                    bail!("{} cannot be its own parent", task.handle);
                 }
                 if new_parent.plan_id != task.plan_id {
-                    bail!("#{seq} and parent #{parent_seq} belong to different plans");
+                    bail!(
+                        "{} and parent {} belong to different plans",
+                        task.handle,
+                        new_parent.handle
+                    );
                 }
                 if matches!(task.status.as_str(), "proposed" | "in_progress")
                     && matches!(new_parent.status.as_str(), "done" | "retired" | "rejected")
                 {
                     bail!(
-                        "parent #{parent_seq} is {}; reopen it before assigning live child #{seq}",
-                        new_parent.status
+                        "parent {} is {}; reopen it before assigning live child {}",
+                        new_parent.handle,
+                        new_parent.status,
+                        task.handle
                     );
                 }
                 (Some(new_parent.task_id), Some(new_parent.seq))
             }
             None => (None, None),
+        };
+        // A refusal rolls back any kind change made above, so the edited
+        // task is named by the handle it keeps.
+        let name = |named: i64| {
+            if named == seq {
+                Ok(task.handle.clone())
+            } else {
+                seq_handle(&tx, named)
+            }
         };
         if parent_id != task.parent_id {
             tx.execute(
@@ -384,8 +405,8 @@ pub fn edit_task(
                     "parent change would create cycle {}",
                     cycle
                         .iter()
-                        .map(|task| format!("#{task}"))
-                        .collect::<Vec<_>>()
+                        .map(|task| name(*task))
+                        .collect::<Result<Vec<_>>>()?
                         .join(" -> ")
                 );
             }
@@ -394,8 +415,10 @@ pub fn edit_task(
                 && let Some(steps) = task_graph::waits_for(&tx, seq, parent_seq)?
             {
                 bail!(
-                    "parent change would deadlock: #{seq} finishes only after its new parent #{parent_seq} ({}); choose another parent{}",
-                    task_graph::describe_chain(seq, &steps),
+                    "parent change would deadlock: {} finishes only after its new parent {} ({}); choose another parent{}",
+                    task.handle,
+                    name(parent_seq)?,
+                    task_graph::chain_text(seq, &steps, name)?,
                     task_graph::or_remove_dependency(seq, &steps)
                 );
             }
@@ -420,7 +443,10 @@ pub fn edit_task(
         );
     }
     if changed.is_empty() {
-        bail!("#{seq} edit made no changes; omit unchanged values or choose different values");
+        bail!(
+            "{} edit made no changes; omit unchanged values or choose different values",
+            task.handle
+        );
     }
     let edited = get_task(&tx, seq)?;
     if edited.status == "done"
@@ -432,8 +458,9 @@ pub fn edit_task(
             .is_none_or(str::is_empty)
     {
         bail!(
-            "completed {} task #{seq} requires a durable result; reopen it before changing kind",
-            edited.kind
+            "completed {} task {} requires a durable result; reopen it before changing kind",
+            edited.kind,
+            task.handle
         );
     }
     record_event_in_mutation(
@@ -481,7 +508,7 @@ pub fn add_tag(
         params![task.task_id, tag],
     )?;
     if changed == 0 {
-        bail!("#{seq} already has tag '{tag}'");
+        bail!("{} already has tag '{tag}'", task.handle);
     }
     record_event_in_mutation(
         &tx,
@@ -512,7 +539,7 @@ pub fn remove_tag(
         params![task.task_id, tag],
     )?;
     if changed == 0 {
-        bail!("#{seq} does not have tag '{tag}'");
+        bail!("{} does not have tag '{tag}'", task.handle);
     }
     record_event_in_mutation(
         &tx,
@@ -552,20 +579,26 @@ pub(crate) fn add_dep_inner(
     let task = get_task(tx, seq)?;
     let on = get_task(tx, on_seq)?;
     if task.task_id == on.task_id {
-        bail!("#{seq} cannot depend on itself");
+        bail!("{} cannot depend on itself", task.handle);
     }
     if task.plan_id != on.plan_id {
-        bail!("#{seq} and dependency #{on_seq} belong to different plans");
+        bail!(
+            "{} and dependency {} belong to different plans",
+            task.handle,
+            on.handle
+        );
     }
     if event && matches!(task.status.as_str(), "done" | "retired" | "rejected") {
         bail!(
-            "#{seq} is {}; reopen it before adding dependencies",
+            "{} is {}; reopen it before adding dependencies",
+            task.handle,
             task.status
         );
     }
     if event && matches!(on.status.as_str(), "retired" | "rejected") {
         bail!(
-            "dependency #{on_seq} is {}; reopen it or choose a viable prerequisite",
+            "dependency {} is {}; reopen it or choose a viable prerequisite",
+            on.handle,
             on.status
         );
     }
@@ -575,14 +608,18 @@ pub(crate) fn add_dep_inner(
         |r| r.get(0),
     )?;
     if exists {
-        bail!("#{seq} already depends on #{on_seq}");
+        bail!("{} already depends on {}", task.handle, on.handle);
     }
     // Reject cycles: is `task` reachable from `on` via deps?
     let mut stack = vec![on.task_id];
     let mut seen = HashSet::new();
     while let Some(cur) = stack.pop() {
         if cur == task.task_id {
-            bail!("dependency #{seq} -> #{on_seq} would create a cycle");
+            bail!(
+                "dependency {} -> {} would create a cycle",
+                task.handle,
+                on.handle
+            );
         }
         if !seen.insert(cur) {
             continue;
@@ -596,9 +633,11 @@ pub(crate) fn add_dep_inner(
     // Import restores edges that earlier releases admitted; it never adds new waits.
     if event && let Some(steps) = task_graph::waits_for(tx, on.seq, task.seq)? {
         bail!(
-            "dependency #{seq} -> #{on_seq} would deadlock: #{on_seq} finishes only after #{seq} ({}); choose a prerequisite that does not wait for #{seq}{}",
-            task_graph::describe_chain(on.seq, &steps),
-            task_graph::or_remove_dependency(on.seq, &steps)
+            "dependency {task} -> {on} would deadlock: {on} finishes only after {task} ({}); choose a prerequisite that does not wait for {task}{}",
+            task_graph::describe_chain(tx, on.seq, &steps)?,
+            task_graph::or_remove_dependency(on.seq, &steps),
+            task = task.handle,
+            on = on.handle
         );
     }
     tx.execute(
@@ -635,7 +674,7 @@ pub fn remove_dep(
         params![task.task_id, on.task_id],
     )?;
     if n == 0 {
-        bail!("#{seq} does not depend on #{on_seq}");
+        bail!("{} does not depend on {}", task.handle, on.handle);
     }
     record_event_in_mutation(
         &tx,

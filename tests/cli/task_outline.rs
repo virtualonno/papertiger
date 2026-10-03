@@ -171,7 +171,7 @@ fn decompose_creates_children_edges_and_ready_starts_in_one_receipt() {
     );
     assert_success(&plain);
     let plain = String::from_utf8(plain.stdout).unwrap();
-    assert!(plain.contains("#3 decomposed into 1 child task(s):"));
+    assert!(plain.contains("F-3 decomposed into 1 child task(s):"));
     assert!(plain.contains("follow -> F-8"));
     assert_success(&papertiger(&db.0, &["audit"]));
 }
@@ -255,12 +255,12 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         "child 5 (\"d\"): unknown task kind 'chore'",
         "child 7 (\"f\"): dependency \"missing\" names no key in this outline",
         "child 7 (\"f\"): dependency \"#1\" is a string; write an existing task as the integer 1",
-        "child 7 (\"f\"): dependency #1 is retired",
-        "child 7 (\"f\"): dependency #4 belongs to a different plan than parent #3",
-        "child 7 (\"f\"): dependency #3 finishes only after parent #3, which waits for this child",
-        "child 7 (\"f\"): dependency #2 finishes only after parent #3, which waits for this child",
-        "child 7 (\"f\"): dependency #5 finishes only after parent #3, which waits for this child (#5 depends on #3); depend on a task that does not wait for #3, or first remove a dependency in that chain with `papertiger dep remove 5 3 --why <reason>`",
-        "child 7 (\"f\"): dependency #2 finishes only after parent #3, which waits for this child (#2 waits for unfinished child #3); depend on a task that does not wait for #3
+        "child 7 (\"f\"): dependency F-1 is retired",
+        "child 7 (\"f\"): dependency F-4 belongs to a different plan than parent F-3",
+        "child 7 (\"f\"): dependency F-3 finishes only after parent F-3, which waits for this child",
+        "child 7 (\"f\"): dependency F-2 finishes only after parent F-3, which waits for this child",
+        "child 7 (\"f\"): dependency F-5 finishes only after parent F-3, which waits for this child (F-5 depends on F-3); depend on a task that does not wait for F-3, or first remove a dependency in that chain with `papertiger dep remove 5 3 --why <reason>`",
+        "child 7 (\"f\"): dependency F-2 finishes only after parent F-3, which waits for this child (F-2 waits for unfinished child F-3); depend on a task that does not wait for F-3
 ",
         "child 7 (\"f\"): cannot depend on itself",
         "child 7 (\"f\"): dependency #99 does not exist",
@@ -335,7 +335,7 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
     );
     assert!(!finished_parent.status.success());
     assert!(stderr(&finished_parent).contains(
-        "parent #1 is retired; reopen it with `papertiger reopen 1 --why <reason>` before adding live children"
+        "parent F-1 is retired; reopen it with `papertiger reopen 1 --why <reason>` before adding live children"
     ));
     assert_eq!(log_head(&db), head);
 }
@@ -362,7 +362,7 @@ fn decompose_names_the_plan_step_first_and_reads_outline_files() {
     assert!(!refused.status.success());
     assert!(
         stderr(&refused).contains(
-            "plan 'closed' is done; reactivate it with `papertiger plan set closed active --why <reason>` and then parent #1 with `papertiger reopen 1 --why <reason>` before adding tasks"
+            "plan 'closed' is done; reactivate it with `papertiger plan set closed active --why <reason>` and then parent F-1 with `papertiger reopen 1 --why <reason>` before adding tasks"
         ),
         "{}",
         stderr(&refused)
@@ -420,8 +420,8 @@ fn decompose_replays_refuse_while_children_are_live_and_starts_require_inputs() 
     assert!(!replay.status.success());
     assert!(replay.stdout.is_empty());
     let message = stderr(&replay);
-    assert!(message.contains("title duplicates live child #2 of #1"));
-    assert!(message.contains("title duplicates live child #3 of #1"));
+    assert!(message.contains("title duplicates live child F-2 of F-1"));
+    assert!(message.contains("title duplicates live child F-3 of F-1"));
     assert!(message.contains("inspect `papertiger show 1` instead of replaying it"));
     assert_eq!(log_head(&db), head);
 

@@ -40,8 +40,8 @@ pub fn move_tasks_to_plan(
     for task in &tasks {
         if task.plan_id == destination_id {
             bail!(
-                "#{} already belongs to '{destination}'; omit it from move-plan",
-                task.seq
+                "{} already belongs to '{destination}'; omit it from move-plan",
+                task.handle
             );
         }
     }

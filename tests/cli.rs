@@ -851,7 +851,12 @@ fn brief_resumes_a_goal_with_its_whole_subtree_in_bounded_sections() {
         "--text",
         "Renderer waits on the parser",
     ]);
-    run(&["done", "D-2", "--result", "Markdown with front matter"]);
+    let long_result = format!(
+        "Markdown with front matter
+{}",
+        "because templates stay diffable ".repeat(10).trim_end()
+    );
+    run(&["done", "D-2", "--result", &long_result]);
     for index in 0..12 {
         run(&[
             "note",
@@ -888,7 +893,7 @@ fn brief_resumes_a_goal_with_its_whole_subtree_in_bounded_sections() {
     assert_eq!(brief["obligations"]["entries"][0]["gate"], "vendor");
     assert_eq!(
         brief["outcomes"]["entries"][0]["result"],
-        "Markdown with front matter"
+        long_result.as_str()
     );
     assert_eq!(brief["notes"]["entries"].as_array().unwrap().len(), 10);
     assert_eq!(brief["notes"]["omitted"], 3);
@@ -906,9 +911,13 @@ fn brief_resumes_a_goal_with_its_whole_subtree_in_bounded_sections() {
         text.contains("F-3 vendor (external): parser 2.0 released"),
         "{text}"
     );
+    let outcome = text
+        .lines()
+        .find(|line| line.contains("D-2 Choose the format: Markdown with front matter because"))
+        .unwrap_or_else(|| panic!("{text}"));
     assert!(
-        text.contains("D-2 Choose the format: Markdown with front matter"),
-        "{text}"
+        outcome.ends_with('…') && outcome.chars().count() < 200,
+        "a long result is one capped line in text: {outcome}"
     );
     assert!(text.contains("  ... 3 more"), "{text}");
 }
@@ -1156,14 +1165,20 @@ fn handles_name_the_kind_resolve_like_numbers_and_refuse_when_stale() {
         "--why",
         "lowercase letters resolve",
     ]));
-    assert_success(&run(&[
+    let retyped = run(&[
         "edit",
         "1",
         "--kind",
         "feature",
         "--why",
         "it was a missing feature",
-    ]));
+    ]);
+    assert_success(&retyped);
+    assert_eq!(
+        String::from_utf8_lossy(&retyped.stdout).trim(),
+        "F-1 updated (kind)",
+        "a receipt names the task by its handle after the mutation"
+    );
     let stale = run(&["show", "B-1"]);
     assert!(!stale.status.success());
     assert!(
@@ -1863,8 +1878,8 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
     assert!(!blocked.status.success());
     let blocked_stderr = String::from_utf8_lossy(&blocked.stderr);
     assert!(blocked_stderr.contains("task was not created"));
-    assert!(blocked_stderr.contains("resolve dep:#1"));
-    assert!(!blocked_stderr.contains("#2 is not ready"));
+    assert!(blocked_stderr.contains("resolve dep:F-1"));
+    assert!(!blocked_stderr.contains("F-2 is not ready"));
     let after_refusal = papertiger(&db.0, &["log", "--json"]);
     assert_success(&after_refusal);
     let after_refusal: serde_json::Value = serde_json::from_slice(&after_refusal.stdout).unwrap();
@@ -1942,32 +1957,32 @@ fn dependencies_that_finish_only_after_their_dependent_are_refused() {
     for (args, expected) in [
         (
             vec!["add", "--kind", "feature", "New child", "--parent", "2", "--dep", "1"],
-            "dependency #6 -> #1 would deadlock: #1 finishes only after #6",
+            "dependency F-6 -> F-1 would deadlock: F-1 finishes only after F-6",
         ),
         (
             vec!["add", "--kind", "feature", "New child", "--parent", "2", "--dep", "3"],
-            "dependency #6 -> #3 would deadlock: #3 finishes only after #6",
+            "dependency F-6 -> F-3 would deadlock: F-3 finishes only after F-6",
         ),
         (
             vec!["add", "--kind", "feature", "New child", "--parent", "2", "--dep", "2"],
-            "dependency #6 -> #2 would deadlock: #2 finishes only after #6",
+            "dependency F-6 -> F-2 would deadlock: F-2 finishes only after F-6",
         ),
         (
             vec!["dep", "add", "4", "1", "--why", "ancestor"],
-            "dependency #4 -> #1 would deadlock: #1 finishes only after #4 (#1 waits for unfinished child #2, which waits for unfinished child #4); choose a prerequisite that does not wait for #4
+            "dependency F-4 -> F-1 would deadlock: F-1 finishes only after F-4 (F-1 waits for unfinished child F-2, which waits for unfinished child F-4); choose a prerequisite that does not wait for F-4
 ",
         ),
         (
             vec!["dep", "add", "4", "3", "--why", "downstream"],
-            "dependency #4 -> #3 would deadlock: #3 finishes only after #4 (#3 depends on #2, which waits for unfinished child #4); choose a prerequisite that does not wait for #4, or first remove a dependency in that chain with `papertiger dep remove 3 2 --why <reason>`",
+            "dependency F-4 -> F-3 would deadlock: F-3 finishes only after F-4 (F-3 depends on F-2, which waits for unfinished child F-4); choose a prerequisite that does not wait for F-4, or first remove a dependency in that chain with `papertiger dep remove 3 2 --why <reason>`",
         ),
         (
             vec!["dep", "add", "4", "2", "--why", "direct parent"],
-            "dependency #4 -> #2 would deadlock: #2 finishes only after #4",
+            "dependency F-4 -> F-2 would deadlock: F-2 finishes only after F-4",
         ),
         (
             vec!["edit", "3", "--parent", "4", "--why", "nest downstream"],
-            "parent change would deadlock: #3 finishes only after its new parent #4 (#3 depends on #2, which waits for unfinished child #4); choose another parent, or first remove a dependency in that chain with `papertiger dep remove 3 2 --why <reason>`",
+            "parent change would deadlock: F-3 finishes only after its new parent F-4 (F-3 depends on F-2, which waits for unfinished child F-4); choose another parent, or first remove a dependency in that chain with `papertiger dep remove 3 2 --why <reason>`",
         ),
     ] {
         let refused = papertiger(&db.0, &args);
@@ -2022,7 +2037,7 @@ fn dependencies_that_finish_only_after_their_dependent_are_refused() {
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
         stderr.contains(
-            "reopening #7 would deadlock: #7 finishes only after its parent #2 (#7 depends on #3, which depends on #2), which would wait for it again; move it first with `papertiger edit 7 --parent <task>` or `papertiger edit 7 --clear-parent`, or first remove a dependency in that chain with `papertiger dep remove 7 3 --why <reason>` or `papertiger dep remove 3 2 --why <reason>`"
+            "reopening F-7 would deadlock: F-7 finishes only after its parent F-2 (F-7 depends on F-3, which depends on F-2), which would wait for it again; move it first with `papertiger edit 7 --parent <task>` or `papertiger edit 7 --clear-parent`, or first remove a dependency in that chain with `papertiger dep remove 7 3 --why <reason>` or `papertiger dep remove 3 2 --why <reason>`"
         ),
         "{stderr}"
     );
@@ -3747,7 +3762,7 @@ fn retire_into_is_visible_without_redirecting_show() {
     assert_success(&retirement);
     assert_eq!(
         String::from_utf8_lossy(&retirement.stdout).trim(),
-        "#1 retired into #2"
+        "F-1 retired into F-2"
     );
 
     let text = papertiger(&db.0, &["show", "1"]);

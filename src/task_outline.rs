@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::task_graph::{WaitGraph, describe_chain, first_cycle, or_remove_dependency};
 use crate::{
-    begin_mutation, get_task, parse_task_ref, plan_status, validate_assignable_task_kind,
-    validate_tag, validate_task_title,
+    begin_mutation, get_task, parse_task_ref, plan_status, task_handle,
+    validate_assignable_task_kind, validate_tag, validate_task_title,
 };
 
 pub const TASK_OUTLINE_SCHEMA: &str = "papertiger.task_outline.v2";
@@ -207,7 +207,7 @@ pub fn decompose_task(
     if matches!(status.as_str(), "done" | "retired") {
         let slug = crate::get_plan(&tx, parent.plan_id)?.slug;
         let then_reopen = if parent_finished {
-            format!(" and then parent #{parent_seq} with {reopen_parent}")
+            format!(" and then parent {} with {reopen_parent}", parent.handle)
         } else {
             String::new()
         };
@@ -217,7 +217,8 @@ pub fn decompose_task(
     }
     if parent_finished {
         bail!(
-            "parent #{parent_seq} is {}; reopen it with {reopen_parent} before adding live children",
+            "parent {} is {}; reopen it with {reopen_parent} before adding live children",
+            parent.handle,
             parent.status
         );
     }
@@ -265,13 +266,17 @@ pub fn decompose_task(
 
     let mut live_titles = HashMap::new();
     let mut statement = tx.prepare(
-        "SELECT seq, title FROM tasks WHERE parent_id=?1 AND status IN ('proposed','in_progress')",
+        "SELECT seq, kind, title FROM tasks WHERE parent_id=?1 AND status IN ('proposed','in_progress')",
     )?;
     for row in statement.query_map(params![parent.task_id], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
     })? {
-        let (seq, title) = row?;
-        live_titles.insert(title_identity(&title), seq);
+        let (seq, kind, title) = row?;
+        live_titles.insert(title_identity(&title), task_handle(seq, &kind));
     }
     drop(statement);
     let mut outline_titles = HashMap::new();
@@ -281,9 +286,10 @@ pub fn decompose_task(
             Err(error) => problems.push(format!("{label}: {error}")),
             Ok(title) => {
                 let identity = title_identity(title);
-                if let Some(seq) = live_titles.get(&identity) {
+                if let Some(child) = live_titles.get(&identity) {
                     problems.push(format!(
-                        "{label}: title duplicates live child #{seq} of #{parent_seq}; if this outline was already applied, inspect `papertiger show {parent_seq}` instead of replaying it"
+                        "{label}: title duplicates live child {child} of {parent}; if this outline was already applied, inspect `papertiger show {parent_seq}` instead of replaying it",
+                        parent = parent.handle
                     ));
                 } else if let Some(first) = outline_titles.insert(identity, index) {
                     problems.push(format!(
@@ -368,22 +374,27 @@ pub fn decompose_task(
                     let task = get_task(&tx, seq)?;
                     if task.plan_id != parent.plan_id {
                         problems.push(format!(
-                            "{label}: dependency #{seq} belongs to a different plan than parent #{parent_seq}"
+                            "{label}: dependency {} belongs to a different plan than parent {}",
+                            task.handle,
+                            parent.handle
                         ));
                     } else if matches!(task.status.as_str(), "retired" | "rejected") {
                         problems.push(format!(
-                            "{label}: dependency #{seq} is {}; reopen it or choose a viable prerequisite",
+                            "{label}: dependency {} is {}; reopen it or choose a viable prerequisite",
+                            task.handle,
                             task.status
                         ));
                     } else if let Some(steps) = waits.chain(seq, parent_seq) {
                         let chain = if steps.is_empty() {
                             String::new()
                         } else {
-                            format!(" ({})", describe_chain(seq, &steps))
+                            format!(" ({})", describe_chain(&tx, seq, &steps)?)
                         };
                         problems.push(format!(
-                            "{label}: dependency #{seq} finishes only after parent #{parent_seq}, which waits for this child{chain}; depend on a task that does not wait for #{parent_seq}{}",
-                            or_remove_dependency(seq, &steps)
+                            "{label}: dependency {} finishes only after parent {parent}, which waits for this child{chain}; depend on a task that does not wait for {parent}{}",
+                            task.handle,
+                            or_remove_dependency(seq, &steps),
+                            parent = parent.handle
                         ));
                     } else {
                         resolved.push(Dependency::Existing(seq));

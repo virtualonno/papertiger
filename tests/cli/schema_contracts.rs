@@ -93,7 +93,7 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
         "schema-fixture"
     );
     assert_eq!(selection["entries"][0]["readiness"], "mine");
-    assert_eq!(selection["entries"][1]["blockers"], json!(["dep:#1"]));
+    assert_eq!(selection["entries"][1]["blockers"], json!(["dep:F-1"]));
     let inventory = run(&["list", "--all-plans", "--status", "unfinished", "--json"]);
     assert_eq!(inventory["tasks"][0]["task"]["seq"], 1);
     assert_eq!(inventory["tasks"][0]["plan"]["slug"], "source");

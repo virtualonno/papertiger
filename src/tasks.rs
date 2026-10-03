@@ -482,6 +482,18 @@ pub fn task_handle(seq: i64, kind: &str) -> String {
     }
 }
 
+/// The current handle of the task numbered `seq`, read from its stored kind.
+/// Refuses a missing task instead of inventing a handle for it.
+pub fn seq_handle(conn: &Connection, seq: i64) -> Result<String> {
+    let kind: String = conn
+        .query_row("SELECT kind FROM tasks WHERE seq=?1", params![seq], |row| {
+            row.get(0)
+        })
+        .optional()?
+        .ok_or_else(|| anyhow!("no task #{seq}; inspect the plan with `papertiger list`"))?;
+    Ok(task_handle(seq, &kind))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

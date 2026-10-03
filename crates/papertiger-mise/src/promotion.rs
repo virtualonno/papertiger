@@ -225,8 +225,8 @@ pub(crate) fn verify_papertiger_gate(
     }
     if !matches!(context.task.status.as_str(), "in_progress" | "done") {
         bail!(
-            "Papertiger task #{} is {}; promotion authorization requires in_progress or done",
-            binding.task_seq,
+            "Papertiger task {} is {}; promotion authorization requires in_progress or done",
+            context.task.handle,
             context.task.status
         );
     }
@@ -236,8 +236,8 @@ pub(crate) fn verify_papertiger_gate(
         .find(|gate| gate.name == binding.gate_name)
         .with_context(|| {
             format!(
-                "Papertiger task #{} has no gate '{}'",
-                binding.task_seq, binding.gate_name
+                "Papertiger task {} has no gate '{}'",
+                context.task.handle, binding.gate_name
             )
         })?;
     if gate.status != "resolved"
@@ -245,9 +245,9 @@ pub(crate) fn verify_papertiger_gate(
         || gate.evidence_sha256.as_deref() != Some(binding.evidence_sha256.as_str())
     {
         bail!(
-            "Papertiger gate '{}' on #{} does not exactly authorize this nomination evidence",
+            "Papertiger gate '{}' on {} does not exactly authorize this nomination evidence",
             binding.gate_name,
-            binding.task_seq
+            context.task.handle
         );
     }
 

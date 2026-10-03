@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::{
     ASSIGNABLE_TASK_KINDS, LEGACY_TASK_KIND, MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES,
     TASK_STATUSES, TaskPickup, external_references, get_task, history_recovery, mise_projection,
-    pickup, plan_move, suggested_task_kind, task_graph, task_handle,
+    pickup, plan_move, seq_handle, suggested_task_kind, task_graph, task_handle,
     valid_task_definition_revision_payload, validate_commit_oid, validate_new_evidence_locator,
     validate_optional_sha256, write_guard,
 };
@@ -126,7 +126,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         if let Err(error) = validation {
             push(
                 "invalid_task_pickup",
-                format!("#{seq}: {error}; restore an intact export"),
+                format!(
+                    "{seq}: {error}; restore an intact export",
+                    seq = seq_handle(conn, seq)?
+                ),
             );
         }
     }
@@ -157,7 +160,8 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
             push(
                 "oversized_task_title",
                 format!(
-                    "#{seq} in plan '{plan}' has {characters} title characters (maximum {MAX_TASK_TITLE_CHARS})"
+                    "{seq} in plan '{plan}' has {characters} title characters (maximum {MAX_TASK_TITLE_CHARS})",
+                    seq = seq_handle(conn, seq)?
                 ),
             );
         }
@@ -176,8 +180,8 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                     "plan '{plan}' has duplicate live title {title:?} on {}; inspect with `papertiger search {title:?} --plan {plan}`",
                     sequences
                         .iter()
-                        .map(|seq| format!("#{seq}"))
-                        .collect::<Vec<_>>()
+                        .map(|seq| seq_handle(conn, *seq))
+                        .collect::<Result<Vec<_>>>()?
                         .join(", ")
                 ),
             );
@@ -200,7 +204,8 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
             push(
                 "noncanonical_tag",
                 format!(
-                    "#{seq} has noncanonical tag {tag:?}; remove it and add a trimmed tag of at most {MAX_TAG_CHARS} characters"
+                    "{seq} has noncanonical tag {tag:?}; remove it and add a trimmed tag of at most {MAX_TAG_CHARS} characters",
+                    seq = seq_handle(conn, seq)?
                 ),
             );
         }
@@ -227,20 +232,27 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         if repository.trim().is_empty() {
             push(
                 "blank_commit_repository",
-                format!("#{seq} commit {commit_oid} has a blank repository label"),
+                format!(
+                    "{seq} commit {commit_oid} has a blank repository label",
+                    seq = seq_handle(conn, seq)?
+                ),
             );
         } else if repository != repository.trim() {
             push(
                 "noncanonical_commit_repository",
                 format!(
-                    "#{seq} commit {commit_oid} has repository label '{repository}' with surrounding whitespace"
+                    "{seq} commit {commit_oid} has repository label '{repository}' with surrounding whitespace",
+                    seq = seq_handle(conn, seq)?
                 ),
             );
         }
         if validate_commit_oid(&commit_oid).is_err() {
             push(
                 "malformed_commit_oid",
-                format!("#{seq} commit '{commit_oid}' in repository '{repository}'"),
+                format!(
+                    "{seq} commit '{commit_oid}' in repository '{repository}'",
+                    seq = seq_handle(conn, seq)?
+                ),
             );
         }
         if recorded_at != recorded_at.trim()
@@ -249,7 +261,8 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
             push(
                 "invalid_commit_recorded_at",
                 format!(
-                    "#{seq} commit '{commit_oid}' in repository '{repository}' has noncanonical or invalid RFC3339 recorded_at '{recorded_at}'"
+                    "{seq} commit '{commit_oid}' in repository '{repository}' has noncanonical or invalid RFC3339 recorded_at '{recorded_at}'",
+                    seq = seq_handle(conn, seq)?
                 ),
             );
         }
@@ -368,13 +381,19 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         match loc {
             None => push(
                 "gate_no_evidence",
-                format!("#{seq} gate '{name}' resolved without locator"),
+                format!(
+                    "{seq} gate '{name}' resolved without locator",
+                    seq = seq_handle(conn, seq)?
+                ),
             ),
             Some(l) => {
                 if validate_new_evidence_locator(&l).is_err() {
                     push(
                         "malformed_evidence_locator",
-                        format!("#{seq} gate '{name}' locator '{l}'"),
+                        format!(
+                            "{seq} gate '{name}' locator '{l}'",
+                            seq = seq_handle(conn, seq)?
+                        ),
                     );
                 }
             }
@@ -392,7 +411,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         if validate_optional_sha256(Some(&digest)).is_err() {
             push(
                 "malformed_evidence_sha256",
-                format!("#{seq} gate '{name}' has noncanonical sha256 '{digest}'"),
+                format!(
+                    "{seq} gate '{name}' has noncanonical sha256 '{digest}'",
+                    seq = seq_handle(conn, seq)?
+                ),
             );
         }
     }
@@ -407,7 +429,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for (seq, name) in rows {
         push(
             "done_with_open_gate",
-            format!("#{seq} is done with open gate '{name}'"),
+            format!(
+                "{seq} is done with open gate '{name}'",
+                seq = seq_handle(conn, seq)?
+            ),
         );
     }
 
@@ -421,7 +446,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for (seq, name) in rows {
         push(
             "waiver_without_reason",
-            format!("#{seq} gate '{name}' is waived without a durable reason"),
+            format!(
+                "{seq} gate '{name}' is waived without a durable reason",
+                seq = seq_handle(conn, seq)?
+            ),
         );
     }
 
@@ -436,7 +464,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for (seq, kind) in rows {
         push(
             "missing_task_result",
-            format!("#{seq} is a completed {kind} without a durable result"),
+            format!(
+                "{seq} is a completed {kind} without a durable result",
+                seq = seq_handle(conn, seq)?
+            ),
         );
     }
 
@@ -485,7 +516,11 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for (task, dependency) in rows {
         push(
             "done_with_open_dependency",
-            format!("#{task} is done while dependency #{dependency} is not done"),
+            format!(
+                "{task} is done while dependency {dependency} is not done",
+                task = seq_handle(conn, task)?,
+                dependency = seq_handle(conn, dependency)?
+            ),
         );
     }
 
@@ -501,7 +536,11 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for (parent, child) in rows {
         push(
             "done_with_live_child",
-            format!("#{parent} is done while child #{child} remains live"),
+            format!(
+                "{parent} is done while child {child} remains live",
+                parent = seq_handle(conn, parent)?,
+                child = seq_handle(conn, child)?
+            ),
         );
     }
 
@@ -532,7 +571,11 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for (task, dependency) in rows {
         push(
             "cross_plan_dep",
-            format!("#{task} depends on #{dependency} from a different plan"),
+            format!(
+                "{task} depends on {dependency} from a different plan",
+                task = seq_handle(conn, task)?,
+                dependency = seq_handle(conn, dependency)?
+            ),
         );
     }
 
@@ -546,7 +589,11 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for (child, parent) in rows {
         push(
             "cross_plan_parent",
-            format!("#{child} has parent #{parent} from a different plan"),
+            format!(
+                "{child} has parent {parent} from a different plan",
+                child = seq_handle(conn, child)?,
+                parent = seq_handle(conn, parent)?
+            ),
         );
     }
 
@@ -563,8 +610,9 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         push(
             "dangling_replacement",
             format!(
-                "#{task} names missing replacement row id {replacement_task_id}; restore the referenced task or {} to clear the pointer",
-                replacement_repair_instruction(task, &status, None)
+                "{task} names missing replacement row id {replacement_task_id}; restore the referenced task or {} to clear the pointer",
+                replacement_repair_instruction(task, &status, None),
+                task = seq_handle(conn, task)?
             ),
         );
     }
@@ -597,8 +645,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         push(
             "replacement_on_nonretired_task",
             format!(
-                "#{task} is {status} but names replacement #{replacement}; valid replacement links require a retired source; {}",
-                replacement_repair_instruction(task, &status, reusable_replacement)
+                "{task} is {status} but names replacement {replacement}; valid replacement links require a retired source; {}",
+                replacement_repair_instruction(task, &status, reusable_replacement),
+                task = seq_handle(conn, task)?,
+                replacement = seq_handle(conn, replacement)?
             ),
         );
     }
@@ -616,8 +666,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         push(
             "cross_plan_replacement",
             format!(
-                "#{task} names replacement #{replacement} from a different plan; {} to clear the pointer before choosing a same-plan replacement",
-                replacement_repair_instruction(task, &status, None)
+                "{task} names replacement {replacement} from a different plan; {} to clear the pointer before choosing a same-plan replacement",
+                replacement_repair_instruction(task, &status, None),
+                task = seq_handle(conn, task)?,
+                replacement = seq_handle(conn, replacement)?
             ),
         );
     }
@@ -631,8 +683,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         push(
             "replacement_terminal_dead_end",
             format!(
-                "#{source} replacement chain terminates at #{target}, which is {terminal}; {} to extend the chain through a live canonical task",
-                terminal_replacement_repair_instruction(target)
+                "{source} replacement chain terminates at {target}, which is {terminal}; {} to extend the chain through a live canonical task",
+                terminal_replacement_repair_instruction(target),
+                source = seq_handle(conn, source)?,
+                target = seq_handle(conn, target)?
             ),
         );
     }
@@ -644,8 +698,8 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                 "dependency cycle {}",
                 cycle
                     .iter()
-                    .map(|seq| format!("#{seq}"))
-                    .collect::<Vec<_>>()
+                    .map(|seq| seq_handle(conn, *seq))
+                    .collect::<Result<Vec<_>>>()?
                     .join(" -> ")
             ),
         );
@@ -669,7 +723,7 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
             "dependency_deadlock",
             format!(
                 "{}, so none of these tasks can finish; {correction}",
-                task_graph::describe_chain(start, &steps)
+                task_graph::describe_chain(conn, start, &steps)?
             ),
         );
     }
@@ -683,8 +737,8 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                 "parent cycle {}",
                 cycle
                     .iter()
-                    .map(|seq| format!("#{seq}"))
-                    .collect::<Vec<_>>()
+                    .map(|seq| seq_handle(conn, *seq))
+                    .collect::<Result<Vec<_>>>()?
                     .join(" -> ")
             ),
         );
@@ -701,8 +755,8 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
                 "replacement cycle {}; {} to break one edge",
                 cycle
                     .iter()
-                    .map(|seq| format!("#{seq}"))
-                    .collect::<Vec<_>>()
+                    .map(|seq| seq_handle(conn, *seq))
+                    .collect::<Result<Vec<_>>>()?
                     .join(" -> "),
                 replacement_repair_instruction(repair_task, &repair_status, None)
             ),
@@ -719,7 +773,14 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
     for (a, b, s) in rows {
-        push("dep_on_dead", format!("#{a} depends on #{b} which is {s}"));
+        push(
+            "dep_on_dead",
+            format!(
+                "{a} depends on {b} which is {s}",
+                a = seq_handle(conn, a)?,
+                b = seq_handle(conn, b)?
+            ),
+        );
     }
 
     // Parents lagging: all children done but parent not.
@@ -735,7 +796,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for seq in rows {
         push(
             "parent_lagging",
-            format!("#{seq}: all children finished but parent is open"),
+            format!(
+                "{seq}: all children finished but parent is open",
+                seq = seq_handle(conn, seq)?
+            ),
         );
     }
 
@@ -746,7 +810,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for seq in reference_tasks.query_map([], |row| row.get::<_, i64>(0))? {
         let seq = seq?;
         if let Err(error) = external_references(conn, seq) {
-            push("invalid_external_reference", format!("#{seq}: {error}"));
+            push(
+                "invalid_external_reference",
+                format!("{seq}: {error}", seq = seq_handle(conn, seq)?),
+            );
         }
     }
 

@@ -6,6 +6,8 @@
 
 use anyhow::Result;
 use rusqlite::Connection;
+
+use crate::seq_handle;
 use std::collections::{HashMap, VecDeque, hash_map::Entry};
 
 /// Why one task waits for the next.
@@ -179,19 +181,31 @@ pub(crate) fn waits_for(
     Ok(WaitGraph::load(conn)?.chain(from, target))
 }
 
-/// "#a depends on #b, which waits for unfinished child #c".
-pub(crate) fn describe_chain(from: i64, steps: &[WaitStep]) -> String {
-    let mut text = format!("#{from}");
+/// "F-1 depends on B-2, which waits for unfinished child W-3", naming each
+/// task by its current handle.
+pub(crate) fn describe_chain(conn: &Connection, from: i64, steps: &[WaitStep]) -> Result<String> {
+    chain_text(from, steps, |seq| seq_handle(conn, seq))
+}
+
+/// [`describe_chain`] with a caller-supplied namer, for refusals inside a
+/// mutation that has already changed a task's kind and will roll it back.
+pub(crate) fn chain_text(
+    from: i64,
+    steps: &[WaitStep],
+    mut handle: impl FnMut(i64) -> Result<String>,
+) -> Result<String> {
+    let mut text = handle(from)?;
     for (position, step) in steps.iter().enumerate() {
         if position > 0 {
             text.push_str(", which");
         }
+        let next = handle(step.seq)?;
         match step.edge {
-            WaitEdge::Dependency => text.push_str(&format!(" depends on #{}", step.seq)),
-            WaitEdge::Child => text.push_str(&format!(" waits for unfinished child #{}", step.seq)),
+            WaitEdge::Dependency => text.push_str(&format!(" depends on {next}")),
+            WaitEdge::Child => text.push_str(&format!(" waits for unfinished child {next}")),
         }
     }
-    text
+    Ok(text)
 }
 
 /// The `dep remove` commands that would break the chain, one per dependency
@@ -285,14 +299,18 @@ mod tests {
         WaitGraph { edges: map }
     }
 
+    fn handle(seq: i64) -> Result<String> {
+        Ok(crate::task_handle(seq, "work"))
+    }
+
     #[test]
     fn chains_name_each_hop_and_the_dependencies_that_break_them() {
         use WaitEdge::{Child, Dependency};
         let waits = graph(&[(3, Dependency, 1), (1, Child, 2), (2, Dependency, 4)]);
         let steps = waits.chain(3, 4).unwrap();
         assert_eq!(
-            describe_chain(3, &steps),
-            "#3 depends on #1, which waits for unfinished child #2, which depends on #4"
+            chain_text(3, &steps, handle).unwrap(),
+            "W-3 depends on W-1, which waits for unfinished child W-2, which depends on W-4"
         );
         assert_eq!(
             dependency_removals(3, &steps),
@@ -335,12 +353,12 @@ mod tests {
         let loops = waits.loops();
         assert_eq!(loops.len(), 2);
         assert_eq!(
-            describe_chain(loops[0].0, &loops[0].1),
-            "#1 waits for unfinished child #2, which depends on #3, which depends on #1"
+            chain_text(loops[0].0, &loops[0].1, handle).unwrap(),
+            "W-1 waits for unfinished child W-2, which depends on W-3, which depends on W-1"
         );
         assert_eq!(
-            describe_chain(loops[1].0, &loops[1].1),
-            "#5 depends on #6, which depends on #5"
+            chain_text(loops[1].0, &loops[1].1, handle).unwrap(),
+            "W-5 depends on W-6, which depends on W-5"
         );
         assert!(graph(&[(1, Dependency, 2)]).loops().is_empty());
     }

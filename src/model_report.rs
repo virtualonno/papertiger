@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::authorship::payload_authorship;
 use crate::review::{ClaimReview, ReviewState, normalized_model, task_review};
-use crate::{TASK_COLS, resolve_plan, task_from_row};
+use crate::{TASK_COLS, Task, resolve_plan, task_from_row};
 
 /// Groups below this many claims are labeled as small samples.
 pub const SMALL_SAMPLE: usize = 10;
@@ -97,14 +97,14 @@ struct ClaimTimes {
     reopened: Vec<String>,
 }
 
-fn claim_times(conn: &Connection, seq: i64) -> Result<ClaimTimes> {
+fn claim_times(conn: &Connection, task: &Task) -> Result<ClaimTimes> {
     let mut statement = conn.prepare(
         "SELECT at, kind, payload FROM canonical_events
           WHERE entity='task' AND entity_seq=?1 AND kind IN ('create','status')
           ORDER BY event_id",
     )?;
     let rows = statement
-        .query_map(params![seq], |row| {
+        .query_map(params![task.seq], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -123,7 +123,10 @@ fn claim_times(conn: &Connection, seq: i64) -> Result<ClaimTimes> {
             .map(|raw| serde_json::from_str::<serde_json::Value>(&raw))
             .transpose()
             .with_context(|| {
-                format!("task #{seq} has an unreadable event payload; run `papertiger audit`")
+                format!(
+                    "task {} has an unreadable event payload; run `papertiger audit`",
+                    task.handle
+                )
             })?;
         if kind == "create" {
             times.created_at = Some(at);
@@ -189,7 +192,7 @@ pub fn model_report(
     let mut models: BTreeMap<String, (FilingOutcomes, ResultOutcomes)> = BTreeMap::new();
     for task in tasks {
         let review = task_review(conn, &task)?;
-        let times = claim_times(conn, task.seq)?;
+        let times = claim_times(conn, &task)?;
         if in_window(times.created_at.as_deref()) {
             let entry = models
                 .entry(model_key(review.filing.author_model.as_deref()))

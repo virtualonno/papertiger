@@ -10,10 +10,10 @@ use crate::{
     Task, TaskPickup, add_dep_inner, begin_mutation, commit_associations, entry_blockers,
     external_reference, external_references, find_cycle, get_task, history_recovery,
     invalid_replacement_terminals, live_child_sequences, mise_projection, now, pickup, plan_move,
-    record_event_in_mutation, replacement_repair_instruction, require_nonblank, task_from_row,
-    terminal_replacement_repair_instruction, validate_commit_oid, validate_meaning_source,
-    validate_new_evidence_locator, validate_optional_sha256, validate_tag, validate_task_kind,
-    validate_task_title,
+    record_event_in_mutation, replacement_repair_instruction, require_nonblank, seq_handle,
+    task_from_row, task_handle, terminal_replacement_repair_instruction, validate_commit_oid,
+    validate_meaning_source, validate_new_evidence_locator, validate_optional_sha256, validate_tag,
+    validate_task_kind, validate_task_title,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -281,8 +281,8 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                         .optional()?
                         .ok_or_else(|| {
                             anyhow!(
-                                "cannot export: #{} names missing replacement row id {}; {}; run `papertiger audit` to inspect every invalid replacement",
-                                t.seq,
+                                "cannot export: {} names missing replacement row id {}; {}; run `papertiger audit` to inspect every invalid replacement",
+                                t.handle,
                                 replacement_task_id,
                                 replacement_repair_instruction(t.seq, &t.status, None)
                             )
@@ -296,9 +296,9 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                             replacement.1.as_str()
                         };
                         bail!(
-                            "cannot export: #{} replacement chain terminates at #{}, which is {}; {}; run `papertiger audit` to inspect every invalid replacement",
-                            t.seq,
-                            replacement.0,
+                            "cannot export: {} replacement chain terminates at {}, which is {}; {}; run `papertiger audit` to inspect every invalid replacement",
+                            t.handle,
+                            seq_handle(conn, replacement.0)?,
                             terminal,
                             terminal_replacement_repair_instruction(replacement.0)
                         );
@@ -536,16 +536,17 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
         }
     }
     for seq in &used {
-        let existing_title: Option<String> = tx
+        let existing: Option<(String, String)> = tx
             .query_row(
-                "SELECT title FROM tasks WHERE seq=?1",
+                "SELECT kind, title FROM tasks WHERE seq=?1",
                 params![seq],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        if let Some(title) = existing_title {
+        if let Some((kind, title)) = existing {
             bail!(
-                "import task seq {seq} collides with existing task #{seq} '{title}'; import into an authority without that sequence"
+                "import task seq {seq} collides with existing task {} '{title}'; import into an authority without that sequence",
+                task_handle(*seq, &kind)
             );
         }
     }
@@ -767,8 +768,10 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
             let recorded_at = commit.recorded_at.trim();
             chrono::DateTime::parse_from_rfc3339(recorded_at).with_context(|| {
                 format!(
-                    "import commit {} on task #{seq} has invalid recorded_at '{}'",
-                    commit.commit_oid, commit.recorded_at
+                    "import commit {} on task {} has invalid recorded_at '{}'",
+                    commit.commit_oid,
+                    task_handle(seq, &td.kind),
+                    commit.recorded_at
                 )
             })?;
             tx.execute(
@@ -787,11 +790,18 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
     let mut edges = 0usize;
     for (td, seq) in dump.tasks.iter().zip(assigned.iter().copied()) {
         if let Some(pseq) = td.parent_seq {
-            let parent_plan = imported_plan_by_seq
-                .get(&pseq)
-                .with_context(|| format!("import: #{seq} has missing parent #{pseq}"))?;
+            let parent_plan = imported_plan_by_seq.get(&pseq).with_context(|| {
+                format!(
+                    "import: {} has missing parent #{pseq}",
+                    task_handle(seq, &td.kind)
+                )
+            })?;
             if *parent_plan != td.plan {
-                bail!("import: #{seq} and parent #{pseq} belong to different plans");
+                bail!(
+                    "import: {} and parent {} belong to different plans",
+                    seq_handle(&tx, seq)?,
+                    seq_handle(&tx, pseq)?
+                );
             }
             let parent_id = imported_task_id_by_seq[&pseq];
             tx.execute(
@@ -802,22 +812,28 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
         if let Some(replacement_seq) = td.replacement_seq {
             if td.status != "retired" {
                 bail!(
-                    "import: #{seq} has replacement #{replacement_seq} but status '{}' is not retired",
+                    "import: {} has replacement #{replacement_seq} but status '{}' is not retired",
+                    seq_handle(&tx, seq)?,
                     td.status
                 );
             }
             if replacement_seq == seq {
-                bail!("import: #{seq} cannot replace itself");
+                bail!("import: {} cannot replace itself", seq_handle(&tx, seq)?);
             }
             let replacement_plan =
                 imported_plan_by_seq
                     .get(&replacement_seq)
                     .with_context(|| {
-                        format!("import: #{seq} has missing replacement #{replacement_seq}")
+                        format!(
+                            "import: {} has missing replacement #{replacement_seq}",
+                            task_handle(seq, &td.kind)
+                        )
                     })?;
             if *replacement_plan != td.plan {
                 bail!(
-                    "import: #{seq} and replacement #{replacement_seq} belong to different plans"
+                    "import: {} and replacement {} belong to different plans",
+                    seq_handle(&tx, seq)?,
+                    seq_handle(&tx, replacement_seq)?
                 );
             }
             let replacement_id = imported_task_id_by_seq[&replacement_seq];
@@ -827,11 +843,18 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
             )?;
         }
         for on in &td.deps {
-            let dependency_plan = imported_plan_by_seq
-                .get(on)
-                .with_context(|| format!("import: #{seq} depends on missing #{on}"))?;
+            let dependency_plan = imported_plan_by_seq.get(on).with_context(|| {
+                format!(
+                    "import: {} depends on missing #{on}",
+                    task_handle(seq, &td.kind)
+                )
+            })?;
             if *dependency_plan != td.plan {
-                bail!("import: #{seq} and dependency #{on} belong to different plans");
+                bail!(
+                    "import: {} and dependency {} belong to different plans",
+                    seq_handle(&tx, seq)?,
+                    seq_handle(&tx, *on)?
+                );
             }
             add_dep_inner(&tx, actor, seq, *on, false, None)?;
             edges += 1;
@@ -845,8 +868,8 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
             "import creates parent cycle {}",
             cycle
                 .iter()
-                .map(|seq| format!("#{seq}"))
-                .collect::<Vec<_>>()
+                .map(|seq| seq_handle(&tx, *seq))
+                .collect::<Result<Vec<_>>>()?
                 .join(" -> ")
         );
     }
@@ -858,8 +881,8 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
             "import creates replacement cycle {}",
             cycle
                 .iter()
-                .map(|seq| format!("#{seq}"))
-                .collect::<Vec<_>>()
+                .map(|seq| seq_handle(&tx, *seq))
+                .collect::<Result<Vec<_>>>()?
                 .join(" -> ")
         );
     }
@@ -870,7 +893,9 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
             status
         };
         bail!(
-            "import: #{source} replacement chain terminates at #{target}, which is {terminal}; re-export after repairing the source authority: {}",
+            "import: {} replacement chain terminates at {}, which is {terminal}; re-export after repairing the source authority: {}",
+            seq_handle(&tx, source)?,
+            seq_handle(&tx, target)?,
             terminal_replacement_repair_instruction(target)
         );
     }
@@ -881,21 +906,24 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(statement);
     for (task_id, seq) in done_tasks {
-        let blockers = entry_blockers(&tx, &get_task(&tx, seq)?)?;
+        let task = get_task(&tx, seq)?;
+        let blockers = entry_blockers(&tx, &task)?;
         if !blockers.is_empty() {
             bail!(
-                "import: done task #{seq} retains open prerequisite(s): {}",
+                "import: done task {} retains open prerequisite(s): {}",
+                task.handle,
                 blockers.join(", ")
             );
         }
         let children = live_child_sequences(&tx, task_id)?;
         if !children.is_empty() {
             bail!(
-                "import: done task #{seq} has unfinished child task(s): {}",
+                "import: done task {} has unfinished child task(s): {}",
+                task.handle,
                 children
                     .iter()
-                    .map(|child| format!("#{child}"))
-                    .collect::<Vec<_>>()
+                    .map(|child| seq_handle(&tx, *child))
+                    .collect::<Result<Vec<_>>>()?
                     .join(", ")
             );
         }

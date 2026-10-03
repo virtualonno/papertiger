@@ -27,7 +27,11 @@ pub fn add_gate(
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     if matches!(task.status.as_str(), "done" | "retired" | "rejected") {
-        bail!("#{seq} is {}; reopen it before adding gates", task.status);
+        bail!(
+            "{} is {}; reopen it before adding gates",
+            task.handle,
+            task.status
+        );
     }
     let exists = tx
         .query_row(
@@ -38,13 +42,16 @@ pub fn add_gate(
         .optional()?
         .is_some();
     if exists {
-        bail!("gate '{name}' already exists on #{seq}; choose a different gate name");
+        bail!(
+            "gate '{name}' already exists on {}; choose a different gate name",
+            task.handle
+        );
     }
     tx.execute(
         "INSERT INTO gates (task_id, name, kind, requirement) VALUES (?1, ?2, ?3, ?4)",
         params![task.task_id, name, kind, requirement],
     )
-    .with_context(|| format!("store gate '{name}' on #{seq}"))?;
+    .with_context(|| format!("store gate '{name}' on {}", task.handle))?;
     record_event_in_mutation(
         &tx,
         actor,
@@ -112,7 +119,7 @@ pub fn remove_gate(conn: &Connection, actor: &str, seq: i64, name: &str, why: &s
         )
         .optional()?;
     let (gate_id, kind, requirement) =
-        gate.ok_or_else(|| anyhow!("no open gate '{name}' on #{seq}"))?;
+        gate.ok_or_else(|| anyhow!("no open gate '{name}' on {}", task.handle))?;
     tx.execute("DELETE FROM gates WHERE gate_id=?1", params![gate_id])?;
     record_event_in_mutation(
         &tx,
@@ -140,7 +147,8 @@ pub fn reopen_gate(conn: &Connection, actor: &str, seq: i64, name: &str, why: &s
     let task = get_task(&tx, seq)?;
     if matches!(task.status.as_str(), "done" | "retired" | "rejected") {
         bail!(
-            "#{seq} is {}; reopen the task before reopening gates",
+            "{} is {}; reopen the task before reopening gates",
+            task.handle,
             task.status
         );
     }
@@ -151,9 +159,9 @@ pub fn reopen_gate(conn: &Connection, actor: &str, seq: i64, name: &str, why: &s
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    let (gate_id, status) = gate.ok_or_else(|| anyhow!("no gate '{name}' on #{seq}"))?;
+    let (gate_id, status) = gate.ok_or_else(|| anyhow!("no gate '{name}' on {}", task.handle))?;
     if status == "open" {
-        bail!("gate '{name}' on #{seq} is already open");
+        bail!("gate '{name}' on {} is already open", task.handle);
     }
     tx.execute(
         "UPDATE gates
@@ -200,7 +208,7 @@ fn resolve_open_gate_then(
             |r| r.get(0),
         )
         .optional()?
-        .ok_or_else(|| anyhow!("no open gate '{name}' on #{seq}"))?;
+        .ok_or_else(|| anyhow!("no open gate '{name}' on {}", task.handle))?;
     if let Some(loc) = evidence {
         validate_new_evidence_locator(loc)?;
     }

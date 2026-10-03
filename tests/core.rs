@@ -389,6 +389,40 @@ fn claims_recorded_before_authorship_was_required_are_legacy() {
 }
 
 #[test]
+fn a_child_without_a_plan_joins_its_parents_plan() {
+    let conn = db();
+    pt::add_plan(&conn, "test", "a", "A", "").unwrap();
+    let second = pt::add_plan(&conn, "test", "b", "B", "").unwrap();
+    let parent = pt::add_task(
+        &conn,
+        "test",
+        second,
+        pt::TaskCreation::new("Ship the cache", "goal"),
+    )
+    .unwrap();
+    let orphan = pt::add_task(
+        &conn,
+        "test",
+        None,
+        pt::TaskCreation::new("Top-level outcome", "feature"),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(orphan.contains("multiple active plans"), "{orphan}");
+    let child = pt::add_task(
+        &conn,
+        "test",
+        None,
+        pt::TaskCreation {
+            parent: Some(parent),
+            ..pt::TaskCreation::new("Cache reads", "feature")
+        },
+    )
+    .unwrap();
+    assert_eq!(pt::get_task(&conn, child).unwrap().plan_id, second);
+}
+
+#[test]
 fn focus_ranks_now_before_next_before_later_within_readiness() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
@@ -1483,7 +1517,7 @@ fn audit_reports_stored_dependency_deadlocks_with_their_removals() {
     assert_eq!(
         deadlocks,
         [format!(
-            "#{parent} waits for unfinished child #{child}, which depends on #{downstream}, which depends on #{parent}, so none of these tasks can finish; remove one dependency with `papertiger dep remove {child} {downstream} --why <reason>` or `papertiger dep remove {downstream} {parent} --why <reason>`"
+            "F-{parent} waits for unfinished child F-{child}, which depends on F-{downstream}, which depends on F-{parent}, so none of these tasks can finish; remove one dependency with `papertiger dep remove {child} {downstream} --why <reason>` or `papertiger dep remove {downstream} {parent} --why <reason>`"
         )]
     );
 }
@@ -1524,7 +1558,7 @@ fn dependency_cycles_rejected_and_readiness_derived() {
     // blocked view names blockers
     let all = pt::ready_tasks(&conn, plan, 10, true).unwrap();
     let c_entry = all.iter().find(|e| e.task.seq == c).unwrap();
-    assert_eq!(c_entry.blockers, vec![format!("dep:#{b}")]);
+    assert_eq!(c_entry.blockers, vec![format!("dep:F-{b}")]);
     // completing a readies b (priority ordering: c still blocked)
     pt::complete_task(&conn, "test", a, None).unwrap();
     let ready = pt::ready_tasks(&conn, plan, 10, false).unwrap();
@@ -1570,23 +1604,23 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
 
     assert_exact_error(
         pt::add_dep(&conn, "test", a, a, Some("self dependency")),
-        &format!("#{a} cannot depend on itself"),
+        &format!("F-{a} cannot depend on itself"),
     );
     assert_exact_error(
         pt::add_dep(&conn, "test", a, other, Some("cross-plan dependency")),
-        &format!("#{a} and dependency #{other} belong to different plans"),
+        &format!("F-{a} and dependency F-{other} belong to different plans"),
     );
     assert_exact_error(
         pt::add_dep(&conn, "test", a, c, Some("cycle")),
-        &format!("dependency #{a} -> #{c} would create a cycle"),
+        &format!("dependency F-{a} -> F-{c} would create a cycle"),
     );
     assert_exact_error(
         pt::add_dep(&conn, "test", c, b, Some("duplicate")),
-        &format!("#{c} already depends on #{b}"),
+        &format!("F-{c} already depends on F-{b}"),
     );
     assert_exact_error(
         pt::remove_dep(&conn, "test", a, b, Some("not present")),
-        &format!("#{a} does not depend on #{b}"),
+        &format!("F-{a} does not depend on F-{b}"),
     );
     assert_exact_error(
         pt::event_cursor(&conn, 0),
@@ -1637,7 +1671,7 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
     .unwrap();
     assert_exact_error(
         pt::start_task(&conn, "test", blocked, None, None),
-        &format!("#{blocked} is not ready; resolve dep:#{dependency} before starting it"),
+        &format!("F-{blocked} is not ready; resolve dep:F-{dependency} before starting it"),
     );
     pt::start_task(&conn, "test", dependency, None, None).unwrap();
     // Explicit resumption is allowed; pickup is advisory, not an exclusive hold.
@@ -1645,15 +1679,15 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
     pt::complete_task(&conn, "test", dependency, None).unwrap();
     assert_exact_error(
         pt::start_task(&conn, "test", dependency, None, None),
-        &format!("#{dependency} is done; use `reopen` before starting it"),
+        &format!("F-{dependency} is done; use `reopen` before starting it"),
     );
     assert_exact_error(
         pt::complete_task(&conn, "test", dependency, None),
-        &format!("#{dependency} is already done"),
+        &format!("F-{dependency} is already done"),
     );
     assert_exact_error(
         pt::reopen_task(&conn, "test", blocked, "not terminal"),
-        &format!("#{blocked} is proposed; only terminal tasks can be reopened"),
+        &format!("F-{blocked} is proposed; only terminal tasks can be reopened"),
     );
     assert_exact_error(
         pt::reopen_task(&conn, "test", dependency, ""),
@@ -1673,7 +1707,7 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
     assert_exact_error(
         pt::complete_task(&conn, "test", decision, None),
         &format!(
-            "completing decision task #{decision} requires --result or --result-file so the measured or selected outcome survives the session"
+            "completing decision task D-{decision} requires --result or --result-file so the measured or selected outcome survives the session"
         ),
     );
     assert_exact_error(
@@ -1684,11 +1718,11 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
     pt::set_plan_status(&conn, "test", "p", "paused", "exercise plan refusal").unwrap();
     assert_exact_error(
         pt::start_task(&conn, "test", blocked, None, None),
-        &format!("plan is paused; set it active before starting task #{blocked}"),
+        &format!("plan is paused; set it active before starting task F-{blocked}"),
     );
     assert_exact_error(
         pt::complete_task(&conn, "test", blocked, None),
-        &format!("plan is paused; set it active before completing proposed task #{blocked}"),
+        &format!("plan is paused; set it active before completing proposed task F-{blocked}"),
     );
 }
 
@@ -1711,7 +1745,7 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
     pt::add_gate(&conn, "test", task, "proof", "test", "requirement").unwrap();
     assert_exact_error(
         pt::add_gate(&conn, "test", task, "proof", "test", "requirement"),
-        &format!("gate 'proof' already exists on #{task}; choose a different gate name"),
+        &format!("gate 'proof' already exists on F-{task}; choose a different gate name"),
     );
     for (locator, expected) in [
         (
@@ -1734,7 +1768,7 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
     }
     assert_exact_error(
         pt::reopen_gate(&conn, "test", task, "proof", "already open"),
-        &format!("gate 'proof' on #{task} is already open"),
+        &format!("gate 'proof' on F-{task} is already open"),
     );
     assert_exact_error(
         pt::remove_gate(&conn, "test", task, "proof", ""),
@@ -1743,7 +1777,7 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
     pt::resolve_gate(&conn, "test", task, "proof", "file:proof.json", None, None).unwrap();
     assert_exact_error(
         pt::remove_gate(&conn, "test", task, "proof", "closed"),
-        &format!("no open gate 'proof' on #{task}"),
+        &format!("no open gate 'proof' on F-{task}"),
     );
     pt::reopen_gate(&conn, "test", task, "proof", "replace evidence").unwrap();
 }
@@ -2669,7 +2703,7 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
     assert_eq!(dependent_entry.readiness, "blocked");
     assert_eq!(
         dependent_entry.blockers,
-        vec![format!("dep:#{prerequisite}")]
+        vec![format!("dep:F-{prerequisite}")]
     );
     assert!(sequences.contains(&downstream));
 }
@@ -2772,7 +2806,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
     .unwrap();
 
     let err = pt::start_task(&conn, "test", decision, None, None).unwrap_err();
-    assert!(err.to_string().contains(&format!("dep:#{prerequisite}")));
+    assert!(err.to_string().contains(&format!("dep:F-{prerequisite}")));
     assert!(err.to_string().contains("external:operator input"));
     let default_focus = pt::focus(&conn, plan, 20, false, None, false, None).unwrap();
     assert!(
@@ -3696,7 +3730,7 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
     assert!(
         error
             .to_string()
-            .contains("task seq 1 collides with existing task #1 'existing task'"),
+            .contains("task seq 1 collides with existing task F-1 'existing task'"),
         "{error:#}"
     );
 }
@@ -4116,7 +4150,7 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
         .unwrap_err()
         .to_string(),
     ] {
-        assert!(error.contains(&format!("canonical replacement for #{duplicate}")));
+        assert!(error.contains(&format!("canonical replacement for F-{duplicate}")));
         assert!(error.contains(&format!("papertiger retire {canonical} --into <task>")));
     }
     pt::retire_task(
@@ -4381,9 +4415,11 @@ fn audit_reports_corrupt_replacement_shapes() {
     let detail_for = |kind: &str, seq: i64| {
         findings
             .iter()
-            .find(|finding| finding.kind == kind && finding.detail.starts_with(&format!("#{seq} ")))
+            .find(|finding| {
+                finding.kind == kind && finding.detail.starts_with(&format!("F-{seq} "))
+            })
             .map(|finding| finding.detail.as_str())
-            .unwrap_or_else(|| panic!("missing {kind} finding for #{seq}"))
+            .unwrap_or_else(|| panic!("missing {kind} finding for F-{seq}"))
     };
     let dangling_detail = detail_for("dangling_replacement", dangling);
     assert!(
@@ -4482,10 +4518,10 @@ fn audit_and_export_refuse_terminal_replacement_dead_ends() {
             .iter()
             .find(|finding| {
                 finding.kind == "replacement_terminal_dead_end"
-                    && finding.detail.starts_with(&format!("#{source} "))
+                    && finding.detail.starts_with(&format!("F-{source} "))
             })
             .map(|finding| finding.detail.as_str())
-            .unwrap_or_else(|| panic!("missing terminal finding for #{source}"));
+            .unwrap_or_else(|| panic!("missing terminal finding for F-{source}"));
         assert!(
             detail.contains(&format!("papertiger reopen {target}"))
                 && detail.contains(&format!("papertiger retire {target} --into <task>")),

@@ -580,7 +580,8 @@ pub fn task_activity(conn: &Connection, seq: i64) -> Result<TaskActivity> {
                 .transpose()
                 .with_context(|| {
                     format!(
-                        "task #{seq} status event {} has invalid stored JSON payload; run `papertiger audit`",
+                        "task {} status event {} has invalid stored JSON payload; run `papertiger audit`",
+                        task.handle,
                         event.event_id
                     )
                 })?;

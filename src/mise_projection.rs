@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 
-use crate::{begin_mutation, get_task, now, record_event_in_mutation};
+use crate::{begin_mutation, get_task, now, record_event_in_mutation, task_handle};
 
 pub(crate) const MISE_PROJECTION_SCHEMA_V4: &str = r#"
 CREATE TABLE task_mise_projections (
@@ -127,16 +127,16 @@ pub fn record_mise_projection(
             transaction.commit()?;
             return Ok((MiseProjectionRecordOutcome::Existing, record));
         }
-        let existing_task_seq: i64 = transaction.query_row(
-            "SELECT seq FROM tasks WHERE task_id=?1",
+        let existing_task: String = transaction.query_row(
+            "SELECT seq, kind FROM tasks WHERE task_id=?1",
             params![existing_task_id],
-            |row| row.get(0),
+            |row| Ok(task_handle(row.get(0)?, &row.get::<_, String>(1)?)),
         )?;
         bail!(
-            "candidate '{}' is already projected as {} on task #{}; inspect it with `papertiger mise show {}`",
+            "candidate '{}' is already projected as {} on task {}; inspect it with `papertiger mise show {}`",
             projection.candidate_id,
             projection_sha256,
-            existing_task_seq,
+            existing_task,
             projection_sha256
         );
     }
@@ -148,16 +148,16 @@ pub fn record_mise_projection(
         )
         .optional()?
     {
-        let existing_task_seq: i64 = transaction.query_row(
-            "SELECT seq FROM tasks WHERE task_id=?1",
+        let existing_task: String = transaction.query_row(
+            "SELECT seq, kind FROM tasks WHERE task_id=?1",
             params![existing_task_id],
-            |row| row.get(0),
+            |row| Ok(task_handle(row.get(0)?, &row.get::<_, String>(1)?)),
         )?;
         bail!(
-            "candidate '{}' is already projected as {} on task #{}; inspect it with `papertiger mise show {}`",
+            "candidate '{}' is already projected as {} on task {}; inspect it with `papertiger mise show {}`",
             projection.candidate_id,
             existing_sha256,
-            existing_task_seq,
+            existing_task,
             existing_sha256
         );
     }

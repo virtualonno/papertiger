@@ -5,7 +5,7 @@ use rusqlite::{Connection, Transaction, params};
 
 use crate::{
     Task, TaskPickup, begin_mutation, entry_blockers, find_cycle, get_task, kind_requires_result,
-    now, pickup, plan_status, record_event_in_mutation, task_graph, validate_session,
+    now, pickup, plan_status, record_event_in_mutation, seq_handle, task_graph, validate_session,
 };
 
 pub fn start_task(
@@ -36,7 +36,7 @@ pub(crate) fn start_task_in_mutation(
     let task_label = if created_in_same_mutation {
         "the new task".to_owned()
     } else {
-        format!("#{seq}")
+        task.handle.clone()
     };
     match task.status.as_str() {
         "proposed" => {}
@@ -54,7 +54,10 @@ pub(crate) fn start_task_in_mutation(
         if created_in_same_mutation {
             bail!("task was not created: plan is {status}; set it active before using add --start");
         }
-        bail!("plan is {status}; set it active before starting task #{seq}");
+        bail!(
+            "plan is {status}; set it active before starting task {}",
+            task.handle
+        );
     }
     let blockers = entry_blockers(tx, &task)?;
     if !blockers.is_empty() {
@@ -65,7 +68,8 @@ pub(crate) fn start_task_in_mutation(
             );
         }
         bail!(
-            "#{seq} is not ready; resolve {} before starting it",
+            "{} is not ready; resolve {} before starting it",
+            task.handle,
             blockers.join(", ")
         );
     }
@@ -93,42 +97,49 @@ pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&s
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     if matches!(task.status.as_str(), "done" | "retired" | "rejected") {
-        bail!("#{seq} is already {}", task.status);
+        bail!("{} is already {}", task.handle, task.status);
     }
     let plan_status = plan_status(&tx, task.plan_id)?;
     if task.status == "proposed" && plan_status != "active" {
-        bail!("plan is {plan_status}; set it active before completing proposed task #{seq}");
+        bail!(
+            "plan is {plan_status}; set it active before completing proposed task {}",
+            task.handle
+        );
     }
     let blockers = entry_blockers(&tx, &task)?;
     if !blockers.is_empty() {
         bail!(
-            "#{seq} cannot be completed while {} remain open",
+            "{} cannot be completed while {} remain open",
+            task.handle,
             blockers.join(", ")
         );
     }
     let open = open_gates(&tx, task.task_id)?;
     if !open.is_empty() {
         bail!(
-            "#{seq} has open gate(s): {}; resolve each with `papertiger gate resolve {seq} <name> --evidence <locator>` or waive it with `papertiger gate waive {seq} <name> --why <reason>`",
-            open.join(", ")
+            "{handle} has open gate(s): {}; resolve each with `papertiger gate resolve {seq} <name> --evidence <locator>` or waive it with `papertiger gate waive {seq} <name> --why <reason>`",
+            open.join(", "),
+            handle = task.handle
         );
     }
     let live_children = live_child_sequences(&tx, task.task_id)?;
     if !live_children.is_empty() {
         bail!(
-            "#{seq} has unfinished child task(s): {}; finish or disposition them first",
+            "{} has unfinished child task(s): {}; finish or disposition them first",
+            task.handle,
             live_children
                 .iter()
-                .map(|child| format!("#{child}"))
-                .collect::<Vec<_>>()
+                .map(|child| seq_handle(&tx, *child))
+                .collect::<Result<Vec<_>>>()?
                 .join(", ")
         );
     }
     let result = result.map(str::trim).filter(|text| !text.is_empty());
     if kind_requires_result(&task.kind) && result.is_none() {
         bail!(
-            "completing {} task #{seq} requires --result or --result-file so the measured or selected outcome survives the session",
-            task.kind
+            "completing {} task {} requires --result or --result-file so the measured or selected outcome survives the session",
+            task.kind,
+            task.handle
         );
     }
     transition_task(
@@ -155,13 +166,17 @@ pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Resul
     let task = get_task(&tx, seq)?;
     if !matches!(task.status.as_str(), "done" | "retired" | "rejected") {
         bail!(
-            "#{seq} is {}; only terminal tasks can be reopened",
+            "{} is {}; only terminal tasks can be reopened",
+            task.handle,
             task.status
         );
     }
     let status = plan_status(&tx, task.plan_id)?;
     if matches!(status.as_str(), "done" | "retired") {
-        bail!("plan is {status}; reactivate it before reopening task #{seq}");
+        bail!(
+            "plan is {status}; reactivate it before reopening task {}",
+            task.handle
+        );
     }
     if let Some(parent_id) = task.parent_id {
         let parent: (i64, String) = tx.query_row(
@@ -169,31 +184,33 @@ pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Resul
             params![parent_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
+        let parent_handle = seq_handle(&tx, parent.0)?;
         if matches!(parent.1.as_str(), "done" | "retired" | "rejected") {
             bail!(
-                "parent #{} is {}; reopen it before reopening child #{seq}",
-                parent.0,
-                parent.1
+                "parent {parent_handle} is {}; reopen it before reopening child {}",
+                parent.1,
+                task.handle
             );
         }
         // Reopening makes the parent wait for this child again.
         if let Some(steps) = task_graph::waits_for(&tx, seq, parent.0)? {
             bail!(
-                "reopening #{seq} would deadlock: #{seq} finishes only after its parent #{} ({}), which would wait for it again; move it first with `papertiger edit {seq} --parent <task>` or `papertiger edit {seq} --clear-parent`{}",
-                parent.0,
-                task_graph::describe_chain(seq, &steps),
-                task_graph::or_remove_dependency(seq, &steps)
+                "reopening {handle} would deadlock: {handle} finishes only after its parent {parent_handle} ({}), which would wait for it again; move it first with `papertiger edit {seq} --parent <task>` or `papertiger edit {seq} --clear-parent`{}",
+                task_graph::describe_chain(&tx, seq, &steps)?,
+                task_graph::or_remove_dependency(seq, &steps),
+                handle = task.handle
             );
         }
     }
     let completed_dependents = completed_dependent_sequences(&tx, task.task_id)?;
     if !completed_dependents.is_empty() {
         bail!(
-            "#{seq} supports completed dependent task(s): {}; reopen them first",
+            "{} supports completed dependent task(s): {}; reopen them first",
+            task.handle,
             completed_dependents
                 .iter()
-                .map(|dependent| format!("#{dependent}"))
-                .collect::<Vec<_>>()
+                .map(|dependent| seq_handle(&tx, *dependent))
+                .collect::<Result<Vec<_>>>()?
                 .join(", ")
         );
     }
@@ -250,69 +267,79 @@ fn terminate_task(
         );
     }
     if task.status == status {
-        bail!("#{seq} is already {status}");
+        bail!("{} is already {status}", task.handle);
     }
     if matches!(task.status.as_str(), "done" | "retired" | "rejected") {
         bail!(
-            "#{seq} is {}; reopen it before changing its disposition",
+            "{} is {}; reopen it before changing its disposition",
+            task.handle,
             task.status
         );
     }
     let completed_dependents = completed_dependent_sequences(&tx, task.task_id)?;
     if !completed_dependents.is_empty() {
         bail!(
-            "#{seq} supports completed dependent task(s): {}; reopen them before {status}",
+            "{} supports completed dependent task(s): {}; reopen them before {status}",
+            task.handle,
             completed_dependents
                 .iter()
-                .map(|dependent| format!("#{dependent}"))
-                .collect::<Vec<_>>()
+                .map(|dependent| seq_handle(&tx, *dependent))
+                .collect::<Result<Vec<_>>>()?
                 .join(", ")
         );
     }
     let live_children = live_child_sequences(&tx, task.task_id)?;
     if !live_children.is_empty() {
         bail!(
-            "#{seq} has unfinished child task(s): {}; finish, disposition, or reparent them before {status}",
+            "{} has unfinished child task(s): {}; finish, disposition, or reparent them before {status}",
+            task.handle,
             live_children
                 .iter()
-                .map(|child| format!("#{child}"))
-                .collect::<Vec<_>>()
+                .map(|child| seq_handle(&tx, *child))
+                .collect::<Result<Vec<_>>>()?
                 .join(", ")
         );
     }
     let replacement_sources = inbound_replacement_sequences(&tx, task.task_id)?;
     if !replacement_sources.is_empty() && status == "rejected" {
         bail!(
-            "#{seq} is the canonical replacement for {}; rejection would strand that history; use `papertiger retire {seq} --into <task> --why <reason>` to extend the replacement chain, or reopen and re-disposition the referring tasks first",
+            "{handle} is the canonical replacement for {}; rejection would strand that history; use `papertiger retire {seq} --into <task> --why <reason>` to extend the replacement chain, or reopen and re-disposition the referring tasks first",
             replacement_sources
                 .iter()
-                .map(|source| format!("#{source}"))
-                .collect::<Vec<_>>()
-                .join(", ")
+                .map(|source| seq_handle(&tx, *source))
+                .collect::<Result<Vec<_>>>()?
+                .join(", "),
+            handle = task.handle
         );
     }
     if !replacement_sources.is_empty() && status == "retired" && replacement_seq.is_none() {
         bail!(
-            "#{seq} is the canonical replacement for {}; bare retirement would strand that history; use `papertiger retire {seq} --into <task> --why <reason>` to extend the replacement chain",
+            "{handle} is the canonical replacement for {}; bare retirement would strand that history; use `papertiger retire {seq} --into <task> --why <reason>` to extend the replacement chain",
             replacement_sources
                 .iter()
-                .map(|source| format!("#{source}"))
-                .collect::<Vec<_>>()
-                .join(", ")
+                .map(|source| seq_handle(&tx, *source))
+                .collect::<Result<Vec<_>>>()?
+                .join(", "),
+            handle = task.handle
         );
     }
     let replacement = replacement_seq
         .map(|replacement_seq| {
             if replacement_seq == seq {
-                bail!("#{seq} cannot replace itself");
+                bail!("{} cannot replace itself", task.handle);
             }
             let replacement = get_task(&tx, replacement_seq)?;
             if replacement.plan_id != task.plan_id {
-                bail!("#{seq} and replacement #{replacement_seq} belong to different plans");
+                bail!(
+                    "{} and replacement {} belong to different plans",
+                    task.handle,
+                    replacement.handle
+                );
             }
             if matches!(replacement.status.as_str(), "retired" | "rejected") {
                 bail!(
-                    "replacement #{replacement_seq} is {}; choose a proposed, in_progress, or done same-plan task for --into",
+                    "replacement {} is {}; choose a proposed, in_progress, or done same-plan task for --into",
+                    replacement.handle,
                     replacement.status
                 );
             }
@@ -339,8 +366,8 @@ fn terminate_task(
             "replacement would create cycle {}",
             cycle
                 .iter()
-                .map(|task| format!("#{task}"))
-                .collect::<Vec<_>>()
+                .map(|task| seq_handle(&tx, *task))
+                .collect::<Result<Vec<_>>>()?
                 .join(" -> ")
         );
     }

@@ -87,7 +87,7 @@ enum Cmd {
     Add {
         /// Concise outcome-oriented task title
         title: String,
-        /// Owning plan slug; optional when exactly one plan is active
+        /// Owning plan slug; defaults to the parent's plan, else the single active plan
         #[arg(long)]
         plan: Option<String>,
         #[command(flatten)]
@@ -794,8 +794,8 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
         extra.push_str(&format!(
             " [deps: {}]",
             deps.iter()
-                .map(|d| format!("#{d}"))
-                .collect::<Vec<_>>()
+                .map(|d| pt::seq_handle(conn, *d))
+                .collect::<Result<Vec<_>>>()?
                 .join(" ")
         ));
     }
@@ -919,12 +919,11 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
     if !brief.outcomes.entries.is_empty() {
         pt::outln!("outcomes:");
         for outcome in &brief.outcomes.entries {
-            let first_line = outcome.result.lines().next().unwrap_or_default();
             pt::outln!(
                 "  {} {}: {}",
                 outcome.task.handle,
                 outcome.task.title,
-                first_line
+                preview(&outcome.result)
             );
         }
         omitted(brief.outcomes.omitted)?;
@@ -937,12 +936,25 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
                 note.event_id,
                 &note.at[..note.at.len().min(16)],
                 note.actor,
-                note.why.as_deref().unwrap_or_default().replace('\n', " ")
+                preview(note.why.as_deref().unwrap_or_default())
             );
         }
         omitted(brief.notes.omitted)?;
     }
     Ok(())
+}
+
+/// One line of at most 160 characters, ending in `…` when the
+/// text was cut; `show` and `log` carry the full text.
+fn preview(text: &str) -> String {
+    const PREVIEW_CHARS: usize = 160;
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= PREVIEW_CHARS {
+        return flat;
+    }
+    let mut cut = flat.chars().take(PREVIEW_CHARS - 1).collect::<String>();
+    cut.push('…');
+    cut
 }
 
 /// ` [unreviewed · deepseek-v4.1-flash]`: a claim's review state and the
@@ -1810,10 +1822,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                 start_ready,
                 session.as_deref(),
             )?;
-            mutation_output!(
-                "#{parent} decomposed into {} child task(s):",
-                children.len()
-            );
+            let parent = pt::seq_handle(&conn, parent)?;
+            mutation_output!("{parent} decomposed into {} child task(s):", children.len());
             for child in &children {
                 let started = if child.status == "in_progress" {
                     " (in progress)"
@@ -2004,13 +2014,15 @@ fn run_planner(cli: Cli) -> Result<()> {
                 },
                 &why,
             )?;
-            mutation_output!("#{seq} updated ({})", changed.join(", "));
+            let handle = pt::seq_handle(&conn, seq)?;
+            mutation_output!("{handle} updated ({})", changed.join(", "));
         }
         Cmd::Start { task, why } => {
             let why = why.optional()?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::start_task(&conn, &actor, seq, why.as_deref(), session.as_deref())?;
-            mutation_output!("#{seq} in progress");
+            let handle = pt::seq_handle(&conn, seq)?;
+            mutation_output!("{handle} in progress");
         }
         Cmd::MovePlan { tasks, plan, why } => {
             let why = why.required()?;
@@ -2025,13 +2037,15 @@ fn run_planner(cli: Cli) -> Result<()> {
             let result = result.optional()?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::complete_task(&conn, &actor, seq, result.as_deref())?;
-            mutation_output!("#{seq} done");
+            let handle = pt::seq_handle(&conn, seq)?;
+            mutation_output!("{handle} done");
         }
         Cmd::Reopen { task, why } => {
             let why = why.required()?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::reopen_task(&conn, &actor, seq, &why)?;
-            mutation_output!("#{seq} reopened");
+            let handle = pt::seq_handle(&conn, seq)?;
+            mutation_output!("{handle} reopened");
         }
         Cmd::Retire { task, into, why } => {
             let why = why.required()?;
@@ -2042,9 +2056,14 @@ fn run_planner(cli: Cli) -> Result<()> {
                 .transpose()?;
             pt::retire_task(&conn, &actor, seq, replacement_seq, &why)?;
             if let Some(replacement_seq) = replacement_seq {
-                mutation_output!("#{seq} retired into #{replacement_seq}");
+                let (handle, replacement) = (
+                    pt::seq_handle(&conn, seq)?,
+                    pt::seq_handle(&conn, replacement_seq)?,
+                );
+                mutation_output!("{handle} retired into {replacement}");
             } else {
-                mutation_output!("#{seq} retired");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("{handle} retired");
             }
         }
         Cmd::Brief { task } => {
@@ -2142,7 +2161,8 @@ fn run_planner(cli: Cli) -> Result<()> {
             let why = why.required()?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::reject_task(&conn, &actor, seq, &why)?;
-            mutation_output!("#{seq} rejected");
+            let handle = pt::seq_handle(&conn, seq)?;
+            mutation_output!("{handle} rejected");
         }
         Cmd::Gate { cmd } => match cmd {
             GateCmd::Add {
@@ -2153,7 +2173,8 @@ fn run_planner(cli: Cli) -> Result<()> {
             } => {
                 let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::add_gate(&conn, &actor, seq, &name, &kind, &requirement)?;
-                mutation_output!("gate '{name}' added to #{seq}");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("gate '{name}' added to {handle}");
             }
             GateCmd::Resolve {
                 task,
@@ -2179,25 +2200,29 @@ fn run_planner(cli: Cli) -> Result<()> {
                     sha256.as_deref(),
                     note.as_deref(),
                 )?;
-                mutation_output!("gate '{name}' on #{seq} resolved");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("gate '{name}' on {handle} resolved");
             }
             GateCmd::Waive { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::waive_gate(&conn, &actor, seq, &name, &why)?;
-                mutation_output!("gate '{name}' on #{seq} waived");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("gate '{name}' on {handle} waived");
             }
             GateCmd::Reopen { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::reopen_gate(&conn, &actor, seq, &name, &why)?;
-                mutation_output!("gate '{name}' on #{seq} reopened");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("gate '{name}' on {handle} reopened");
             }
             GateCmd::Remove { task, name, why } => {
                 let why = why.required()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::remove_gate(&conn, &actor, seq, &name, &why)?;
-                mutation_output!("gate '{name}' removed from #{seq}");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("gate '{name}' removed from {handle}");
             }
             GateCmd::List { task } => {
                 let t = pt::get_task(&conn, pt::resolve_task_ref(&conn, &task)?)?;
@@ -2231,7 +2256,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                     note.as_deref(),
                 )?;
                 pt::add_external_reference(&conn, &actor, seq, &reference)?;
-                mutation_output!("reference {kind} '{locator}' recorded on #{seq}");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("reference {kind} '{locator}' recorded on {handle}");
             }
             ReferenceCmd::Remove {
                 task,
@@ -2248,7 +2274,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                     &locator,
                     &why.required()?,
                 )?;
-                mutation_output!("reference {kind} '{locator}' removed from #{seq}");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("reference {kind} '{locator}' removed from {handle}");
             }
             ReferenceCmd::List { task } => {
                 let references =
@@ -2268,8 +2295,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                 } else {
                     for item in matches {
                         pt::outln!(
-                            "#{} [{}] {}",
-                            item.task_seq,
+                            "{} [{}] {}",
+                            pt::seq_handle(&conn, item.task_seq)?,
                             item.reference.kind,
                             item.task_title
                         );
@@ -2293,7 +2320,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                     &commit_oid,
                     note.as_deref(),
                 )?;
-                mutation_output!("commit {commit_oid} ({repo}) recorded on #{seq}");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("commit {commit_oid} ({repo}) recorded on {handle}");
             }
             CommitCmd::Remove {
                 task,
@@ -2304,7 +2332,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                 let why = why.required()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::remove_commit_association(&conn, &actor, seq, &repo, &commit_oid, &why)?;
-                mutation_output!("commit {commit_oid} ({repo}) removed from #{seq}");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("commit {commit_oid} ({repo}) removed from {handle}");
             }
             CommitCmd::List { task } => {
                 let seq = pt::resolve_task_ref(&conn, &task)?;
@@ -2334,8 +2363,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                 } else {
                     for found in matches {
                         pt::outln!(
-                            "#{} {} ({}) {}",
-                            found.task_seq,
+                            "{} {} ({}) {}",
+                            pt::seq_handle(&conn, found.task_seq)?,
                             found.task_title,
                             found.commit.repository,
                             found.commit.recorded_at
@@ -2352,7 +2381,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                     pt::resolve_task_ref(&conn, &on)?,
                 );
                 pt::add_dep(&conn, &actor, a, b, why.as_deref())?;
-                mutation_output!("#{a} now depends on #{b}");
+                let (a, b) = (pt::seq_handle(&conn, a)?, pt::seq_handle(&conn, b)?);
+                mutation_output!("{a} now depends on {b}");
             }
             DepCmd::Remove { task, on, why } => {
                 let why = why.optional()?;
@@ -2361,7 +2391,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                     pt::resolve_task_ref(&conn, &on)?,
                 );
                 pt::remove_dep(&conn, &actor, a, b, why.as_deref())?;
-                mutation_output!("#{a} no longer depends on #{b}");
+                let (a, b) = (pt::seq_handle(&conn, a)?, pt::seq_handle(&conn, b)?);
+                mutation_output!("{a} no longer depends on {b}");
             }
         },
         Cmd::Focus {
@@ -2460,13 +2491,15 @@ fn run_planner(cli: Cli) -> Result<()> {
                 let why = why.optional()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::add_tag(&conn, &actor, seq, &tag, why.as_deref())?;
-                mutation_output!("tag '{tag}' added to #{seq}");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("tag '{tag}' added to {handle}");
             }
             TagCmd::Remove { task, tag, why } => {
                 let why = why.optional()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
                 pt::remove_tag(&conn, &actor, seq, &tag, why.as_deref())?;
-                mutation_output!("tag '{tag}' removed from #{seq}");
+                let handle = pt::seq_handle(&conn, seq)?;
+                mutation_output!("tag '{tag}' removed from {handle}");
             }
         },
         Cmd::Tree { plan, kind } => {
@@ -2685,8 +2718,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                 );
                 for binding in &report.projection.bindings {
                     pt::outln!(
-                        "  #{} {} '{}' [{}/{}] {}",
-                        binding.task_seq,
+                        "  {} {} '{}' [{}/{}] {}",
+                        pt::seq_handle(&conn, binding.task_seq)?,
                         binding.entity,
                         binding.name,
                         binding.status,
@@ -2752,10 +2785,10 @@ fn run_planner(cli: Cli) -> Result<()> {
                 let (outcome, record) =
                     pt::record_mise_projection(&conn, &actor, task_seq, &bytes)?;
                 mutation_output!(
-                    "{} {} task #{} [{}] campaign {} candidate {}{}",
+                    "{} {} task {} [{}] campaign {} candidate {}{}",
                     outcome.as_str(),
                     record.projection_sha256,
-                    record.task_seq,
+                    pt::seq_handle(&conn, record.task_seq)?,
                     record.projection.disposition.as_str(),
                     record.projection.campaign_id,
                     record.projection.candidate_id,
@@ -2773,7 +2806,8 @@ fn run_planner(cli: Cli) -> Result<()> {
                 if json {
                     pt::outln!("{}", serde_json::to_string_pretty(&records)?);
                 } else if records.is_empty() {
-                    pt::outln!("task #{task_seq} has no Mise projections");
+                    let handle = pt::seq_handle(&conn, task_seq)?;
+                    pt::outln!("task {handle} has no Mise projections");
                 } else {
                     for record in records {
                         pt::outln!(
