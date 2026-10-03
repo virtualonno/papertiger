@@ -206,8 +206,9 @@ pub fn list_tasks(
     plan_id: i64,
     status: Option<&str>,
     tag: Option<&str>,
+    kind: Option<&str>,
 ) -> Result<Vec<Task>> {
-    list_tasks_ordered(conn, plan_id, status, tag, false)
+    list_tasks_ordered(conn, plan_id, status, tag, kind, false)
 }
 
 pub fn list_tasks_by_activity(
@@ -215,8 +216,17 @@ pub fn list_tasks_by_activity(
     plan_id: i64,
     status: Option<&str>,
     tag: Option<&str>,
+    kind: Option<&str>,
 ) -> Result<Vec<Task>> {
-    list_tasks_ordered(conn, plan_id, status, tag, true)
+    list_tasks_ordered(conn, plan_id, status, tag, kind, true)
+}
+
+/// Refuse a kind filter that names no kind; `work` is a valid filter.
+pub(crate) fn validate_kind_filter(kind: Option<&str>) -> Result<()> {
+    match kind {
+        Some(kind) => validate_task_kind(kind),
+        None => Ok(()),
+    }
 }
 
 fn list_tasks_ordered(
@@ -224,8 +234,10 @@ fn list_tasks_ordered(
     plan_id: i64,
     status: Option<&str>,
     tag: Option<&str>,
+    kind: Option<&str>,
     by_activity: bool,
 ) -> Result<Vec<Task>> {
+    validate_kind_filter(kind)?;
     let order = if by_activity {
         "ORDER BY COALESCE((SELECT MAX(event_id) FROM canonical_events
                             WHERE entity_seq=tasks.seq
@@ -233,34 +245,20 @@ fn list_tasks_ordered(
     } else {
         "ORDER BY seq"
     };
-    let (sql, parameters): (String, Vec<rusqlite::types::Value>) = match (status, tag) {
-        (Some(status), Some(tag)) => (
-            format!(
-                "SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1 AND status=?2
-                 AND task_id IN (SELECT task_id FROM task_tags WHERE tag=?3) {order}"
-            ),
-            vec![
-                plan_id.into(),
-                status.to_owned().into(),
-                tag.to_owned().into(),
-            ],
-        ),
-        (Some(status), None) => (
-            format!("SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1 AND status=?2 {order}"),
-            vec![plan_id.into(), status.to_owned().into()],
-        ),
-        (None, Some(tag)) => (
-            format!(
-                "SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1
-                 AND task_id IN (SELECT task_id FROM task_tags WHERE tag=?2) {order}"
-            ),
-            vec![plan_id.into(), tag.to_owned().into()],
-        ),
-        (None, None) => (
-            format!("SELECT {TASK_COLS} FROM tasks WHERE plan_id=?1 {order}"),
-            vec![plan_id.into()],
-        ),
-    };
+    let sql = format!(
+        "SELECT {TASK_COLS} FROM tasks
+          WHERE plan_id=?1
+            AND (?2 IS NULL OR status=?2)
+            AND (?3 IS NULL OR task_id IN (SELECT task_id FROM task_tags WHERE tag=?3))
+            AND (?4 IS NULL OR kind=?4)
+          {order}"
+    );
+    let parameters: Vec<rusqlite::types::Value> = vec![
+        plan_id.into(),
+        status.map(str::to_owned).into(),
+        tag.map(str::to_owned).into(),
+        kind.map(str::to_owned).into(),
+    ];
     let mut statement = conn.prepare(&sql)?;
     Ok(statement
         .query_map(rusqlite::params_from_iter(parameters), task_from_row)?

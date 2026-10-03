@@ -20,6 +20,11 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   `legacy_task_kind` with a title-based suggestion and the `edit --kind`
   command that retypes it.
 - Bug tasks, like probes and decisions, require `--result` before `done`.
+- `list`, `focus`, `search` and `tree` take `--kind`; `tree --kind` keeps the
+  ancestors of each match. `status` reports open tasks per kind
+  (`open_by_kind`). Schema versions: status v4, task_list v2, task_inventory
+  v3 (cursors now bind `--kind`), search v3 and search_compact v3, each
+  echoing the kind filter.
 - Tasks are shown by handle: kind letter and number, e.g. `F-924`, in `list`,
   `show`, `status`, `focus`, `tree`, `search`, `list --status`, and the `add`
   and `decompose` receipts; every JSON task and task summary carries `handle`

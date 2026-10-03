@@ -37,6 +37,7 @@ pub struct SearchResponse {
     pub terms: Vec<String>,
     pub plan: Option<Plan>,
     pub status: Option<String>,
+    pub kind: Option<String>,
     pub total_matches: usize,
     pub truncated: bool,
     pub results: Vec<SearchHit>,
@@ -58,6 +59,7 @@ pub struct CompactSearchResponse<'a> {
     pub terms: &'a [String],
     pub plan: Option<&'a str>,
     pub status: Option<&'a str>,
+    pub kind: Option<&'a str>,
     pub total_matches: usize,
     pub truncated: bool,
     /// Present when more matches exist: the same search with a larger limit.
@@ -68,11 +70,12 @@ pub struct CompactSearchResponse<'a> {
 impl SearchResponse {
     pub fn compact(&self) -> CompactSearchResponse<'_> {
         CompactSearchResponse {
-            schema: "papertiger.search_compact.v2",
+            schema: "papertiger.search_compact.v3",
             query: &self.query,
             terms: &self.terms,
             plan: self.plan.as_ref().map(|plan| plan.slug.as_str()),
             status: self.status.as_deref(),
+            kind: self.kind.as_deref(),
             total_matches: self.total_matches,
             truncated: self.truncated,
             continuation_command: self.truncated.then(|| {
@@ -82,6 +85,9 @@ impl SearchResponse {
                 }
                 if let Some(status) = &self.status {
                     command.push_str(&format!(" --status {status}"));
+                }
+                if let Some(kind) = &self.kind {
+                    command.push_str(&format!(" --kind {kind}"));
                 }
                 command.push_str(&format!(
                     " --compact --limit {}",
@@ -118,8 +124,10 @@ pub fn search_tasks(
     query: &str,
     plan: Option<&str>,
     status: Option<&str>,
+    kind: Option<&str>,
     limit: usize,
 ) -> Result<SearchResponse> {
+    crate::validate_kind_filter(kind)?;
     let query = query.trim();
     let terms = analyze(query);
     if terms.is_empty() {
@@ -149,10 +157,11 @@ pub fn search_tasks(
            FROM tasks
           WHERE (?1 IS NULL OR plan_id=?1)
             AND (?2 IS NULL OR status=?2)
+            AND (?3 IS NULL OR kind=?3)
           ORDER BY seq"
     ))?;
     let rows = statement
-        .query_map(params![plan_id, status], |row| {
+        .query_map(params![plan_id, status, kind], |row| {
             Ok((
                 task_from_row(row)?,
                 row.get::<_, String>("owning_plan_slug")?,
@@ -226,11 +235,12 @@ pub fn search_tasks(
     }
     hits.truncate(limit);
     Ok(SearchResponse {
-        schema: "papertiger.search.v2".into(),
+        schema: "papertiger.search.v3".into(),
         query: query.to_owned(),
         terms,
         plan: selected_plan,
         status: status.map(str::to_owned),
+        kind: kind.map(str::to_owned),
         total_matches,
         truncated: total_matches > hits.len(),
         results: hits,

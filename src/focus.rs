@@ -76,8 +76,10 @@ pub fn focus(
     plan_id: i64,
     limit: usize,
     include_blocked: bool,
+    kind: Option<&str>,
     session: Option<&str>,
 ) -> Result<FocusResponse> {
+    crate::validate_kind_filter(kind)?;
     if let Some(session) = session {
         validate_session(session)?;
     }
@@ -118,6 +120,9 @@ pub fn focus(
     if !include_blocked {
         entries.retain(|entry| entry.readiness != "blocked");
     }
+    if let Some(kind) = kind {
+        entries.retain(|entry| entry.task.kind == kind);
+    }
     entries.sort_by(|left, right| {
         focus_readiness_rank(&left.readiness)
             .cmp(&focus_readiness_rank(&right.readiness))
@@ -141,8 +146,11 @@ pub fn focus(
     } else {
         ""
     };
+    let kind_filter = kind
+        .map(|kind| format!(" --kind {kind}"))
+        .unwrap_or_default();
     let continuation_command = format!(
-        "papertiger focus --plan {} --limit {eligible_count}{blocked}{} --json",
+        "papertiger focus --plan {} --limit {eligible_count}{blocked}{kind_filter}{} --json",
         plan.slug,
         session
             .map(|s| format!(" --session {s}"))

@@ -17,6 +17,7 @@ pub struct InventoryResponse {
     pub schema: &'static str,
     pub status: Option<String>,
     pub tag: Option<String>,
+    pub kind: Option<String>,
     pub total: usize,
     pub remaining: usize,
     /// Opaque continuation bound to the filters and authority snapshot.
@@ -27,18 +28,26 @@ pub struct InventoryResponse {
 
 const INVENTORY_CURSOR_PREFIX: &str = "inventory-v1";
 
-fn filter_digest(status: Option<&str>, tag: Option<&str>) -> String {
-    let scope = serde_json::json!([status, tag]).to_string();
+fn filter_digest(status: Option<&str>, tag: Option<&str>, kind: Option<&str>) -> String {
+    let scope = serde_json::json!([status, tag, kind]).to_string();
     crate::sha256(scope.as_bytes())[..16].to_owned()
 }
 
-fn restart_command(status: Option<&str>, tag: Option<&str>, limit: usize) -> String {
+fn restart_command(
+    status: Option<&str>,
+    tag: Option<&str>,
+    kind: Option<&str>,
+    limit: usize,
+) -> String {
     let mut command = String::from("papertiger list --all-plans");
     if let Some(status) = status {
         command.push_str(&format!(" --status {status}"));
     }
     if let Some(tag) = tag {
         command.push_str(&format!(" --tag {tag}"));
+    }
+    if let Some(kind) = kind {
+        command.push_str(&format!(" --kind {kind}"));
     }
     command.push_str(&format!(" --limit {limit} --json"));
     command
@@ -49,6 +58,7 @@ fn cursor_position(
     cursor: &str,
     status: Option<&str>,
     tag: Option<&str>,
+    kind: Option<&str>,
     snapshot: &str,
     restart: &str,
 ) -> Result<i64> {
@@ -63,9 +73,9 @@ fn cursor_position(
         .ok()
         .filter(|seq| *seq > 0)
         .ok_or_else(|| anyhow::anyhow!("--after-cursor is malformed; restart with `{restart}`"))?;
-    if filters != filter_digest(status, tag) {
+    if filters != filter_digest(status, tag, kind) {
         bail!(
-            "--after-cursor belongs to different --status/--tag filters; repeat the filters that produced it or restart with `{restart}`"
+            "--after-cursor belongs to different --status/--tag/--kind filters; repeat the filters that produced it or restart with `{restart}`"
         );
     }
     if cursor_snapshot != snapshot {
@@ -89,9 +99,11 @@ pub fn task_inventory(
     conn: &Connection,
     status: Option<&str>,
     tag: Option<&str>,
+    kind: Option<&str>,
     limit: usize,
     after_cursor: Option<&str>,
 ) -> Result<InventoryResponse> {
+    crate::validate_kind_filter(kind)?;
     if !(1..=500).contains(&limit) {
         bail!("inventory --limit must be between 1 and 500");
     }
@@ -107,26 +119,32 @@ pub fn task_inventory(
     let current = event_head(conn)?
         .map(|head| head.token)
         .unwrap_or_else(|| "empty".into());
-    let restart = restart_command(status, tag, limit);
+    let restart = restart_command(status, tag, kind, limit);
     let after_seq = after_cursor
-        .map(|cursor| cursor_position(cursor, status, tag, &current, &restart))
+        .map(|cursor| cursor_position(cursor, status, tag, kind, &current, &restart))
         .transpose()?;
     // Fetch only compact fields; task bodies and historical payloads never enter this projection.
-    let predicate = "(?1 IS NULL OR t.status=?1 OR (?1='unfinished' AND t.status IN ('proposed','in_progress'))) AND (?2 IS NULL OR EXISTS (SELECT 1 FROM task_tags g WHERE g.task_id=t.task_id AND g.tag=?2))";
+    let predicate = "(?1 IS NULL OR t.status=?1 OR (?1='unfinished' AND t.status IN ('proposed','in_progress'))) AND (?2 IS NULL OR EXISTS (SELECT 1 FROM task_tags g WHERE g.task_id=t.task_id AND g.tag=?2)) AND (?3 IS NULL OR t.kind=?3)";
     let total: i64 = conn.query_row(
         &format!("SELECT count(*) FROM tasks t WHERE {predicate}"),
-        params![status, tag],
+        params![status, tag, kind],
         |row| row.get(0),
     )?;
     let remaining_before: i64 = conn.query_row(
-        &format!("SELECT count(*) FROM tasks t WHERE {predicate} AND t.seq>?3"),
-        params![status, tag, after_seq.unwrap_or(0)],
+        &format!("SELECT count(*) FROM tasks t WHERE {predicate} AND t.seq>?4"),
+        params![status, tag, kind, after_seq.unwrap_or(0)],
         |row| row.get(0),
     )?;
-    let mut statement = conn.prepare(&format!("SELECT p.slug,p.status,t.seq,t.title,t.status,t.kind,t.priority FROM tasks t JOIN plans p ON p.plan_id=t.plan_id WHERE {predicate} AND t.seq>?3 ORDER BY t.seq LIMIT ?4"))?;
+    let mut statement = conn.prepare(&format!("SELECT p.slug,p.status,t.seq,t.title,t.status,t.kind,t.priority FROM tasks t JOIN plans p ON p.plan_id=t.plan_id WHERE {predicate} AND t.seq>?4 ORDER BY t.seq LIMIT ?5"))?;
     let tasks = statement
         .query_map(
-            params![status, tag, after_seq.unwrap_or(0), i64::try_from(limit)?],
+            params![
+                status,
+                tag,
+                kind,
+                after_seq.unwrap_or(0),
+                i64::try_from(limit)?
+            ],
             |row| {
                 Ok(InventoryItem {
                     plan: PlanIdentity {
@@ -150,16 +168,17 @@ pub fn task_inventory(
         format!(
             "{INVENTORY_CURSOR_PREFIX}:{}:{}:{current}",
             item.task.seq,
-            filter_digest(status, tag)
+            filter_digest(status, tag, kind)
         )
     });
     let continuation_command = next_cursor
         .as_ref()
         .map(|cursor| restart.replacen(" --json", &format!(" --after-cursor {cursor} --json"), 1));
     Ok(InventoryResponse {
-        schema: "papertiger.task_inventory.v2",
+        schema: "papertiger.task_inventory.v3",
         status: status.map(str::to_owned),
         tag: tag.map(str::to_owned),
+        kind: kind.map(str::to_owned),
         total: usize::try_from(total)?,
         remaining,
         next_cursor,

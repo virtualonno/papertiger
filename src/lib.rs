@@ -128,8 +128,8 @@ pub(crate) use events::record_event_in_mutation;
 mod tasks;
 pub(crate) use tasks::{
     TASK_COLS, meaning_source_requires_text, parse_task_ref, require_nonblank, task_from_row,
-    task_tags_by_id, validate_assignable_task_kind, validate_tag, validate_task_kind,
-    validate_task_title,
+    task_tags_by_id, validate_assignable_task_kind, validate_kind_filter, validate_tag,
+    validate_task_kind, validate_task_title,
 };
 pub use tasks::{
     Task, get_task, kind_requires_result, leaf_tasks_with_status, list_tasks,

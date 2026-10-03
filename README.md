@@ -569,7 +569,7 @@ files. The archive manifest identifies the source commit used for verification.
 ### Progressive structured reads
 
 Use `search "terms" --compact` for ranked task identities and bounded
-matched excerpts. Its `papertiger.search_compact.v2` projection returns 5 results
+matched excerpts. Its `papertiger.search_compact.v3` projection returns 5 results
 by default and preserves totals, truncation, ranking and match provenance, with a
 `continuation_command` when more match. Follow with `show N --no-history`
 for the full current task, relationships and obligations without historical
@@ -588,6 +588,11 @@ same filters and the authority snapshot. `total` counts all matching tasks;
 refuses the cursor: restart the inventory rather than combining different
 snapshots. These reads neither resume plans nor change
 mutation authority. Ordinary plan-selected `list` is unchanged.
+
+`list`, `focus`, `search` and `tree` accept `--kind <kind>` (`work` included);
+`tree --kind` keeps each match under the ancestors that place it, and a cursor
+from `list --all-plans` is bound to its kind filter too. `status` reports each
+active plan's open tasks per kind (`open_by_kind`), e.g. `open by kind: F 3, B 1`.
 
 ## License
 

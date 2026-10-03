@@ -1298,15 +1298,15 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
         "event log accepts only one of --before-cursor or --after-cursor",
     );
     assert_exact_error(
-        pt::search_tasks(&conn, "---", None, None, 20),
+        pt::search_tasks(&conn, "---", None, None, None, 20),
         "search query must contain at least one letter or digit",
     );
     assert_exact_error(
-        pt::search_tasks(&conn, "task", None, None, 0),
+        pt::search_tasks(&conn, "task", None, None, None, 0),
         "search --limit must be between 1 and 200",
     );
     assert_exact_error(
-        pt::search_tasks(&conn, "task", None, Some("complete"), 20),
+        pt::search_tasks(&conn, "task", None, Some("complete"), None, 20),
         "unknown task status 'complete' (expected proposed|in_progress|done|retired|rejected)",
     );
 }
@@ -2379,7 +2379,7 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
     pt::start_task(&conn, "test", container, None, None).unwrap();
     pt::start_task(&conn, "test", active_leaf, None, None).unwrap();
 
-    let focus = pt::focus(&conn, plan, 20, true, None).unwrap();
+    let focus = pt::focus(&conn, plan, 20, true, None, None).unwrap();
     let sequences = focus
         .projection
         .entries
@@ -2498,7 +2498,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
     let err = pt::start_task(&conn, "test", decision, None, None).unwrap_err();
     assert!(err.to_string().contains(&format!("dep:#{prerequisite}")));
     assert!(err.to_string().contains("blocker:operator input"));
-    let default_focus = pt::focus(&conn, plan, 20, false, None).unwrap();
+    let default_focus = pt::focus(&conn, plan, 20, false, None, None).unwrap();
     assert!(
         !default_focus
             .projection
@@ -2506,7 +2506,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
             .iter()
             .any(|entry| entry.task.seq == decision)
     );
-    let full_focus = pt::focus(&conn, plan, 20, true, None).unwrap();
+    let full_focus = pt::focus(&conn, plan, 20, true, None, None).unwrap();
     let entry = full_focus
         .projection
         .entries
@@ -2565,7 +2565,7 @@ fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
     )
     .unwrap();
 
-    let focus = pt::focus(&conn, plan, 10, false, None).unwrap();
+    let focus = pt::focus(&conn, plan, 10, false, None, None).unwrap();
     assert_eq!(focus.projection.entries[0].task.seq, task);
     assert_eq!(focus.projection.entries[0].readiness, "in_progress");
     assert!(
@@ -3060,13 +3060,13 @@ fn canonical_task_queries_cover_status_tag_and_leaf_filters() {
     pt::start_task(&conn, "test", parent, None, None).unwrap();
     pt::start_task(&conn, "test", child, None, None).unwrap();
 
-    let selected = pt::list_tasks(&conn, plan, None, Some("selected")).unwrap();
+    let selected = pt::list_tasks(&conn, plan, None, Some("selected"), None).unwrap();
     assert_eq!(
         selected.iter().map(|task| task.seq).collect::<Vec<_>>(),
         vec![parent, child]
     );
     let active_selected =
-        pt::list_tasks(&conn, plan, Some("in_progress"), Some("selected")).unwrap();
+        pt::list_tasks(&conn, plan, Some("in_progress"), Some("selected"), None).unwrap();
     assert_eq!(active_selected.len(), 2);
     let leaves = pt::leaf_tasks_with_status(&conn, plan, "in_progress").unwrap();
     assert_eq!(leaves.len(), 1);
@@ -3536,7 +3536,7 @@ fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
     .unwrap();
     pt::start_task(&conn, "agent", first, Some("begin"), None).unwrap();
     pt::add_note(&conn, "agent", Some(first), "latest evidence", None).unwrap();
-    let ordered = pt::list_tasks_by_activity(&conn, plan, None, None).unwrap();
+    let ordered = pt::list_tasks_by_activity(&conn, plan, None, None, None).unwrap();
     assert_eq!(ordered[0].seq, first);
     assert_eq!(ordered[1].seq, second);
 
@@ -4538,7 +4538,7 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
     )
     .unwrap();
 
-    let ranked = pt::search_tasks(&conn, "object store", Some("primary"), None, 20).unwrap();
+    let ranked = pt::search_tasks(&conn, "object store", Some("primary"), None, None, 20).unwrap();
     assert_eq!(ranked.terms, vec!["object", "store"]);
     assert_eq!(
         ranked
@@ -4562,7 +4562,7 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         "restore must not earn a phrase bonus for store"
     );
 
-    let terminal = pt::search_tasks(&conn, "phantom checksum", None, None, 20).unwrap();
+    let terminal = pt::search_tasks(&conn, "phantom checksum", None, None, None, 20).unwrap();
     assert_eq!(terminal.results[0].task.seq, rejected);
     assert_eq!(terminal.results[0].task.status, "rejected");
     assert_eq!(terminal.results[0].plan, "primary");
@@ -4571,10 +4571,11 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
             .matched_fields
             .contains(&"rationale".into())
     );
-    let filtered = pt::search_tasks(&conn, "phantom checksum", None, Some("done"), 20).unwrap();
+    let filtered =
+        pt::search_tasks(&conn, "phantom checksum", None, Some("done"), None, 20).unwrap();
     assert!(filtered.results.is_empty());
 
-    let all_plans = pt::search_tasks(&conn, "object store", None, None, 20).unwrap();
+    let all_plans = pt::search_tasks(&conn, "object store", None, None, None, 20).unwrap();
     assert!(all_plans.plan.is_none());
     for hit in &all_plans.results {
         let expected = if hit.task.seq == other_plan_hit {
@@ -4591,7 +4592,7 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
             .any(|hit| hit.task.seq == other_plan_hit)
     );
     assert!(
-        pt::search_tasks(&conn, "art", None, None, 20)
+        pt::search_tasks(&conn, "art", None, None, None, 20)
             .unwrap()
             .results
             .is_empty()
@@ -4615,7 +4616,7 @@ fn search_refuses_an_unpageable_result_set_with_narrowing_commands() {
         )
         .unwrap();
     }
-    let error = pt::search_tasks(&conn, "common", Some("many"), None, 200).unwrap_err();
+    let error = pt::search_tasks(&conn, "common", Some("many"), None, None, 200).unwrap_err();
     let message = error.to_string();
     assert!(message.contains("matched 201 tasks"), "{message}");
     assert!(message.contains("--plan") && message.contains("--status"));

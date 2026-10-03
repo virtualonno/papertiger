@@ -188,13 +188,14 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
         "--json",
     ];
     let next = read(&next_args);
-    assert_eq!(next["schema"], "papertiger.task_inventory.v2");
+    assert_eq!(next["schema"], "papertiger.task_inventory.v3");
     assert_eq!(next["remaining"], 0);
     assert!(next["next_cursor"].is_null());
     assert!(next["continuation_command"].is_null());
     let other_filters = invoke(&["list", "--all-plans", "--after-cursor", &cursor]);
     assert!(
-        String::from_utf8_lossy(&other_filters.stderr).contains("different --status/--tag filters")
+        String::from_utf8_lossy(&other_filters.stderr)
+            .contains("different --status/--tag/--kind filters")
     );
     assert_eq!(next["tasks"].as_array().unwrap().len(), 2);
     assert!(
@@ -214,8 +215,8 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     );
     let full = read(&["search", "discovery", "--limit", "2", "--json"]);
     let compact = read(&["search", "discovery", "--limit", "2", "--compact", "--json"]);
-    assert_eq!(full["schema"], "papertiger.search.v2");
-    assert_eq!(compact["schema"], "papertiger.search_compact.v2");
+    assert_eq!(full["schema"], "papertiger.search.v3");
+    assert_eq!(compact["schema"], "papertiger.search_compact.v3");
     assert_eq!(compact["total_matches"], full["total_matches"]);
     assert_eq!(compact["truncated"], true);
     let total = compact["total_matches"].as_u64().unwrap();
@@ -323,7 +324,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     for (args, schema) in [
         (
             vec!["search", "discovery", "--compact"],
-            "papertiger.search_compact.v2",
+            "papertiger.search_compact.v3",
         ),
         (
             vec!["show", "1", "--no-history"],
@@ -469,6 +470,115 @@ fn init_refuses_json_and_names_its_plain_text_report() {
 }
 
 struct TestDatabase(PathBuf);
+
+#[test]
+fn kind_filters_select_one_kind_and_status_counts_open_work_by_kind() {
+    let db = TestDatabase::new("kind-filters");
+    let run = |args: &[&str]| {
+        let output = papertiger(&db.0, args);
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "work", "Work"]);
+    run(&["add", "--kind", "goal", "Ship reliable plans"]);
+    run(&[
+        "add",
+        "--kind",
+        "bug",
+        "--parent",
+        "1",
+        "Crash on empty plan",
+    ]);
+    run(&[
+        "add",
+        "--kind",
+        "feature",
+        "--parent",
+        "1",
+        "Plan templates",
+    ]);
+    run(&["add", "--kind", "bug", "Wrong sort order"]);
+    run(&["add", "--kind", "probe", "Measure plan reads"]);
+    run(&["done", "4", "--result", "Ties were broken by title"]);
+
+    let seqs = |json: &str, rows: &str| -> Vec<i64> {
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        value[rows]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row.get("task").unwrap_or(row)["seq"].as_i64().unwrap())
+            .collect()
+    };
+    assert_eq!(
+        seqs(&run(&["list", "--kind", "bug", "--json"]), "tasks"),
+        vec![2, 4]
+    );
+    assert_eq!(
+        seqs(
+            &run(&["list", "--kind", "bug", "--status", "proposed", "--json"]),
+            "tasks"
+        ),
+        vec![2]
+    );
+    let inventory = run(&[
+        "list",
+        "--all-plans",
+        "--kind",
+        "bug",
+        "--limit",
+        "1",
+        "--json",
+    ]);
+    assert_eq!(seqs(&inventory, "tasks"), vec![2]);
+    let inventory: serde_json::Value = serde_json::from_str(&inventory).unwrap();
+    assert_eq!(inventory["kind"], "bug");
+    assert!(
+        inventory["continuation_command"]
+            .as_str()
+            .unwrap()
+            .contains("--kind bug"),
+        "{inventory}"
+    );
+    assert_eq!(
+        seqs(&run(&["focus", "--kind", "probe", "--json"]), "entries"),
+        vec![5]
+    );
+    assert_eq!(
+        seqs(
+            &run(&["search", "plan", "--kind", "feature", "--json"]),
+            "results"
+        ),
+        vec![3]
+    );
+    let tree = run(&["tree", "--kind", "feature"]);
+    assert!(tree.contains("G-1 Ship reliable plans"), "{tree}");
+    assert!(tree.contains("F-3 Plan templates"), "{tree}");
+    assert!(!tree.contains("B-2") && !tree.contains("P-5"), "{tree}");
+    let status = run(&["status"]);
+    assert!(
+        status.contains("open by kind: G 1, F 1, B 1, P 1"),
+        "{status}"
+    );
+    let status: serde_json::Value = serde_json::from_str(&run(&["status", "--json"])).unwrap();
+    assert_eq!(
+        status["active_plans"][0]["open_by_kind"],
+        serde_json::json!([
+            {"kind": "goal", "count": 1},
+            {"kind": "feature", "count": 1},
+            {"kind": "bug", "count": 1},
+            {"kind": "probe", "count": 1},
+        ])
+    );
+    let refused = papertiger(&db.0, &["list", "--kind", "chore"]);
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unknown task kind 'chore'"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+}
 
 #[test]
 fn handles_name_the_kind_resolve_like_numbers_and_refuse_when_stale() {
@@ -3470,7 +3580,7 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     let status = papertiger(&db.0, &["status", "--json"]);
     assert_success(&status);
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
-    assert_eq!(status["schema"], "papertiger.status.v3");
+    assert_eq!(status["schema"], "papertiger.status.v4");
     assert_eq!(
         status["authority"]["schema_version"],
         papertiger::SCHEMA_VERSION
@@ -3496,14 +3606,14 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     let list = papertiger(&db.0, &["list", "--plan", "work", "--json"]);
     assert_success(&list);
     let list: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
-    assert_eq!(list["schema"], "papertiger.task_list.v1");
+    assert_eq!(list["schema"], "papertiger.task_list.v2");
     assert_eq!(list["tasks"].as_array().map(Vec::len), Some(2));
     assert_no_internal_identity_keys(&list);
 
     let search = papertiger(&db.0, &["search", "object store", "--json"]);
     assert_success(&search);
     let search: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
-    assert_eq!(search["schema"], "papertiger.search.v2");
+    assert_eq!(search["schema"], "papertiger.search.v3");
     assert_eq!(search["results"][0]["task"]["seq"], 1);
     assert_eq!(search["results"][0]["plan"], "work");
     assert_eq!(search["results"][0]["excerpt"]["field"], "title");
@@ -3623,7 +3733,7 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
     let status = papertiger(&db.0, &["status", "--json"]);
     assert_success(&status);
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
-    assert_eq!(status["schema"], "papertiger.status.v3");
+    assert_eq!(status["schema"], "papertiger.status.v4");
     let work = &status["active_plans"][0];
     assert_eq!(work["plan"]["slug"], "work");
     assert_eq!(work["counts"]["in_progress"], 10);

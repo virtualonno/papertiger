@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    Plan, SCHEMA_VERSION, TASK_DEFINITION_REVISION_SCHEMA, TASK_STATUSES, Task, get_plan, get_task,
-    list_tasks, list_tasks_by_activity, portable_absolute, ready_tasks, resolve_plan,
-    task_tags_by_id, valid_task_definition_revision_payload, validate_sha256,
+    Plan, SCHEMA_VERSION, TASK_DEFINITION_REVISION_SCHEMA, TASK_KINDS, TASK_STATUSES, Task,
+    get_plan, get_task, list_tasks, list_tasks_by_activity, portable_absolute, ready_tasks,
+    resolve_plan, task_tags_by_id, valid_task_definition_revision_payload, validate_sha256,
 };
 
 const EVENT_CURSOR_PREFIX: &str = "event-v1";
@@ -121,6 +121,12 @@ pub struct AuthorityInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
+pub struct KindCount {
+    pub kind: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct TaskCounts {
     pub proposed: i64,
     pub in_progress: i64,
@@ -191,6 +197,9 @@ pub struct StatusInProgress {
 pub struct PlanStatus {
     pub plan: Plan,
     pub counts: TaskCounts,
+    /// Proposed and in-progress tasks per kind, in kind order; kinds with
+    /// no open task are omitted.
+    pub open_by_kind: Vec<KindCount>,
     pub in_progress: StatusInProgress,
     pub ready: StatusProjection<StatusReadyTask>,
 }
@@ -216,6 +225,7 @@ pub struct TaskListResponse {
     pub plan: Plan,
     pub status: Option<String>,
     pub tag: Option<String>,
+    pub kind: Option<String>,
     pub sort: String,
     pub tasks: Vec<TaskListItem>,
 }
@@ -606,6 +616,24 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut open_kinds = conn.prepare(
+            "SELECT kind, COUNT(*) FROM tasks
+              WHERE plan_id=?1 AND status IN ('proposed','in_progress') GROUP BY kind",
+        )?;
+        let open_kinds = open_kinds
+            .query_map(params![plan_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?;
+        let open_by_kind = TASK_KINDS
+            .iter()
+            .filter_map(|kind| {
+                open_kinds.get(*kind).map(|count| KindCount {
+                    kind: (*kind).to_owned(),
+                    count: *count,
+                })
+            })
+            .collect();
         for (status, count) in rows {
             match status.as_str() {
                 "proposed" => counts.proposed = count,
@@ -619,13 +647,13 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
                 ),
             }
         }
-        let parent_ids = list_tasks(conn, plan_id, None, None)?
+        let parent_ids = list_tasks(conn, plan_id, None, None, None)?
             .into_iter()
             .filter_map(|task| task.parent_id)
             .collect::<HashSet<_>>();
         let mut in_progress_parents = Vec::new();
         let mut in_progress_leaves = Vec::new();
-        for task in list_tasks(conn, plan_id, Some("in_progress"), None)? {
+        for task in list_tasks(conn, plan_id, Some("in_progress"), None, None)? {
             let entry = StatusTask {
                 pickup: task.pickup.clone(),
                 activity: task_activity(conn, task.seq)?,
@@ -681,6 +709,7 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
         active_plans.push(PlanStatus {
             plan,
             counts,
+            open_by_kind,
             in_progress,
             ready,
         });
@@ -713,7 +742,7 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
         Some("papertiger log --json".into()),
     );
     Ok(StatusResponse {
-        schema: "papertiger.status.v3".into(),
+        schema: "papertiger.status.v4".into(),
         authority: authority_info(conn, requested_path)?,
         active_plans,
         recent_notes,
@@ -725,6 +754,7 @@ pub fn task_list_response(
     plan: Option<&str>,
     status: Option<&str>,
     tag: Option<&str>,
+    kind: Option<&str>,
     sort: &str,
 ) -> Result<TaskListResponse> {
     if let Some(status) = status
@@ -737,8 +767,8 @@ pub fn task_list_response(
     }
     let (plan_id, _) = resolve_plan(conn, plan)?;
     let tasks = match sort {
-        "seq" => list_tasks(conn, plan_id, status, tag)?,
-        "activity" => list_tasks_by_activity(conn, plan_id, status, tag)?,
+        "seq" => list_tasks(conn, plan_id, status, tag, kind)?,
+        "activity" => list_tasks_by_activity(conn, plan_id, status, tag, kind)?,
         _ => bail!("unknown list sort '{sort}' (expected seq|activity)"),
     };
     let tasks = tasks
@@ -752,10 +782,11 @@ pub fn task_list_response(
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(TaskListResponse {
-        schema: "papertiger.task_list.v1".into(),
+        schema: "papertiger.task_list.v2".into(),
         plan: get_plan(conn, plan_id)?,
         status: status.map(str::to_owned),
         tag: tag.map(str::to_owned),
+        kind: kind.map(str::to_owned),
         sort: sort.into(),
         tasks,
     })

@@ -157,6 +157,9 @@ enum Cmd {
         /// Filter by tag
         #[arg(long)]
         tag: Option<String>,
+        /// Filter by kind: goal, feature, change, bug, probe, decision, release, or work
+        #[arg(long)]
+        kind: Option<String>,
         /// Ordering: seq or activity
         #[arg(long, default_value = "seq")]
         sort: String,
@@ -171,6 +174,9 @@ enum Cmd {
         /// Restrict results to one task status
         #[arg(long)]
         status: Option<String>,
+        /// Filter by kind: goal, feature, change, bug, probe, decision, release, or work
+        #[arg(long)]
+        kind: Option<String>,
         /// Maximum ranked results (default 20; 5 with --compact)
         #[arg(long)]
         limit: Option<usize>,
@@ -296,6 +302,9 @@ enum Cmd {
         /// Include proposed work that is currently blocked
         #[arg(long)]
         include_blocked: bool,
+        /// Filter by kind: goal, feature, change, bug, probe, decision, release, or work
+        #[arg(long)]
+        kind: Option<String>,
     },
     /// Task tag management
     Tag {
@@ -307,6 +316,9 @@ enum Cmd {
         /// Plan slug; optional when exactly one plan is active
         #[arg(long)]
         plan: Option<String>,
+        /// Show tasks of this kind with the ancestors that place them
+        #[arg(long)]
+        kind: Option<String>,
     },
     /// Record a free-standing evented note (course changes, decisions)
     Note {
@@ -1529,6 +1541,21 @@ fn run_planner(cli: Cli) -> Result<()> {
                     counts.retired,
                     counts.rejected
                 );
+                if !active.open_by_kind.is_empty() {
+                    pt::outln!(
+                        "  open by kind: {}",
+                        active
+                            .open_by_kind
+                            .iter()
+                            .map(|open| format!(
+                                "{} {}",
+                                pt::task_kind_letter(&open.kind).unwrap_or('?'),
+                                open.count
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
                 for entry in &active.in_progress.parents.entries {
                     pt::outln!(
                         "> parent {} {}{}",
@@ -1737,6 +1764,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             plan,
             status,
             tag,
+            kind,
             sort,
         } => {
             if all_plans {
@@ -1744,6 +1772,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     &conn,
                     status.as_deref(),
                     tag.as_deref(),
+                    kind.as_deref(),
                     limit.unwrap_or(100),
                     after_cursor.as_deref(),
                 )?;
@@ -1773,6 +1802,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     plan.as_deref(),
                     status.as_deref(),
                     tag.as_deref(),
+                    kind.as_deref(),
                     &sort,
                 )?;
                 pt::outln!("{}", serde_json::to_string_pretty(&response)?);
@@ -1780,10 +1810,20 @@ fn run_planner(cli: Cli) -> Result<()> {
             }
             let (plan_id, _) = pt::resolve_plan(&conn, plan.as_deref())?;
             let tasks = match sort.as_str() {
-                "seq" => pt::list_tasks(&conn, plan_id, status.as_deref(), tag.as_deref())?,
-                "activity" => {
-                    pt::list_tasks_by_activity(&conn, plan_id, status.as_deref(), tag.as_deref())?
-                }
+                "seq" => pt::list_tasks(
+                    &conn,
+                    plan_id,
+                    status.as_deref(),
+                    tag.as_deref(),
+                    kind.as_deref(),
+                )?,
+                "activity" => pt::list_tasks_by_activity(
+                    &conn,
+                    plan_id,
+                    status.as_deref(),
+                    tag.as_deref(),
+                    kind.as_deref(),
+                )?,
                 _ => bail!("unknown list sort '{sort}' (expected seq|activity)"),
             };
             for t in &tasks {
@@ -1794,12 +1834,19 @@ fn run_planner(cli: Cli) -> Result<()> {
             query,
             plan,
             status,
+            kind,
             limit,
             compact,
         } => {
             let limit = limit.unwrap_or(if compact { 5 } else { 20 });
-            let response =
-                pt::search_tasks(&conn, &query, plan.as_deref(), status.as_deref(), limit)?;
+            let response = pt::search_tasks(
+                &conn,
+                &query,
+                plan.as_deref(),
+                status.as_deref(),
+                kind.as_deref(),
+                limit,
+            )?;
             if json {
                 if compact {
                     pt::outln!("{}", serde_json::to_string_pretty(&response.compact())?);
@@ -2229,6 +2276,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             plan,
             limit,
             include_blocked,
+            kind,
         } => {
             let selected_plan = match plan.as_deref() {
                 Some(slug) => Some(pt::resolve_plan(&conn, Some(slug))?),
@@ -2242,7 +2290,14 @@ fn run_planner(cli: Cli) -> Result<()> {
                 );
                 return Ok(());
             };
-            let response = pt::focus(&conn, plan_id, limit, include_blocked, session.as_deref())?;
+            let response = pt::focus(
+                &conn,
+                plan_id,
+                limit,
+                include_blocked,
+                kind.as_deref(),
+                session.as_deref(),
+            )?;
             if json {
                 pt::outln!("{}", serde_json::to_string_pretty(&response)?);
             } else if response.projection.entries.is_empty() {
@@ -2302,10 +2357,14 @@ fn run_planner(cli: Cli) -> Result<()> {
                 mutation_output!("tag '{tag}' removed from #{seq}");
             }
         },
-        Cmd::Tree { plan } => {
+        Cmd::Tree { plan, kind } => {
             let (plan_id, slug) = pt::resolve_plan(&conn, plan.as_deref())?;
+            let visible = kind
+                .as_deref()
+                .map(|kind| tree_kind_scope(&conn, plan_id, kind))
+                .transpose()?;
             pt::outln!("{slug}");
-            print_tree(&conn, plan_id, None, 1)?;
+            print_tree(&conn, plan_id, None, 1, visible.as_ref())?;
         }
         Cmd::Note { text, source, task } => {
             let text = text.required()?;
@@ -2716,7 +2775,38 @@ fn child_progress(conn: &Connection, task_id: i64) -> Result<String> {
     Ok(format!(" ({closed}/{total} closed: {parts})"))
 }
 
-fn print_tree(conn: &Connection, plan_id: i64, parent: Option<i64>, depth: usize) -> Result<()> {
+/// Tasks of `kind` in a plan plus every ancestor, so a filtered tree keeps
+/// each match under the parents that place it.
+fn tree_kind_scope(
+    conn: &Connection,
+    plan_id: i64,
+    kind: &str,
+) -> Result<std::collections::HashSet<i64>> {
+    let matches = pt::list_tasks(conn, plan_id, None, None, Some(kind))?;
+    let mut visible = std::collections::HashSet::new();
+    for task in matches {
+        let mut next = Some(task.task_id);
+        while let Some(task_id) = next {
+            if !visible.insert(task_id) {
+                break;
+            }
+            next = conn.query_row(
+                "SELECT parent_id FROM tasks WHERE task_id=?1",
+                params![task_id],
+                |row| row.get(0),
+            )?;
+        }
+    }
+    Ok(visible)
+}
+
+fn print_tree(
+    conn: &Connection,
+    plan_id: i64,
+    parent: Option<i64>,
+    depth: usize,
+    visible: Option<&std::collections::HashSet<i64>>,
+) -> Result<()> {
     let sql = match parent {
         Some(_) => {
             "SELECT task_id, seq, title, status, kind FROM tasks WHERE plan_id=?1 AND parent_id=?2 ORDER BY seq"
@@ -2738,6 +2828,9 @@ fn print_tree(conn: &Connection, plan_id: i64, parent: Option<i64>, depth: usize
             .collect::<rusqlite::Result<_>>()?,
     };
     for (task_id, seq, title, status, kind) in rows {
+        if visible.is_some_and(|visible| !visible.contains(&task_id)) {
+            continue;
+        }
         let progress = child_progress(conn, task_id)?;
         let handle = pt::task_handle(seq, &kind);
         pt::outln!(
@@ -2745,7 +2838,7 @@ fn print_tree(conn: &Connection, plan_id: i64, parent: Option<i64>, depth: usize
             "  ".repeat(depth),
             status_glyph(&status)
         );
-        print_tree(conn, plan_id, Some(task_id), depth + 1)?;
+        print_tree(conn, plan_id, Some(task_id), depth + 1, visible)?;
     }
     Ok(())
 }

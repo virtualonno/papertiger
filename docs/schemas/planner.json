@@ -881,7 +881,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_list.v1"
+          "const": "papertiger.task_list.v2"
         },
         "plan": {
           "$ref": "#/$defs/plan"
@@ -900,6 +900,16 @@
           "anyOf": [
             {
               "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/task_kind"
             },
             {
               "type": "null"
@@ -951,6 +961,7 @@
         "plan",
         "status",
         "tag",
+        "kind",
         "sort",
         "tasks"
       ],
@@ -992,6 +1003,27 @@
         },
         "counts": {
           "$ref": "#/$defs/counts"
+        },
+        "open_by_kind": {
+          "description": "Proposed and in-progress tasks per kind, in kind order; kinds with no open task are omitted.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "$ref": "#/$defs/task_kind"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "kind",
+              "count"
+            ],
+            "additionalProperties": false
+          }
         },
         "in_progress": {
           "type": "object",
@@ -1212,6 +1244,7 @@
       "required": [
         "plan",
         "counts",
+        "open_by_kind",
         "in_progress",
         "ready"
       ],
@@ -1221,7 +1254,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.status.v3"
+          "const": "papertiger.status.v4"
         },
         "authority": {
           "type": "object",
@@ -1957,7 +1990,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_inventory.v2"
+          "const": "papertiger.task_inventory.v3"
         },
         "status": {
           "type": [
@@ -1969,6 +2002,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/task_kind"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "total": {
@@ -2015,6 +2058,7 @@
         "schema",
         "status",
         "tag",
+        "kind",
         "total",
         "remaining",
         "next_cursor",
@@ -2027,7 +2071,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.search_compact.v2"
+          "const": "papertiger.search_compact.v3"
         },
         "query": {
           "type": "string"
@@ -2048,6 +2092,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/task_kind"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "total_matches": {
@@ -2117,6 +2171,7 @@
         "terms",
         "plan",
         "status",
+        "kind",
         "total_matches",
         "truncated",
         "continuation_command",
@@ -2506,6 +2561,19 @@
         "children"
       ],
       "additionalProperties": false
+    },
+    "task_kind": {
+      "description": "Kind of outcome; work is the legacy kind of tasks recorded before typed kinds.",
+      "enum": [
+        "goal",
+        "feature",
+        "change",
+        "bug",
+        "probe",
+        "decision",
+        "release",
+        "work"
+      ]
     }
   }
 }

@@ -346,7 +346,7 @@ misleading revision.
 `search` analyzes literal words across title, intent, result, tags, and event
 rationale, requires every term somewhere in the task record, and ranks exact
 phrases plus high-value fields deterministically. It searches done, retired,
-and rejected history by default. Use `--plan`, `--status`, or `--limit` to
+and rejected history by default. Use `--plan`, `--status`, `--kind`, or `--limit` to
 narrow it; there is no query language, external index, or semantic inference.
 
 When a local Git commit represents a task outcome, resolve the full object ID
