@@ -56,8 +56,8 @@ outcome into children with one `decompose` call instead of inventing section
 or phase labels. Refer to local work by its handle (`F-924`) inside Papertiger
 and by its outcome everywhere else; keep both out of shared Git/PR prose.
 
-A claim marked `[unreviewed · <model>]` or `[disputed · <model>]` is
-unverified: check it before acting, then record
+Review is optional. A claim marked `[disputed · <model>]` was found wrong;
+when you do check a claim, record
 `review <N> --verdict confirmed|disputed --why "..."` (add `--result` for a
 done task's result). Read rejected history before reviving an approach. An
 intent stands alone: fold a source plan's substance in (`--intent-file`)
