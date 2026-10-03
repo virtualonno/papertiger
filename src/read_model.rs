@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    Plan, SCHEMA_VERSION, TASK_DEFINITION_REVISION_SCHEMA, TASK_KINDS, TASK_STATUSES, Task,
-    get_plan, get_task, list_tasks, list_tasks_by_activity, portable_absolute, ready_tasks,
-    resolve_plan, task_tags_by_id, valid_task_definition_revision_payload, validate_sha256,
+    Plan, SCHEMA_VERSION, TASK_DEFINITION_REVISION_SCHEMA, TASK_KINDS, Task, get_plan, get_task,
+    list_tasks, list_tasks_by_activity, portable_absolute, ready_tasks, resolve_plan,
+    task_tags_by_id, valid_task_definition_revision_payload, validate_sha256,
 };
 
 const EVENT_CURSOR_PREFIX: &str = "event-v1";
@@ -783,14 +783,7 @@ pub fn task_list_response(
     unreviewed: bool,
     sort: &str,
 ) -> Result<TaskListResponse> {
-    if let Some(status) = status
-        && !TASK_STATUSES.contains(&status)
-    {
-        bail!(
-            "unknown task status '{status}' (expected {})",
-            TASK_STATUSES.join("|")
-        );
-    }
+    crate::tasks::validate_status_filter(status)?;
     let (plan_id, _) = resolve_plan(conn, plan)?;
     let tasks = match sort {
         "seq" => list_tasks(conn, plan_id, status, tag, kind)?,

@@ -7,8 +7,8 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 
 use crate::{
-    ActivityEvent, Plan, TASK_COLS, TASK_STATUSES, Task, get_plan, resolve_plan, task_activity,
-    task_from_row, task_tags_by_id,
+    ActivityEvent, Plan, TASK_COLS, Task, get_plan, resolve_plan, task_activity, task_from_row,
+    task_tags_by_id,
 };
 
 const MAX_SEARCH_RESULTS: usize = 200;
@@ -136,14 +136,7 @@ pub fn search_tasks(
     if !(1..=MAX_SEARCH_RESULTS).contains(&limit) {
         bail!("search --limit must be between 1 and {MAX_SEARCH_RESULTS}");
     }
-    if let Some(status) = status
-        && !TASK_STATUSES.contains(&status)
-    {
-        bail!(
-            "unknown task status '{status}' (expected {})",
-            TASK_STATUSES.join("|")
-        );
-    }
+    crate::tasks::validate_status_filter(status)?;
     let selected_plan = plan
         .map(|slug| {
             let (plan_id, _) = resolve_plan(conn, Some(slug))?;

@@ -344,6 +344,20 @@ pub fn list_tasks_by_activity(
     list_tasks_ordered(conn, plan_id, status, tag, kind, true)
 }
 
+/// Refuse a status filter that names no status, so a typo never reads as
+/// "nothing matches".
+pub(crate) fn validate_status_filter(status: Option<&str>) -> Result<()> {
+    if let Some(status) = status
+        && !crate::TASK_STATUSES.contains(&status)
+    {
+        bail!(
+            "unknown task status '{status}' (expected {})",
+            crate::TASK_STATUSES.join("|")
+        );
+    }
+    Ok(())
+}
+
 /// Refuse a kind filter that names no kind; `work` is a valid filter.
 pub(crate) fn validate_kind_filter(kind: Option<&str>) -> Result<()> {
     match kind {
@@ -360,6 +374,7 @@ fn list_tasks_ordered(
     kind: Option<&str>,
     by_activity: bool,
 ) -> Result<Vec<Task>> {
+    validate_status_filter(status)?;
     validate_kind_filter(kind)?;
     let order = if by_activity {
         "ORDER BY COALESCE((SELECT MAX(event_id) FROM canonical_events

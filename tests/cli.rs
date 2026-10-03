@@ -1076,6 +1076,19 @@ fn kind_filters_select_one_kind_and_status_counts_open_work_by_kind() {
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );
+    for args in [
+        &["list", "--status", "all"][..],
+        &["list", "--status", "all", "--unreviewed"],
+        &["list", "--status", "all", "--sort", "activity"],
+    ] {
+        let refused = papertiger(&db.0, args);
+        assert!(!refused.status.success(), "{args:?} must refuse");
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("unknown task status 'all'"),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+    }
 }
 
 #[test]

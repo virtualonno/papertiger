@@ -152,6 +152,8 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   the command quietly with success instead of a panic (exit 101), in both
   `papertiger` and `papertiger-mise`. A mutation whose receipt could not be
   printed has still committed; do not replay it.
+- Text `list --status <unknown>` (for example `all`) refuses with the valid
+  statuses instead of printing nothing, matching `--json` and `--all-plans`.
 
 ## [0.20.0] - 2026-09-24
 
