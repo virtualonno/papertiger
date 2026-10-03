@@ -17,7 +17,7 @@ use crate::{
     validate_tag, validate_task_title,
 };
 
-pub const TASK_OUTLINE_SCHEMA: &str = "papertiger.task_outline.v1";
+pub const TASK_OUTLINE_SCHEMA: &str = "papertiger.task_outline.v2";
 pub const MAX_OUTLINE_KEY_CHARS: usize = 64;
 /// Largest outline document accepted, in bytes.
 pub const MAX_OUTLINE_BYTES: usize = 1024 * 1024;
@@ -149,19 +149,22 @@ pub fn parse_task_outline(bytes: &[u8]) -> Result<TaskOutline> {
         "task outline must be UTF-8 JSON; write the file as UTF-8 and pass it with --outline-file",
     )?;
     let value: serde_json::Value = serde_json::from_str(text).context(
-        "task outline is not valid JSON; see `papertiger schema` for papertiger.task_outline.v1",
+        "task outline is not valid JSON; see `papertiger schema` for papertiger.task_outline.v2",
     )?;
     UniqueKeys::deserialize(&mut serde_json::Deserializer::from_str(text))
         .map_err(|error| anyhow::anyhow!("{error}"))?;
     match value.get("schema").and_then(serde_json::Value::as_str) {
         Some(TASK_OUTLINE_SCHEMA) => {}
+        Some("papertiger.task_outline.v1") => bail!(
+            "papertiger.task_outline.v1 is no longer accepted: {TASK_OUTLINE_SCHEMA} requires \"kind\" on every child and \"priority\" as now, next or later; set \"schema\": \"{TASK_OUTLINE_SCHEMA}\""
+        ),
         Some(other) => bail!(
             "unsupported task outline schema '{other}'; set \"schema\": \"{TASK_OUTLINE_SCHEMA}\""
         ),
         None => bail!("task outline requires \"schema\": \"{TASK_OUTLINE_SCHEMA}\""),
     }
     serde_json::from_value(value).context(
-        "task outline does not match papertiger.task_outline.v1; see `papertiger schema` for its fields",
+        "task outline does not match papertiger.task_outline.v2; see `papertiger schema` for its fields",
     )
 }
 
@@ -528,9 +531,9 @@ mod tests {
     #[test]
     fn repeated_keys_are_refused_at_any_depth() {
         for outline in [
-            r#"{"schema":"papertiger.task_outline.v1","schema":"papertiger.task_outline.v1","children":[]}"#,
-            r#"{"schema":"papertiger.task_outline.v1","children":[],"children":[{"key":"a","title":"A","kind":"feature"}]}"#,
-            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","title":"B","kind":"feature"}]}"#,
+            r#"{"schema":"papertiger.task_outline.v2","schema":"papertiger.task_outline.v2","children":[]}"#,
+            r#"{"schema":"papertiger.task_outline.v2","children":[],"children":[{"key":"a","title":"A","kind":"feature"}]}"#,
+            r#"{"schema":"papertiger.task_outline.v2","children":[{"key":"a","title":"A","kind":"feature","title":"B","kind":"feature"}]}"#,
         ] {
             let error = parse_task_outline(outline.as_bytes())
                 .unwrap_err()
@@ -543,7 +546,7 @@ mod tests {
     #[test]
     fn integral_numbers_are_integers_and_oversized_input_is_refused() {
         let outline = parse_task_outline(
-            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","priority":"now","deps":[3.0]}]}"#,
+            br#"{"schema":"papertiger.task_outline.v2","children":[{"key":"a","title":"A","kind":"feature","priority":"now","deps":[3.0]}]}"#,
         )
         .unwrap();
         assert_eq!(outline.children[0].priority, crate::Priority::Now);
@@ -552,7 +555,7 @@ mod tests {
         };
         assert_eq!(integral(dependency), Some(3));
         let numeric = parse_task_outline(
-            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","priority":2}]}"#,
+            br#"{"schema":"papertiger.task_outline.v2","children":[{"key":"a","title":"A","kind":"feature","priority":2}]}"#,
         )
         .unwrap_err();
         assert!(
@@ -572,15 +575,15 @@ mod tests {
         let wrong = parse_task_outline(br#"{"schema":"papertiger.task_outline.v0","children":7}"#)
             .unwrap_err()
             .to_string();
-        assert!(wrong.contains("set \"schema\": \"papertiger.task_outline.v1\""));
+        assert!(wrong.contains("set \"schema\": \"papertiger.task_outline.v2\""));
         let unknown = parse_task_outline(
-            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","depends_on":[]}]}"#,
+            br#"{"schema":"papertiger.task_outline.v2","children":[{"key":"a","title":"A","kind":"feature","depends_on":[]}]}"#,
         )
         .unwrap_err();
         assert!(format!("{unknown:#}").contains("unknown field `depends_on`"));
         let with_bom = [
             b"\xef\xbb\xbf".as_slice(),
-            br#"{"schema":"papertiger.task_outline.v1","children":[]}"#,
+            br#"{"schema":"papertiger.task_outline.v2","children":[]}"#,
         ]
         .concat();
         assert!(parse_task_outline(&with_bom).unwrap().children.is_empty());

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::process::Output;
 
 fn outline(children: Value) -> String {
-    json!({"schema": "papertiger.task_outline.v1", "children": children}).to_string()
+    json!({"schema": "papertiger.task_outline.v2", "children": children}).to_string()
 }
 
 fn decompose(db: &TestDatabase, parent: &str, outline: &str, extra: &[&str]) -> Output {
@@ -93,7 +93,7 @@ fn decompose_creates_children_edges_and_ready_starts_in_one_receipt() {
         &children,
         &["--start-ready", "--json"],
     ));
-    assert_eq!(receipt["schema"], "papertiger.mutation.v1");
+    assert_eq!(receipt["schema"], "papertiger.mutation.v2");
     assert_eq!(receipt["changed"], true);
     assert_eq!(
         created(&receipt),
@@ -285,8 +285,12 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
 
     for (document, expected) in [
         (
-            json!({"schema": "papertiger.task_outline.v2", "children": []}).to_string(),
-            "set \"schema\": \"papertiger.task_outline.v1\"",
+            json!({"schema": "papertiger.task_outline.v1", "children": []}).to_string(),
+            "papertiger.task_outline.v1 is no longer accepted: papertiger.task_outline.v2 requires \"kind\" on every child",
+        ),
+        (
+            json!({"schema": "papertiger.task_outline.v3", "children": []}).to_string(),
+            "set \"schema\": \"papertiger.task_outline.v2\"",
         ),
         (
             outline(json!([{"key": "a", "title": "A", "kind": "feature", "depends_on": ["b"]}])),
@@ -295,11 +299,11 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         (outline(json!([])), "task outline has no children"),
         ("not json".to_owned(), "task outline is not valid JSON"),
         (
-            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature"}],"children":[{"key":"b","title":"B","kind":"feature"}]}"#.to_owned(),
+            r#"{"schema":"papertiger.task_outline.v2","children":[{"key":"a","title":"A","kind":"feature"}],"children":[{"key":"b","title":"B","kind":"feature"}]}"#.to_owned(),
             "task outline repeats key \"children\" in one object; write each key once",
         ),
         (
-            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","title":"B","kind":"feature"}]}"#.to_owned(),
+            r#"{"schema":"papertiger.task_outline.v2","children":[{"key":"a","title":"A","kind":"feature","title":"B","kind":"feature"}]}"#.to_owned(),
             "task outline repeats key \"title\" in one object",
         ),
         (

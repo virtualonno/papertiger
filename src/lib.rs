@@ -82,7 +82,10 @@ pub use mise_projection_contract::{
 pub const SCHEMA_VERSION: i64 = 14;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.planner";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
-pub const TASK_DEFINITION_REVISION_SCHEMA: &str = "papertiger.task_definition_revision.v1";
+pub const TASK_DEFINITION_REVISION_SCHEMA: &str = "papertiger.task_definition_revision.v2";
+/// Revisions recorded before priority levels: integer priorities and an
+/// optional `intent_source` change; still complete history.
+pub const TASK_DEFINITION_REVISION_SCHEMA_V1: &str = "papertiger.task_definition_revision.v1";
 pub const MAX_TASK_TITLE_CHARS: usize = 160;
 pub const MAX_TAG_CHARS: usize = 64;
 const SQLITE_LOCK_GRACE: std::time::Duration = std::time::Duration::from_millis(500);

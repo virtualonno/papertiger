@@ -100,7 +100,7 @@ priorities. `list`, `focus`, `search` and `tree` filter with `--kind`.
 
 Split a multi-part outcome into children with one
 `decompose <parent> --outline-file <path|->` call (`papertiger schema` defines
-`papertiger.task_outline.v1`) instead of inventing section or phase labels. An
+`papertiger.task_outline.v2`) instead of inventing section or phase labels. An
 intent stands alone: fold a source document's substance in with
 `--intent-file` rather than citing a scratch file.
 
@@ -149,7 +149,7 @@ Write `--why` for anything a future session could question, in language that
 stands alone. Long text uses `--intent-file`, `--why-file`, `--result-file` or
 `note --text-file`, with `-` for stdin; text must be UTF-8.
 
-For scripted chains pass `--json` and read `papertiger.mutation.v1`: `changed`
+For scripted chains pass `--json` and read `papertiger.mutation.v2`: `changed`
 and the exact emitted `events`, with new task numbers in `events[].task.seq`.
 Check the exit code before parsing. If handling fails after a successful
 write, verify with `show` or `log`; never replay the mutation.

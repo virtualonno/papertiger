@@ -11,6 +11,14 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
 
 ### Changed
 
+- JSON documents whose shape changed move one version: task_context v9,
+  task_current v4, event_log v2, mutation v2, status v4, focus v8, task_list
+  v2, task_inventory v3, search v3, search_compact v3, dump v11; new
+  documents brief v1 and model_report v1. Task outlines move to
+  `papertiger.task_outline.v2` (kind required, priority levels); a v1
+  outline is refused with that explanation. New edit events record
+  `papertiger.task_definition_revision.v2`; stored v1 revisions stay
+  complete history.
 - Tasks have typed kinds: `goal`, `feature`, `change`, `bug`, `probe`,
   `decision` and `release`, each with the letter its future handle shows
   (G, F, C, B, P, D, R). `add --kind` and each outline child's `kind` are now

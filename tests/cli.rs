@@ -257,7 +257,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     let full = read(&["show", "1", "--json"]);
     let current = read(&["show", "1", "--no-history", "--json"]);
     assert_eq!(current["task"], full["task"]);
-    assert_eq!(current["schema"], "papertiger.task_current.v3");
+    assert_eq!(current["schema"], "papertiger.task_current.v4");
     assert!(current.get("recent_events").is_none());
     assert_eq!(current["history_command"], "papertiger log --task 1 --json");
     assert_eq!(read(&next_args)["tasks"], next["tasks"]);
@@ -329,7 +329,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
         ),
         (
             vec!["show", "1", "--no-history"],
-            "papertiger.task_current.v3",
+            "papertiger.task_current.v4",
         ),
     ] {
         let output = invoke(&args);
@@ -347,7 +347,7 @@ fn mutation_receipts_model_attribution_and_task_moves_are_cli_usable() {
         let output = papertiger(&db.0, &["plan", "add", plan, plan, "--json"]);
         assert_success(&output);
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(value["schema"], "papertiger.mutation.v1");
+        assert_eq!(value["schema"], "papertiger.mutation.v2");
         assert_eq!(value["events"][0]["plan"]["slug"], plan);
     }
     let output = papertiger(
@@ -1119,7 +1119,7 @@ fn handles_name_the_kind_resolve_like_numbers_and_refuse_when_stale() {
         String::from_utf8_lossy(&stale.stderr)
     );
     let outline = serde_json::json!({
-        "schema": "papertiger.task_outline.v1",
+        "schema": "papertiger.task_outline.v2",
         "children": [{"key": "f-2", "title": "Child", "kind": "change"}],
     });
     let refused = papertiger_with_stdin(
@@ -1231,7 +1231,7 @@ fn a_reader_that_closes_the_pipe_ends_output_without_failure() {
         })
         .collect();
     let outline = serde_json::json!({
-        "schema": "papertiger.task_outline.v1",
+        "schema": "papertiger.task_outline.v2",
         "children": children,
     });
     assert_success(&papertiger_with_stdin(
@@ -3384,7 +3384,7 @@ fn commit_lookup_lifecycle_json_and_activity_sort_are_agent_usable() {
     let show = papertiger(&db.0, &["show", "1", "--json"]);
     assert_success(&show);
     let value: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
-    assert_eq!(value["schema"], "papertiger.task_context.v8");
+    assert_eq!(value["schema"], "papertiger.task_context.v9");
     assert!(value["activity"]["created_event"]["at"].is_string());
     assert!(value["activity"]["last_event"]["at"].is_string());
     assert_eq!(value["commit_associations"][0]["commit_oid"], oid);
@@ -3708,7 +3708,7 @@ fn retire_into_is_visible_without_redirecting_show() {
     let json = papertiger(&db.0, &["show", "1", "--json"]);
     assert_success(&json);
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(value["schema"], "papertiger.task_context.v8");
+    assert_eq!(value["schema"], "papertiger.task_context.v9");
     assert_eq!(value["task"]["seq"], 1);
     assert_eq!(value["replacement"]["seq"], 2);
     assert_eq!(value["recent_events"][0]["payload"]["replacement_seq"], 2);
@@ -3927,7 +3927,7 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     let latest = papertiger(&db.0, &["log", "--limit", "2", "--json"]);
     assert_success(&latest);
     let latest: serde_json::Value = serde_json::from_slice(&latest.stdout).unwrap();
-    assert_eq!(latest["schema"], "papertiger.event_log.v1");
+    assert_eq!(latest["schema"], "papertiger.event_log.v2");
     assert_eq!(latest["events"].as_array().map(Vec::len), Some(2));
     assert_eq!(latest["truncated"], true);
     let older_cursor = latest["continuation"]["token"].as_str().unwrap();
@@ -4173,7 +4173,7 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
     assert_eq!(edit["task_definition_revision_state"], "complete");
     assert_eq!(
         edit["payload"]["revision_schema"],
-        "papertiger.task_definition_revision.v1"
+        "papertiger.task_definition_revision.v2"
     );
     assert_eq!(
         edit["payload"]["changes"]["title"]["before"],

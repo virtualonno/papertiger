@@ -112,7 +112,7 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
         "--json",
     ]);
     run(&["export", "--plan", "destination"]);
-    let outline = json!({"schema": "papertiger.task_outline.v1", "children": [
+    let outline = json!({"schema": "papertiger.task_outline.v2", "children": [
         {"key": "model", "title": "Model outline work", "kind": "change", "intent": "Split outline work",
          "why": "exercise the outline receipt", "tags": ["outline"],
          "priority": "now"},
@@ -169,7 +169,7 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
         "--json",
     ]);
     std::fs::remove_file(&outline_path).unwrap();
-    assert_eq!(decomposed["schema"], "papertiger.mutation.v1");
+    assert_eq!(decomposed["schema"], "papertiger.mutation.v2");
     assert_eq!(
         decomposed["events"][0]["task"]["title"],
         "Model outline work"

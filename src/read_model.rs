@@ -280,10 +280,11 @@ impl StoredEvent {
                     .and_then(|value| value.get("revision_schema"))
                     .and_then(serde_json::Value::as_str)
                 {
-                    Some(TASK_DEFINITION_REVISION_SCHEMA)
-                        if payload
-                            .as_ref()
-                            .is_some_and(valid_task_definition_revision_payload) =>
+                    Some(
+                        TASK_DEFINITION_REVISION_SCHEMA | crate::TASK_DEFINITION_REVISION_SCHEMA_V1,
+                    ) if payload
+                        .as_ref()
+                        .is_some_and(valid_task_definition_revision_payload) =>
                     {
                         "complete"
                     }
@@ -537,7 +538,7 @@ pub fn event_log(
             row.get::<_, Option<i64>>(0)
         })?;
     Ok(EventLog {
-        schema: "papertiger.event_log.v1".into(),
+        schema: "papertiger.event_log.v2".into(),
         task_seq,
         direction: direction.into(),
         head,

@@ -140,13 +140,13 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   lists the covered documents. Not every JSON output is covered
   (`evidence verify` and `audit` are not). All fields are local
   planning data and require editorial review before external publication.
-- Mutations accept `--json` to emit `papertiger.mutation.v1`: the exact committed
+- Mutations accept `--json` to emit `papertiger.mutation.v2`: the exact committed
   events and their task/plan snapshots, captured inside the transaction. Clients
   obtain new task selectors from `events[].task.seq` without scraping prose.
   Refusals emit no success receipt; idempotent operations can report
   `changed=false`. Initialization has its own human-readable migration result.
 - `decompose <N> --outline-file <path|->` creates a parent's child tasks and
-  their dependencies from one `papertiger.task_outline.v1` outline in a single
+  their dependencies from one `papertiger.task_outline.v2` outline in a single
   transaction. Dependencies name siblings by batch-local key or existing tasks
   by number; keys are never stored. The receipt lists one task create event per
   child in outline order, and plain output prints each key with its new task.
@@ -619,7 +619,7 @@ matched excerpts. Its `papertiger.search_compact.v3` projection returns 5 result
 by default and preserves totals, truncation, ranking and match provenance, with a
 `continuation_command` when more match. Follow with `show N --no-history`
 for the full current task, relationships and obligations without historical
-payloads (`papertiger.task_current.v3`). The returned `history_command` retrieves
+payloads (`papertiger.task_current.v4`). The returned `history_command` retrieves
 the event history; read it before interpreting a rejected proposal or a prior
 decision. Ordinary `search --json` and `show --json` retain their full contracts.
 

@@ -115,12 +115,12 @@ enum Cmd {
     },
     /// Create a parent's child tasks and their dependencies from a JSON outline in one atomic call
     #[command(
-        after_help = "Outline: papertiger.task_outline.v1 in `papertiger schema`. Each child has a batch-local \"key\", a \"title\" and a \"kind\", and optionally \"intent\", \"why\", \"tags\", \"priority\" (now, next or later) and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
+        after_help = "Outline: papertiger.task_outline.v2 in `papertiger schema`. Each child has a batch-local \"key\", a \"title\" and a \"kind\", and optionally \"intent\", \"why\", \"tags\", \"priority\" (now, next or later) and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
     )]
     Decompose {
         /// Parent task: N, #N or its handle (e.g. G-N)
         parent: String,
-        /// Read the papertiger.task_outline.v1 outline as UTF-8 from PATH, or stdin with '-'
+        /// Read the papertiger.task_outline.v2 outline as UTF-8 from PATH, or stdin with '-'
         #[arg(long, value_name = "PATH|-")]
         outline_file: String,
         /// Also start every child whose dependencies are all existing done tasks; each needs a "why"

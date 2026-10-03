@@ -4558,7 +4558,7 @@ fn event_cursors_page_history_and_refuse_divergent_authorities() {
     pt::add_note(&conn, "reviewer", Some(first), "fresh evidence").unwrap();
 
     let latest = pt::event_log(&conn, None, 2, None, None).unwrap();
-    assert_eq!(latest.schema, "papertiger.event_log.v1");
+    assert_eq!(latest.schema, "papertiger.event_log.v2");
     assert_eq!(
         latest
             .events

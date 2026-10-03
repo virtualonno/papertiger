@@ -187,7 +187,10 @@ pub(crate) fn valid_task_definition_revision_payload(value: &serde_json::Value) 
     if object
         .get("revision_schema")
         .and_then(serde_json::Value::as_str)
-        != Some(TASK_DEFINITION_REVISION_SCHEMA)
+        .is_none_or(|schema| {
+            schema != TASK_DEFINITION_REVISION_SCHEMA
+                && schema != crate::TASK_DEFINITION_REVISION_SCHEMA_V1
+        })
         || !object
             .get("seq")
             .and_then(serde_json::Value::as_i64)

@@ -493,7 +493,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.event_log.v1"
+          "const": "papertiger.event_log.v2"
         },
         "task_seq": {
           "anyOf": [
@@ -720,7 +720,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_context.v8"
+          "const": "papertiger.task_context.v9"
         },
         "plan": {
           "$ref": "#/$defs/plan"
@@ -1606,7 +1606,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.mutation.v1"
+          "const": "papertiger.mutation.v2"
         },
         "changed": {
           "type": "boolean"
@@ -1779,7 +1779,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_current.v3"
+          "const": "papertiger.task_current.v4"
         },
         "plan": {
           "$ref": "#/$defs/plan"
@@ -2435,11 +2435,11 @@
       "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
     },
     "task_outline": {
-      "description": "Input to `papertiger decompose <parent> --outline-file <path|->`: the parent's new child tasks. A string dependency names a sibling key; an integer names an existing task in the parent's plan. Keys wire dependencies only and are never stored. The papertiger.mutation.v1 receipt lists one task create event per child, in outline order, before any dependency or status event. The document is at most 1048576 bytes and may not repeat a key within any object.",
+      "description": "Input to `papertiger decompose <parent> --outline-file <path|->`: the parent's new child tasks. A string dependency names a sibling key; an integer names an existing task in the parent's plan. Keys wire dependencies only and are never stored. The papertiger.mutation.v2 receipt lists one task create event per child, in outline order, before any dependency or status event. The document is at most 1048576 bytes and may not repeat a key within any object.",
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.task_outline.v1"
+          "const": "papertiger.task_outline.v2"
         },
         "children": {
           "type": "array",

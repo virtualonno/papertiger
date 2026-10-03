@@ -88,7 +88,7 @@ pub fn task_current(conn: &Connection, seq: i64) -> Result<serde_json::Value> {
     object.remove("recent_events");
     object.remove("recent_events_truncated");
     object.remove("older_events_cursor");
-    object.insert("schema".into(), "papertiger.task_current.v3".into());
+    object.insert("schema".into(), "papertiger.task_current.v4".into());
     object.insert(
         "history_command".into(),
         format!("papertiger log --task {seq} --json").into(),
@@ -190,7 +190,7 @@ fn task_context_with_history(
     let review = crate::task_review(conn, &task)?;
     let owner_state = task.pickup.as_ref().map(crate::owner_state);
     Ok(TaskContext {
-        schema: "papertiger.task_context.v8".into(),
+        schema: "papertiger.task_context.v9".into(),
         plan,
         tags,
         ancestry,

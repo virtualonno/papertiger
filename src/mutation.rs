@@ -61,7 +61,7 @@ impl<'a> MutationRecorder<'a> {
             .map(|row| Ok(serde_json::from_str(&row?)?))
             .collect::<Result<Vec<_>>>()?;
         Ok(MutationReceipt {
-            schema: "papertiger.mutation.v1",
+            schema: "papertiger.mutation.v2",
             changed: !events.is_empty(),
             events,
         })
