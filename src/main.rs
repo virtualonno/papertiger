@@ -285,7 +285,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: DepCmd,
     },
-    /// Actionable leaf work ranked by readiness and dependency unlock impact
+    /// Actionable leaf work and parents ready to close, ranked by readiness and dependency unlock impact
     Focus {
         /// Plan slug; optional when exactly one plan is active
         #[arg(long)]
@@ -2252,14 +2252,20 @@ fn run_planner(cli: Cli) -> Result<()> {
                     } else {
                         format!(" [blocked by {}]", entry.blockers.join(" "))
                     };
+                    let closing = if entry.closed_child_count > 0 {
+                        format!(" [close: all {} children closed]", entry.closed_child_count)
+                    } else {
+                        String::new()
+                    };
                     pt::outln!(
-                        "  #{} {} [priority {} unlocks {} downstream {} gates {}]{}{}",
+                        "  #{} {} [priority {} unlocks {} downstream {} gates {}]{}{}{}",
                         entry.task.seq,
                         entry.task.title,
                         entry.task.priority,
                         entry.immediate_unlock_count,
                         entry.unfinished_downstream_count,
                         entry.open_gate_count,
+                        closing,
                         blockers,
                         pickup_label(entry.pickup.as_ref()),
                     );
@@ -2667,6 +2673,35 @@ fn short_event_time(at: &str) -> String {
         .unwrap_or_else(|_| at.chars().take(16).collect())
 }
 
+/// Progress over a parent's children: `(done/total)` while every closed
+/// child is done, otherwise `(closed/total closed: N done, N retired, ...)`
+/// so retired and rejected children count as closed without passing as done.
+fn child_progress(conn: &Connection, task_id: i64) -> Result<String> {
+    let (total, done, retired, rejected): (i64, i64, i64, i64) = conn.query_row(
+        "SELECT COUNT(*),
+                COALESCE(SUM(status='done'), 0),
+                COALESCE(SUM(status='retired'), 0),
+                COALESCE(SUM(status='rejected'), 0)
+           FROM tasks WHERE parent_id=?1",
+        params![task_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
+    if total == 0 {
+        return Ok(String::new());
+    }
+    if retired == 0 && rejected == 0 {
+        return Ok(format!(" ({done}/{total})"));
+    }
+    let closed = done + retired + rejected;
+    let parts = [(done, "done"), (retired, "retired"), (rejected, "rejected")]
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, label)| format!("{count} {label}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!(" ({closed}/{total} closed: {parts})"))
+}
+
 fn print_tree(conn: &Connection, plan_id: i64, parent: Option<i64>, depth: usize) -> Result<()> {
     let sql = match parent {
         Some(_) => {
@@ -2689,21 +2724,7 @@ fn print_tree(conn: &Connection, plan_id: i64, parent: Option<i64>, depth: usize
             .collect::<rusqlite::Result<_>>()?,
     };
     for (task_id, seq, title, status) in rows {
-        let done: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM tasks WHERE parent_id=?1 AND status='done'",
-            params![task_id],
-            |r| r.get(0),
-        )?;
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM tasks WHERE parent_id=?1",
-            params![task_id],
-            |r| r.get(0),
-        )?;
-        let progress = if total > 0 {
-            format!(" ({done}/{total})")
-        } else {
-            String::new()
-        };
+        let progress = child_progress(conn, task_id)?;
         pt::outln!(
             "{}{} #{seq} {title}{progress}",
             "  ".repeat(depth),

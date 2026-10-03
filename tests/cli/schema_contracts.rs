@@ -85,7 +85,7 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
         "high"
     );
     let selection = run(&["focus", "--plan", "source", "--include-blocked", "--json"]);
-    assert_eq!(selection["schema"], "papertiger.focus.v7");
+    assert_eq!(selection["schema"], "papertiger.focus.v8");
     assert_eq!(
         selection["entries"][0]["pickup"]["session"],
         "schema-fixture"

@@ -3126,6 +3126,9 @@ pub struct FocusEntry {
     pub open_gate_count: usize,
     pub immediate_unlock_count: usize,
     pub unfinished_downstream_count: usize,
+    /// Children of a parent whose children are all closed; the remaining
+    /// work is closing the parent itself. Zero for leaf tasks.
+    pub closed_child_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3140,7 +3143,7 @@ pub struct FocusResponse {
 impl FocusResponse {
     pub fn no_active_plan() -> Self {
         Self {
-            schema: "papertiger.focus.v7".into(),
+            schema: "papertiger.focus.v8".into(),
             selection_state: "no_active_plan".into(),
             plan: None,
             projection: StatusProjection::new(
@@ -3176,7 +3179,9 @@ pub fn focus(
           WHERE task.plan_id=?1
             AND task.status IN ('proposed','in_progress')
             AND NOT EXISTS (
-                SELECT 1 FROM tasks child WHERE child.parent_id=task.task_id
+                SELECT 1 FROM tasks child
+                 WHERE child.parent_id=task.task_id
+                   AND child.status IN ('proposed','in_progress')
             )"
     ))?;
     let tasks = statement
@@ -3191,6 +3196,7 @@ pub fn focus(
                 open_gate_count: open_gates(conn, task.task_id)?.len(),
                 immediate_unlock_count: immediate_unlock_count(conn, task.task_id)?,
                 unfinished_downstream_count: unfinished_downstream_count(conn, task.task_id)?,
+                closed_child_count: child_count(conn, task.task_id)?,
                 task: TaskSummary::from(&task),
                 pickup: task.pickup,
                 readiness: readiness.to_string(),
@@ -3232,14 +3238,14 @@ pub fn focus(
             .unwrap_or_default()
     );
     Ok(FocusResponse {
-        schema: "papertiger.focus.v7".into(),
+        schema: "papertiger.focus.v8".into(),
         selection_state: "resolved".into(),
         plan: Some(PlanIdentity::from(&plan)),
         projection: StatusProjection::new(
             if include_blocked {
-                "active and proposed actionable leaf tasks, including blocked proposed work"
+                "active and proposed actionable leaf tasks and parents whose children are all closed, including blocked proposed work"
             } else {
-                "active and unblocked proposed actionable leaf tasks"
+                "active and unblocked proposed actionable leaf tasks and parents whose children are all closed"
             },
             "readiness, priority descending, immediate unlocks descending, unfinished downstream descending, task.seq ascending",
             eligible_count,
@@ -3313,6 +3319,15 @@ fn unfinished_downstream_count(conn: &Connection, task_id: i64) -> Result<usize>
     Ok(count as usize)
 }
 
+fn child_count(conn: &Connection, task_id: i64) -> Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tasks WHERE parent_id=?1",
+        params![task_id],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(count)?)
+}
+
 /// Ready tasks (proposed, no open deps), priority desc then seq asc.
 /// With `include_blocked`, blocked proposed tasks follow with named blockers.
 pub fn ready_tasks(
@@ -3321,11 +3336,12 @@ pub fn ready_tasks(
     limit: usize,
     include_blocked: bool,
 ) -> Result<Vec<ReadyEntry>> {
-    // Tasks with children are containers: their children are the actionable
-    // units, so they never enter the ready queue themselves.
+    // Open children are the actionable units of a parent, so a parent enters
+    // the ready queue only once every child is closed and closing it remains.
     let mut st = conn.prepare(&format!(
         "SELECT {TASK_COLS} FROM tasks t WHERE plan_id=?1 AND status='proposed'
-         AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = t.task_id)
+         AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = t.task_id
+                          AND c.status IN ('proposed','in_progress'))
          ORDER BY priority DESC, seq ASC"
     ))?;
     let tasks: Vec<Task> = st

@@ -2133,7 +2133,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.focus.v7"
+          "const": "papertiger.focus.v8"
         },
         "selection_state": {
           "enum": [
@@ -2213,6 +2213,11 @@
                 "type": "integer",
                 "minimum": 0
               },
+              "closed_child_count": {
+                "description": "Children of a parent whose children are all closed, so closing the parent is the remaining work; 0 for leaf tasks.",
+                "type": "integer",
+                "minimum": 0
+              },
               "pickup": {
                 "$ref": "#/$defs/pickup"
               }
@@ -2224,7 +2229,8 @@
               "blockers",
               "open_gate_count",
               "immediate_unlock_count",
-              "unfinished_downstream_count"
+              "unfinished_downstream_count",
+              "closed_child_count"
             ],
             "additionalProperties": false
           }

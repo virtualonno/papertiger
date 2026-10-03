@@ -28,7 +28,7 @@ fn session_pickup_is_visible_advisory_and_requires_no_release() {
     let focus = invoke("b", &["focus", "--limit", "1", "--json"]);
     assert_success(&focus);
     let focus: serde_json::Value = serde_json::from_slice(&focus.stdout).unwrap();
-    assert_eq!(focus["schema"], "papertiger.focus.v7");
+    assert_eq!(focus["schema"], "papertiger.focus.v8");
     assert_eq!(focus["entries"][0]["task"]["seq"], 2);
     assert!(focus["entries"][0]["task"].get("intent").is_none());
     let all = invoke("b", &["focus", "--json"]);
@@ -451,6 +451,62 @@ fn init_refuses_json_and_names_its_plain_text_report() {
 }
 
 struct TestDatabase(PathBuf);
+
+#[test]
+fn closed_children_count_as_closed_and_their_parent_surfaces_for_closing() {
+    let db = TestDatabase::new("closed-children");
+    let run = |args: &[&str]| {
+        let output = papertiger(&db.0, args);
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "work", "Work"]);
+    run(&["add", "Parent outcome"]);
+    run(&["add", "Built child", "--parent", "1"]);
+    run(&["add", "Superseded child", "--parent", "1"]);
+    run(&["add", "Wrong approach", "--parent", "1"]);
+    run(&["add", "Other parent"]);
+    run(&["add", "Finished child", "--parent", "5"]);
+    run(&["done", "6"]);
+    let focus_entries = |focus: &str| -> Vec<(i64, i64)> {
+        let focus: serde_json::Value = serde_json::from_str(focus).unwrap();
+        focus["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["task"]["seq"].as_i64().unwrap(),
+                    entry["closed_child_count"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        focus_entries(&run(&["focus", "--json"])),
+        vec![(2, 0), (3, 0), (4, 0), (5, 1)],
+        "a parent with open children is not actionable; one whose children are all closed is"
+    );
+
+    run(&["done", "2"]);
+    run(&["retire", "3", "--why", "Superseded by the built child"]);
+    run(&["reject", "4", "--why", "Approach does not hold"]);
+    let tree = run(&["tree"]);
+    assert!(
+        tree.contains("#1 Parent outcome (3/3 closed: 1 done, 1 retired, 1 rejected)"),
+        "{tree}"
+    );
+    assert!(tree.contains("#5 Other parent (1/1)"), "{tree}");
+    assert_eq!(
+        focus_entries(&run(&["focus", "--json"])),
+        vec![(1, 3), (5, 1)]
+    );
+    assert!(
+        run(&["focus"]).contains("[close: all 3 children closed]"),
+        "text focus names the closing step"
+    );
+}
 
 #[test]
 fn a_reader_that_closes_the_pipe_ends_output_without_failure() {
@@ -1353,7 +1409,7 @@ fn entry_bounds_tag_identity_and_focus_projection_are_explicit() {
     );
     assert_success(&focus);
     let focus: serde_json::Value = serde_json::from_slice(&focus.stdout).unwrap();
-    assert_eq!(focus["schema"], "papertiger.focus.v7");
+    assert_eq!(focus["schema"], "papertiger.focus.v8");
     assert_eq!(focus["eligible_count"], 3);
     assert_eq!(focus["returned_count"], 1);
     assert_eq!(focus["omitted_count"], 2);
@@ -2579,7 +2635,7 @@ fn focus_json_reports_a_structured_empty_selection_for_a_paused_plan() {
     assert_success(&output);
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("parse focus JSON");
-    assert_eq!(value["schema"], "papertiger.focus.v7");
+    assert_eq!(value["schema"], "papertiger.focus.v8");
     assert_eq!(value["selection_state"], "no_active_plan");
     assert!(value["plan"].is_null());
     assert_eq!(value["entries"].as_array().map(Vec::len), Some(0));

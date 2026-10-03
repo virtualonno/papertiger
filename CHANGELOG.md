@@ -8,6 +8,13 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ### Fixed
 
+- `tree` counts retired and rejected children as closed: a parent shows
+  `(6/7 closed: 5 done, 1 rejected)` instead of staying at `(5/7)` forever.
+  When every closed child is done it still shows `(done/total)`.
+- A parent whose children are all closed is no longer invisible to `focus`
+  and the status ready list. It surfaces as actionable work, and text focus
+  marks it `[close: all N children closed]`. `papertiger.focus.v8` adds
+  `closed_child_count` to every entry (0 for leaf tasks).
 - A reader that closes the output early (`papertiger list | head`) now ends
   the command quietly with success instead of a panic (exit 101), in both
   `papertiger` and `papertiger-mise`. A mutation whose receipt could not be
