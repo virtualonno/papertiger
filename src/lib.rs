@@ -99,7 +99,9 @@ pub const LEGACY_TASK_KIND: &str = "work";
 /// Sources older events recorded for intent, result and note text; only
 /// history validation reads them now.
 pub const MEANING_SOURCES: [&str; 3] = ["user", "agent", "external"];
-pub const GATE_KINDS: [&str; 8] = [
+/// Evidence a gate requires. An `external` gate is a condition outside the
+/// task, such as a vendor fix, and keeps the task from starting while open.
+pub const GATE_KINDS: [&str; 9] = [
     "test",
     "benchmark",
     "review",
@@ -107,6 +109,7 @@ pub const GATE_KINDS: [&str; 8] = [
     "fixture",
     "build",
     "doc",
+    "external",
     "other",
 ];
 
@@ -165,12 +168,6 @@ pub use gates::{
 pub(crate) use gates::{
     validate_evidence_locator, validate_new_evidence_locator, validate_optional_sha256,
 };
-mod blockers;
-pub(crate) use blockers::open_task_blocker_names;
-pub use blockers::{
-    TaskBlocker, add_blocker, remove_blocker, reopen_blocker, resolve_blocker, task_blockers,
-    waive_blocker,
-};
 pub mod model_report;
 pub use model_report::{ModelOutcomes, ModelReport, model_report};
 pub mod review;
@@ -189,7 +186,6 @@ pub(crate) use audit::{
     terminal_replacement_repair_instruction,
 };
 mod transfer;
-pub(crate) use transfer::default_open;
 pub use transfer::{
     DUMP_SCHEMA, Dump, EventDump, GateDump, PlanDump, TaskDump, convert_dump_v10, export, import,
     parse_dump_json,

@@ -92,32 +92,7 @@ CREATE TABLE deps (
   UNIQUE (task_id, depends_on),
   CHECK (task_id <> depends_on)
 );
-CREATE TABLE gates (
-  gate_id INTEGER PRIMARY KEY,
-  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
-  name TEXT NOT NULL,
-  kind TEXT NOT NULL
-    CHECK (kind IN ('test','benchmark','review','capture','fixture','build','doc','other')),
-  requirement TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
-  evidence_locator TEXT,
-  evidence_sha256 TEXT,
-  note TEXT,
-  resolved_at TEXT,
-  UNIQUE (task_id, name)
-);
-CREATE TABLE task_blockers (
-  blocker_id INTEGER PRIMARY KEY,
-  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
-  name TEXT NOT NULL,
-  condition TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
-  evidence_locator TEXT,
-  evidence_sha256 TEXT,
-  note TEXT,
-  resolved_at TEXT,
-  UNIQUE (task_id, name)
-);
+{gates}
 CREATE TABLE events (
   event_id INTEGER PRIMARY KEY,
   at TEXT NOT NULL,
@@ -145,7 +120,8 @@ CREATE INDEX idx_events_entity ON events(entity, entity_id);
 CREATE INDEX idx_events_entity_seq ON events(entity_seq, event_id);
 CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, commit_oid);
 "#,
-        tasks = tasks_table("tasks")
+        tasks = tasks_table("tasks"),
+        gates = gates_table("gates")
     ))?;
     tx.execute_batch(external_reference::REFERENCE_SCHEMA)?;
     tx.execute_batch(mise_projection::MISE_PROJECTION_SCHEMA_V4)?;
@@ -192,9 +168,31 @@ fn tasks_table(name: &str) -> String {
     )
 }
 
+/// The current gates table. An `external` gate is a condition outside the
+/// task that keeps it from starting until resolved; it replaced blockers.
+fn gates_table(name: &str) -> String {
+    format!(
+        r#"CREATE TABLE {name} (
+  gate_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL
+    CHECK (kind IN ('test','benchmark','review','capture','fixture','build','doc','external','other')),
+  requirement TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
+  evidence_locator TEXT,
+  evidence_sha256 TEXT,
+  note TEXT,
+  resolved_at TEXT,
+  UNIQUE (task_id, name)
+);"#
+    )
+}
+
 const TASK_COLUMNS_V14: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title,     intent, kind, result, status, priority, created_at, updated_at, pickup_session, pickup_at";
 
-/// Typed task kinds widen the kind CHECK, so the tasks table is rebuilt.
+/// Typed task kinds widen the kind CHECK and blockers fold into external
+/// gates, so the tasks and gates tables are rebuilt.
 /// Stored kinds keep their values: `probe` and `decision` keep their meaning
 /// and `work` becomes the legacy kind. The intent and result source columns
 /// are dropped: authorship and review state replace them, and the sources
@@ -220,6 +218,45 @@ fn migrate_v14(tx: &Connection) -> Result<()> {
          ALTER TABLE tasks_v14 RENAME TO tasks;
          CREATE INDEX idx_tasks_plan ON tasks(plan_id);",
         table = tasks_table("tasks_v14")
+    ))?;
+    // Blockers become `external` gates with the same evidence and outcome. A
+    // blocker named like a gate on the same task keeps a `blocker-` prefix.
+    let unrenamable: Option<(i64, String)> = tx
+        .query_row(
+            "SELECT t.seq, b.name FROM task_blockers b JOIN tasks t ON t.task_id=b.task_id
+              WHERE EXISTS (SELECT 1 FROM gates g WHERE g.task_id=b.task_id AND g.name=b.name)
+                AND (EXISTS (SELECT 1 FROM gates g
+                              WHERE g.task_id=b.task_id AND g.name='blocker-' || b.name)
+                     OR EXISTS (SELECT 1 FROM task_blockers other
+                                 WHERE other.task_id=b.task_id AND other.name='blocker-' || b.name))
+              ORDER BY t.seq LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if let Some((seq, name)) = unrenamable {
+        bail!(
+            "#{seq} has a blocker '{name}' that cannot become an external gate: both '{name}' and 'blocker-{name}' are taken on that task; nothing was migrated. With the previous release, remove and re-add one of them under another name, then run init again"
+        );
+    }
+    tx.execute_batch(&format!(
+        "{gates}
+         INSERT INTO gates_v14
+           (gate_id, task_id, name, kind, requirement, status, evidence_locator, evidence_sha256, note, resolved_at)
+         SELECT gate_id, task_id, name, kind, requirement, status, evidence_locator, evidence_sha256, note, resolved_at
+           FROM gates;
+         INSERT INTO gates_v14
+           (task_id, name, kind, requirement, status, evidence_locator, evidence_sha256, note, resolved_at)
+         SELECT b.task_id,
+                CASE WHEN EXISTS (SELECT 1 FROM gates g WHERE g.task_id=b.task_id AND g.name=b.name)
+                     THEN 'blocker-' || b.name ELSE b.name END,
+                'external', b.condition, b.status, b.evidence_locator, b.evidence_sha256, b.note,
+                b.resolved_at
+           FROM task_blockers b ORDER BY b.blocker_id;
+         DROP TABLE task_blockers;
+         DROP TABLE gates;
+         ALTER TABLE gates_v14 RENAME TO gates;",
+        gates = gates_table("gates_v14")
     ))?;
     let violations: i64 =
         tx.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {

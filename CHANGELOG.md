@@ -34,6 +34,14 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   captures receipts. Audit reports malformed authorship as
   `invalid_event_authorship`. A subagent inherits its parent's environment;
   pass `--model` where a launch-time model could be wrong.
+- Blockers are folded into gates: the gate kind `external` names a condition
+  outside the task and, while open, keeps it from starting (readiness blocker
+  `external:<name>`) as blockers did. The `blocker` command group, the
+  blocker table and the task context's `blockers` are removed; the v14
+  migration and `papertiger.dump.v10` conversion turn each blocker into an
+  external gate with the same condition, outcome and evidence, renamed
+  `blocker-<name>` where a gate already holds the name. Blocker-only audit
+  findings are gone; gate findings cover external gates.
 - `models` (`papertiger.model_report.v1`) reports claim outcomes per
   normalized authoring model, with same-model and cross-model reviews kept
   apart, reopened results, and small samples labeled; `--plan` and `--since`

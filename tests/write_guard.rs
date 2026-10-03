@@ -147,10 +147,21 @@ fn migration_guards_new_writes_and_preserves_earlier_malformed_rows() {
     conn.execute_batch("DROP VIEW canonical_events; DROP TABLE event_quarantines;")
         .unwrap();
     conn.execute_batch(
-        "ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
+        "CREATE TABLE task_blockers (
+  blocker_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  name TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
+  evidence_locator TEXT,
+  evidence_sha256 TEXT,
+  note TEXT,
+  resolved_at TEXT,
+  UNIQUE (task_id, name)
+); ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
          UPDATE meta SET value='10' WHERE key='schema_version';",
     )
-        .unwrap();
+    .unwrap();
     conn.execute_batch(&insert_event(
         "2026-09-19 02:41:00",
         "'work'",

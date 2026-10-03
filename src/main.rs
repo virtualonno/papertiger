@@ -226,7 +226,7 @@ enum Cmd {
         #[command(flatten)]
         why: WhyArgs,
     },
-    /// Complete a task after dependencies, blockers, gates, and children are closed
+    /// Complete a task after dependencies, gates, and children are closed
     Done {
         /// Task: N, #N or its handle (e.g. F-N)
         task: String,
@@ -283,11 +283,6 @@ enum Cmd {
     Gate {
         #[command(subcommand)]
         cmd: GateCmd,
-    },
-    /// External task blocker management
-    Blocker {
-        #[command(subcommand)]
-        cmd: BlockerCmd,
     },
     /// Manage task reference locators without fetching external state
     Reference {
@@ -371,7 +366,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EvidenceCmd,
     },
-    /// Export plans, tasks, gates, blockers, events and Mise projections as papertiger.dump.v11 JSON
+    /// Export plans, tasks, gates, events and Mise projections as papertiger.dump.v11 JSON
     Export {
         /// Export only this plan slug and its scoped history
         #[arg(long)]
@@ -605,7 +600,7 @@ enum GateCmd {
         task: String,
         /// Stable gate name within the task
         name: String,
-        /// Evidence kind: test, benchmark, review, capture, fixture, build, doc, or other
+        /// Evidence kind: test, benchmark, review, capture, fixture, build, doc, external (a condition outside the task that blocks starting it), or other
         #[arg(long)]
         kind: String,
         /// Proof required to resolve the gate
@@ -658,68 +653,6 @@ enum GateCmd {
     /// List every gate on one task
     List {
         /// Task (N, #N or handle) that owns the gates
-        task: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum BlockerCmd {
-    /// Add a named external blocker to a task
-    Add {
-        /// Task (N, #N or handle) that owns the blocker
-        task: String,
-        /// Stable blocker name within the task
-        name: String,
-        /// External condition preventing progress
-        #[arg(long)]
-        condition: String,
-    },
-    /// Resolve an open blocker with external evidence
-    Resolve {
-        /// Task (N, #N or handle) that owns the blocker
-        task: String,
-        /// Name of the open blocker
-        name: String,
-        /// Evidence locator proving the blocker cleared
-        #[arg(long)]
-        evidence: String,
-        /// Optional lowercase SHA-256 digest binding the evidence bytes
-        #[arg(long)]
-        sha256: Option<String>,
-        /// Optional concise evidence context
-        #[arg(long)]
-        note: Option<String>,
-    },
-    /// Waive an open blocker with a rationale
-    Waive {
-        /// Task (N, #N or handle) that owns the blocker
-        task: String,
-        /// Name of the open blocker
-        name: String,
-        #[command(flatten)]
-        why: WhyArgs,
-    },
-    /// Reopen a resolved or waived blocker
-    Reopen {
-        /// Task (N, #N or handle) that owns the blocker
-        task: String,
-        /// Name of the terminal blocker
-        name: String,
-        #[command(flatten)]
-        why: WhyArgs,
-    },
-    /// Remove an open blocker that no longer models reality
-    Remove {
-        /// Task (N, #N or handle) that owns the blocker
-        task: String,
-        /// Name of the open blocker
-        name: String,
-        #[command(flatten)]
-        why: WhyArgs,
-    },
-    /// List every blocker on one task
-    List {
-        /// Task (N, #N or handle) that owns the blockers
         task: String,
     },
 }
@@ -806,9 +739,6 @@ impl Cmd {
                 | Self::Gate {
                     cmd: GateCmd::List { .. }
                 }
-                | Self::Blocker {
-                    cmd: BlockerCmd::List { .. }
-                }
                 | Self::Commit {
                     cmd: CommitCmd::List { .. } | CommitCmd::Find { .. }
                 }
@@ -833,13 +763,20 @@ fn status_glyph(s: &str) -> &'static str {
     }
 }
 
+/// Names of a task's open external gates: conditions outside the task that
+/// keep it from starting.
+fn open_external_gates(conn: &Connection, task_id: i64) -> Result<Vec<String>> {
+    let mut statement = conn.prepare(
+        "SELECT name FROM gates WHERE task_id=?1 AND kind='external' AND status='open' ORDER BY gate_id",
+    )?;
+    Ok(statement
+        .query_map(params![task_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
     let deps = pt::open_deps(conn, t.task_id)?;
-    let blockers = pt::task_blockers(conn, t.task_id)?
-        .into_iter()
-        .filter(|blocker| blocker.status == "open")
-        .map(|blocker| blocker.name)
-        .collect::<Vec<_>>();
+    let external = open_external_gates(conn, t.task_id)?;
     let open_gate_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM gates WHERE task_id=?1 AND status='open'",
         params![t.task_id],
@@ -855,8 +792,8 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
                 .join(" ")
         ));
     }
-    if !blockers.is_empty() {
-        extra.push_str(&format!(" [blockers: {}]", blockers.join(", ")));
+    if !external.is_empty() {
+        extra.push_str(&format!(" [external: {}]", external.join(", ")));
     }
     if open_gate_count > 0 {
         extra.push_str(&format!(" [gates open: {open_gate_count}]"));
@@ -937,10 +874,10 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
         .iter()
         .filter(|dependency| dependency.status != "done")
         .collect::<Vec<_>>();
-    let open_blockers = context
-        .blockers
+    let open_external = context
+        .gates
         .iter()
-        .filter(|blocker| blocker.status == "open")
+        .filter(|gate| gate.kind == "external" && gate.status == "open")
         .collect::<Vec<_>>();
     let open_gate_count = context
         .gates
@@ -958,12 +895,12 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
                 .join(" ")
         ));
     }
-    if !open_blockers.is_empty() {
+    if !open_external.is_empty() {
         extra.push_str(&format!(
-            " [blockers: {}]",
-            open_blockers
+            " [external: {}]",
+            open_external
                 .iter()
-                .map(|blocker| blocker.name.as_str())
+                .map(|gate| gate.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -1064,32 +1001,6 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
             gate.name,
             gate.kind,
             gate.requirement,
-            evidence,
-            digest,
-            note
-        );
-    }
-    for blocker in &context.blockers {
-        let evidence = blocker
-            .evidence_locator
-            .as_ref()
-            .map(|locator| format!(" -> {locator}"))
-            .unwrap_or_default();
-        let digest = blocker
-            .evidence_sha256
-            .as_ref()
-            .map(|digest| format!(" [sha256 {digest}]"))
-            .unwrap_or_default();
-        let note = blocker
-            .note
-            .as_ref()
-            .map(|note| format!(" ({note})"))
-            .unwrap_or_default();
-        pt::outln!(
-            "  blocker [{}] {}: {}{}{}{}",
-            blocker.status,
-            blocker.name,
-            blocker.condition,
             evidence,
             digest,
             note
@@ -1293,9 +1204,6 @@ fn run_planner(cli: Cli) -> Result<()> {
                 | Cmd::Gate {
                     cmd: GateCmd::List { .. }
                 }
-                | Cmd::Blocker {
-                    cmd: BlockerCmd::List { .. }
-                }
         )
     {
         bail!(
@@ -1417,13 +1325,11 @@ fn run_planner(cli: Cli) -> Result<()> {
         &cli.cmd,
         Cmd::Gate {
             cmd: GateCmd::Resolve { .. }
-        } | Cmd::Blocker {
-            cmd: BlockerCmd::Resolve { .. }
         }
     );
     if project_root.is_some() && db_override.is_some() && !evidence_verify && !evidence_resolve {
         bail!(
-            "ordinary planner commands do not accept --project-root together with --db or PAPERTIGER_DB; remove the database override so --project-root selects one canonical authority. `evidence verify`, `gate resolve` and `blocker resolve` alone retain this combination so an explicitly selected database can verify or bind file: locators beneath a supplied project root"
+            "ordinary planner commands do not accept --project-root together with --db or PAPERTIGER_DB; remove the database override so --project-root selects one canonical authority. `evidence verify` and `gate resolve` alone retain this combination so an explicitly selected database can verify or bind file: locators beneath a supplied project root"
         );
     }
     let db_path = match (db_override, project_root.as_deref()) {
@@ -2168,76 +2074,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 }
             }
         },
-        Cmd::Blocker { cmd } => match cmd {
-            BlockerCmd::Add {
-                task,
-                name,
-                condition,
-            } => {
-                let seq = pt::resolve_task_ref(&conn, &task)?;
-                pt::add_blocker(&conn, &actor, seq, &name, &condition)?;
-                mutation_output!("blocker '{name}' added to #{seq}");
-            }
-            BlockerCmd::Resolve {
-                task,
-                name,
-                evidence,
-                sha256,
-                note,
-            } => {
-                let seq = pt::resolve_task_ref(&conn, &task)?;
-                validate_new_evidence(
-                    &evidence,
-                    sha256.as_deref(),
-                    project_root.as_deref(),
-                    evidence_db_override.is_some(),
-                    &db_path,
-                )?;
-                pt::resolve_blocker(
-                    &conn,
-                    &actor,
-                    seq,
-                    &name,
-                    &evidence,
-                    sha256.as_deref(),
-                    note.as_deref(),
-                )?;
-                mutation_output!("blocker '{name}' on #{seq} resolved");
-            }
-            BlockerCmd::Waive { task, name, why } => {
-                let why = why.required()?;
-                let seq = pt::resolve_task_ref(&conn, &task)?;
-                pt::waive_blocker(&conn, &actor, seq, &name, &why)?;
-                mutation_output!("blocker '{name}' on #{seq} waived");
-            }
-            BlockerCmd::Reopen { task, name, why } => {
-                let why = why.required()?;
-                let seq = pt::resolve_task_ref(&conn, &task)?;
-                pt::reopen_blocker(&conn, &actor, seq, &name, &why)?;
-                mutation_output!("blocker '{name}' on #{seq} reopened");
-            }
-            BlockerCmd::Remove { task, name, why } => {
-                let why = why.required()?;
-                let seq = pt::resolve_task_ref(&conn, &task)?;
-                pt::remove_blocker(&conn, &actor, seq, &name, &why)?;
-                mutation_output!("blocker '{name}' removed from #{seq}");
-            }
-            BlockerCmd::List { task } => {
-                let task = pt::get_task(&conn, pt::resolve_task_ref(&conn, &task)?)?;
-                for blocker in pt::task_blockers(&conn, task.task_id)? {
-                    pt::outln!(
-                        "[{}] {}: {}{}",
-                        blocker.status,
-                        blocker.name,
-                        blocker.condition,
-                        blocker
-                            .evidence_locator
-                            .map(|locator| format!(" -> {locator}"))
-                            .unwrap_or_default()
-                    );
-                }
-            }
-        },
+
         Cmd::Reference { cmd } => match cmd {
             ReferenceCmd::Add {
                 task,
@@ -2830,7 +2667,7 @@ fn run_planner(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-/// A new `file:` gate or blocker locator resolves beneath the project root of
+/// A new `file:` gate locator resolves beneath the project root of
 /// the selected authority: the explicit --project-root, else the discovered
 /// project unless a database override bypassed discovery.
 fn validate_new_evidence(
@@ -3000,9 +2837,6 @@ mod command_access_tests {
             },
             Cmd::Gate {
                 cmd: GateCmd::List { task: "1".into() },
-            },
-            Cmd::Blocker {
-                cmd: BlockerCmd::List { task: "1".into() },
             },
             Cmd::Commit {
                 cmd: CommitCmd::Find {

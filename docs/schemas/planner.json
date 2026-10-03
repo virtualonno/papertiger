@@ -699,74 +699,6 @@
       ],
       "additionalProperties": false
     },
-    "blocker": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "condition": {
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "open",
-            "resolved",
-            "waived"
-          ]
-        },
-        "evidence_locator": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "evidence_sha256": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "note": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "resolved_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "name",
-        "condition",
-        "status",
-        "evidence_locator",
-        "evidence_sha256",
-        "note",
-        "resolved_at"
-      ],
-      "additionalProperties": false
-    },
     "mise_projection": {
       "type": "object",
       "description": "Producer-owned Mise projection, validated by the dedicated Mise contract."
@@ -838,12 +770,6 @@
             "$ref": "#/$defs/task_summary"
           }
         },
-        "blockers": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/blocker"
-          }
-        },
         "gates": {
           "type": "array",
           "items": {
@@ -909,7 +835,6 @@
         "dependencies",
         "dependents",
         "children",
-        "blockers",
         "gates",
         "commit_associations",
         "external_references",
@@ -1563,12 +1488,6 @@
             "$ref": "#/$defs/gate_dump"
           }
         },
-        "blockers": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/blocker_dump"
-          }
-        },
         "commit_associations": {
           "type": "array",
           "items": {
@@ -1774,69 +1693,6 @@
       ],
       "additionalProperties": false
     },
-    "blocker_dump": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "condition": {
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "open",
-            "resolved",
-            "waived"
-          ]
-        },
-        "evidence_locator": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "evidence_sha256": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "note": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "resolved_at": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "name",
-        "condition"
-      ],
-      "additionalProperties": false
-    },
     "backup": {
       "type": "object",
       "additionalProperties": false,
@@ -1945,12 +1801,6 @@
             "$ref": "#/$defs/task_summary"
           }
         },
-        "blockers": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/blocker"
-          }
-        },
         "gates": {
           "type": "array",
           "items": {
@@ -1998,7 +1848,6 @@
         "dependencies",
         "dependents",
         "children",
-        "blockers",
         "gates",
         "commit_associations",
         "external_references",

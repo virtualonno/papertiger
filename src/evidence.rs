@@ -116,32 +116,6 @@ pub(crate) fn verify_all_evidence(
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?,
     );
-    let mut statement = conn.prepare(
-        "SELECT task.seq, blocker.name, blocker.evidence_locator, blocker.evidence_sha256,
-                task.status, task.kind, task.result, replacement.seq
-           FROM task_blockers blocker
-           JOIN tasks task ON task.task_id=blocker.task_id
-           LEFT JOIN tasks replacement ON replacement.task_id=task.replacement_task_id
-          WHERE blocker.status='resolved' AND (?1 IS NULL OR task.seq=?1)
-          ORDER BY task.seq, blocker.blocker_id",
-    )?;
-    bindings.extend(
-        statement
-            .query_map(params![task_seq], |row| {
-                Ok(StoredBinding {
-                    entity: "blocker",
-                    task_seq: row.get(0)?,
-                    name: row.get(1)?,
-                    locator: row.get(2)?,
-                    expected_sha256: row.get(3)?,
-                    task_status: row.get(4)?,
-                    task_kind: row.get(5)?,
-                    task_result: row.get(6)?,
-                    task_replacement_seq: row.get(7)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?,
-    );
     bindings.sort_by(|left, right| {
         left.task_seq
             .cmp(&right.task_seq)

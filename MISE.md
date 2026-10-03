@@ -344,7 +344,7 @@ keeps optional stopping outside v1 until a time-uniform method is implemented:
 
 ## Authority split
 
-Papertiger owns plans, tasks, dependencies, blockers, completion gates, and the
+Papertiger owns plans, tasks, dependencies, completion gates, and the
 separate authorization to materialize nominated work. Mise owns campaign
 manifests, immutable candidate lineage, trial reservations and measurements,
 cumulative budget accounting, evaluator-integrity outcomes, negative evidence,

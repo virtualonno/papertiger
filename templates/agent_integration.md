@@ -17,7 +17,7 @@ plan exists. When history is unexpectedly missing, stop and restore it; never
 run `init` to replace it.
 
 Papertiger is optional. Use it when work has independently reviewable outcomes,
-separate commits, dependencies, external blockers, decisions, probes, or proof
+separate commits, dependencies, external conditions, decisions, probes, or proof
 obligations that merit durable identity and cold-resume context. This can apply
 even when the operator requests all outcomes in one session.
 
@@ -63,8 +63,8 @@ store only when no project receipt is discovered. It needs no `--db` argument.
 Do not use a raw database override for ordinary
 project selection or split ordinary planning
 across multiple authorities. Ordinary commands refuse combining the receipt
-selector with a database override. `evidence verify`, `gate resolve` and
-`blocker resolve` retain that combination only so an explicitly selected
+selector with a database override. `evidence verify` and `gate resolve`
+retain that combination only so an explicitly selected
 database can verify or bind `file:` locators beneath a supplied project root.
 
 - Many agents and harnesses may use one canonical SQLite authority in its
@@ -101,7 +101,7 @@ database can verify or bind `file:` locators beneath a supplied project root.
   raw field through log/export/import. Unknown timestamps and associations stay
   unknown; recovery never infers task state. This is not routine task editing.
 - `export` is transfer and recovery, not a second live authority. It carries
-  plans, tasks, gates, blockers, events and Mise projections.
+  plans, tasks, gates, events and Mise projections.
   `export --output <path>` writes a canonical UTF-8 recovery file atomically
   and prints a digest/count receipt; replacing an existing file requires
   `--replace`.
@@ -121,7 +121,7 @@ database can verify or bind `file:` locators beneath a supplied project root.
   operation back. Other malformed storage types require a verified authority.
   This repairs scheduling only; it does not certify the task's earlier provenance.
 
-Papertiger owns modeled plans, tasks, dependencies, blockers, gates, and event
+Papertiger owns modeled plans, tasks, dependencies, gates, and event
 history. Domain evidence and issue systems remain authoritative for their own
 facts. Markdown carries doctrine and rationale, never duplicated live status.
 
@@ -178,7 +178,7 @@ and fails closed on missing, unhashed, or mismatched bytes. Unsupported locator
 schemes are reported, never counted as verified. Failed bindings include exact
 corrective argument vectors for their evented reopen-and-rebind workflow.
 
-`gate resolve` and `blocker resolve` refuse a new `file:` locator unless it is
+`gate resolve` refuses a new `file:` locator unless it is
 relative to the project root, uses `/` separators, and names an existing
 regular file there whose bytes match any `--sha256` given. Evidence under
 ignored or temporary paths rots, so keep durable text in the authority with
@@ -397,7 +397,7 @@ outcomes, `feature`, `change` (refactor, migration, hardening, removal), `bug`,
 legacy `work` kind cannot be assigned; retype an open `work` task with
 `edit <task.seq> --kind <kind> --why <reason>`. Probe, decision and bug tasks
 require `--result` or `--result-file`; a bug's result names its cause. `done` refuses
-open dependencies, blockers, gates, or children; resolve or waive them with
+open dependencies, gates, or children; resolve or waive them with
 evidence and reasons rather than routing around the refusal. Check
 `list --status rejected` before reviving an old approach; `reopen` can revisit a
 rejected task.
@@ -424,13 +424,14 @@ retain a claimed byte identity and context. `reference list <N>` and
 `reference find <locator>` retrieve them; `reference remove <N> <locator>
 --kind <kind> --why <reason>` preserves the removed value in history before
 rebinding. References may annotate terminal tasks, never fetch external data,
-import status, or satisfy proof. Reference hashes are not part of gate/blocker
+import status, or satisfy proof. Reference hashes are not part of gate
 `evidence verify`; verify producer inputs independently. The existing validated
 Mise projection remains the typed producer boundary.
 
-Blockers record the external `--condition` preventing progress
-(`blocker add <N> <name> --condition <text>`) and clear with
-`blocker resolve` or `blocker waive`, the same verbs gates use.
+A condition outside the task that prevents starting it, such as a vendor fix,
+is an external gate: `gate add <N> <name> --kind external --requirement
+<condition>`. While open it keeps the task out of ready work; clear it with
+`gate resolve` or `gate waive` like any gate.
 
 ## Mise is an episodic external driver
 

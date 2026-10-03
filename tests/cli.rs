@@ -1317,7 +1317,18 @@ fn backup_preserves_legacy_schema_and_committed_wal_without_importing_evidence()
         DROP VIEW canonical_events; DROP TABLE event_quarantines; DROP TABLE external_references;
         ALTER TABLE tasks DROP COLUMN pickup_at;
 ALTER TABLE tasks DROP COLUMN pickup_session;
-ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
+CREATE TABLE task_blockers (
+  blocker_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  name TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
+  evidence_locator TEXT,
+  evidence_sha256 TEXT,
+  note TEXT,
+  resolved_at TEXT,
+  UNIQUE (task_id, name)
+); ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
 UPDATE meta SET value='8' WHERE key='schema_version';
         UPDATE gates SET status='resolved', evidence_locator='commit:ca9ff90';
         BEGIN IMMEDIATE;
@@ -2121,11 +2132,13 @@ fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
     assert_success(&papertiger(
         &db.0,
         &[
-            "blocker",
+            "gate",
             "add",
             "1",
             "input",
-            "--condition",
+            "--kind",
+            "external",
+            "--requirement",
             "input exists",
         ],
     ));
@@ -2181,7 +2194,7 @@ fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
         "{missing}"
     );
     let blocker_missing = refusal(&in_project(&[
-        "blocker",
+        "gate",
         "resolve",
         "1",
         "input",
@@ -2215,7 +2228,7 @@ fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
         "{mismatch}"
     );
     let blocker_mismatch = refusal(&in_project(&[
-        "blocker",
+        "gate",
         "resolve",
         "1",
         "input",
@@ -2258,7 +2271,7 @@ fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
     assert_success(&papertiger(
         &db.0,
         &[
-            "blocker",
+            "gate",
             "resolve",
             "1",
             "input",
@@ -2282,7 +2295,7 @@ fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
     let mixed = papertiger(&db.0, &["--project-root", root_text, "status"]);
     assert!(
         String::from_utf8_lossy(&mixed.stderr)
-            .contains("`evidence verify`, `gate resolve` and `blocker resolve` alone")
+            .contains("`evidence verify` and `gate resolve` alone")
     );
 }
 
@@ -2961,21 +2974,6 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
         assert!(
             gate.contains(description),
             "missing {description:?}:\n{gate}"
-        );
-    }
-
-    let blocker = command_help(&["blocker"]);
-    for description in [
-        "Add a named external blocker",
-        "Resolve an open blocker with external evidence",
-        "Waive an open blocker with a rationale",
-        "Reopen a resolved or waived blocker",
-        "Remove an open blocker",
-        "List every blocker on one task",
-    ] {
-        assert!(
-            blocker.contains(description),
-            "missing {description:?}:\n{blocker}"
         );
     }
 

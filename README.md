@@ -1,7 +1,7 @@
 # Papertiger
 
 Papertiger is a local planning tool for engineering work that continues across
-agent sessions. It stores plans, tasks, dependencies, blockers, proof gates,
+agent sessions. It stores plans, tasks, dependencies, proof gates,
 decisions, and event history in SQLite. A new session can read the current
 state instead of reconstructing it from handoff notes.
 
@@ -185,7 +185,7 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   retain byte identity and context; `reference list`, `find`, and `remove`
   support exact archaeology. References never fetch data or satisfy gates.
   A stored reference hash is an assertion; `evidence verify` continues to
-  verify gate and blocker bindings, not these planning inputs.
+  verify gate bindings, not these planning inputs.
 - `log --json` provides full event records and history-bound cursors for older
   pages or incremental reads. A cursor from divergent history refuses. New
   task-edit events carry canonical before/after definition revisions; old edit
@@ -203,7 +203,11 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
 - `note --text <text>` or `note --text-file <path|->` records a free-standing
   evented note, optionally on one task with `--task <N>`; the two text forms
   are mutually exclusive and one is required.
-- Open dependencies, blockers, gates, and child tasks prevent completion.
+- Open dependencies, gates, and child tasks prevent completion. An `external`
+  gate (`gate add <N> <name> --kind external --requirement <condition>`) names
+  a condition outside the task, such as a vendor fix, and also keeps the task
+  from starting while open; it replaced blockers, which the v14 migration and
+  the `papertiger.dump.v10` conversion turn into external gates.
 - Every change records an actor and an event; idempotent identified pickup emits none. Actor labels are provenance,
   never assignees, leases, session handles, or liveness signals; unfinished
   work remains `in_progress` across agent replacement without reassignment.
@@ -246,7 +250,7 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   Papertiger never replays a command; a longer lock is refused with
   an explicit retry instruction. Independent authorities are never merged or
   synchronized.
-- Export and import preserve task identity, graph structure, gates, blockers,
+- Export and import preserve task identity, graph structure, gates,
   evidence pointers, events and Mise projections without creating a second live
   authority. `export --output`
   atomically writes a canonical recovery file and returns its SHA-256 receipt.
@@ -257,10 +261,10 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   mismatched evidence. Failed bindings include exact corrective argument
   vectors. Other locator schemes remain explicitly unsupported until they have
   scheme-specific authority-backed verifiers.
-- `gate resolve` and `blocker resolve` refuse a new `file:` locator that is
+- `gate resolve` refuses a new `file:` locator that is
   absolute, leaves the project root, separates components with `\`, or does
   not name an existing regular file beneath it, using the same path rules as `evidence verify`; with `--sha256`
-  they also refuse a digest that does not match the file's current bytes and
+  it also refuses a digest that does not match the file's current bytes and
   name the actual digest. The root is the
   explicit `--project-root` or the discovered project; an authority selected by
   `--db`, `PAPERTIGER_DB` or the personal store has none, so a `file:` locator
@@ -430,8 +434,8 @@ Authorship describes who wrote an event, not who owns the task now. The native b
 the receipt-selected database at the project root. `PAPERTIGER_DB`
 or an explicit global `--db` deliberately overrides that default for
 operational use. Ordinary commands refuse combining those raw database
-overrides with `--project-root`; `evidence verify`, `gate resolve` and
-`blocker resolve` alone retain the combination so an explicitly selected
+overrides with `--project-root`; `evidence verify` and `gate resolve` alone
+retain the combination so an explicitly selected
 database can verify or bind `file:` locators beneath the supplied root. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 

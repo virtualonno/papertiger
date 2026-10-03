@@ -7,13 +7,13 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     CommitAssociation, ExternalReference, GATE_KINDS, MiseProjectionDump, TASK_COLS, TASK_STATUSES,
-    Task, TaskBlocker, TaskPickup, add_dep_inner, begin_mutation, commit_associations,
-    entry_blockers, external_reference, external_references, find_cycle, get_task,
-    history_recovery, invalid_replacement_terminals, live_child_sequences, mise_projection, now,
-    pickup, plan_move, record_event_in_mutation, replacement_repair_instruction, require_nonblank,
-    task_blockers, task_from_row, terminal_replacement_repair_instruction, validate_commit_oid,
-    validate_meaning_source, validate_new_evidence_locator, validate_optional_sha256, validate_tag,
-    validate_task_kind, validate_task_title,
+    Task, TaskPickup, add_dep_inner, begin_mutation, commit_associations, entry_blockers,
+    external_reference, external_references, find_cycle, get_task, history_recovery,
+    invalid_replacement_terminals, live_child_sequences, mise_projection, now, pickup, plan_move,
+    record_event_in_mutation, replacement_repair_instruction, require_nonblank, task_from_row,
+    terminal_replacement_repair_instruction, validate_commit_oid, validate_meaning_source,
+    validate_new_evidence_locator, validate_optional_sha256, validate_tag, validate_task_kind,
+    validate_task_title,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -46,6 +46,8 @@ pub fn parse_dump_json(text: &str) -> Result<Dump> {
 /// and `decision`, which v11 stores unchanged (`work` as the legacy kind),
 /// and carried per-task `intent_source` and `result_source`, which v11
 /// drops: the creation and completion events keep the recorded sources.
+/// Each v10 blocker becomes an `external` gate with the same condition,
+/// outcome and evidence, renamed `blocker-<name>` if a gate holds its name.
 /// Events and Mise projection documents are historical records and pass
 /// through unchanged.
 pub fn convert_dump_v10(mut value: serde_json::Value) -> Result<serde_json::Value> {
@@ -54,14 +56,68 @@ pub fn convert_dump_v10(mut value: serde_json::Value) -> Result<serde_json::Valu
             "convert_dump_v10 accepts only papertiger.dump.v10; re-export with the Papertiger release that produced the dump"
         );
     }
+    let invalid = || {
+        anyhow!(
+            "papertiger.dump.v10 is malformed; re-export it with the Papertiger release that produced it"
+        )
+    };
     if let Some(tasks) = value
         .get_mut("tasks")
         .and_then(serde_json::Value::as_array_mut)
     {
         for task in tasks {
-            if let Some(task) = task.as_object_mut() {
-                task.remove("intent_source");
-                task.remove("result_source");
+            let task = task.as_object_mut().ok_or_else(invalid)?;
+            task.remove("intent_source");
+            task.remove("result_source");
+            let Some(blockers) = task.remove("blockers") else {
+                continue;
+            };
+            let gates = task
+                .entry("gates")
+                .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+                .as_array_mut()
+                .ok_or_else(invalid)?;
+            for blocker in blockers.as_array().ok_or_else(invalid)? {
+                let blocker = blocker.as_object().ok_or_else(invalid)?;
+                let name = blocker
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(invalid)?;
+                let taken = |candidate: &str| {
+                    gates.iter().any(|gate| {
+                        gate.get("name").and_then(serde_json::Value::as_str) == Some(candidate)
+                    })
+                };
+                let name = if taken(name) {
+                    let renamed = format!("blocker-{name}");
+                    if taken(&renamed) {
+                        bail!(
+                            "papertiger.dump.v10 task blocker '{name}' cannot become an external gate: both '{name}' and '{renamed}' are gate names on that task; rename one with the release that produced the dump"
+                        );
+                    }
+                    renamed
+                } else {
+                    name.to_owned()
+                };
+                let mut gate = serde_json::Map::new();
+                gate.insert("name".into(), name.into());
+                gate.insert("kind".into(), "external".into());
+                gate.insert(
+                    "requirement".into(),
+                    blocker.get("condition").cloned().ok_or_else(invalid)?,
+                );
+                for key in [
+                    "status",
+                    "evidence_locator",
+                    "evidence_sha256",
+                    "note",
+                    "resolved_at",
+                ] {
+                    if let Some(value) = blocker.get(key) {
+                        gate.insert(key.into(), value.clone());
+                    }
+                }
+                gates.push(serde_json::Value::Object(gate));
             }
         }
     }
@@ -110,8 +166,6 @@ pub struct TaskDump {
     pub deps: Vec<i64>,
     #[serde(default)]
     pub gates: Vec<GateDump>,
-    #[serde(default)]
-    pub blockers: Vec<TaskBlocker>,
     #[serde(default)]
     pub commit_associations: Vec<CommitAssociation>,
     #[serde(default)]
@@ -270,7 +324,6 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                     })
                 })?
                 .collect::<rusqlite::Result<_>>()?;
-            let blockers = task_blockers(conn, t.task_id)?;
             let commit_associations = commit_associations(conn, t.seq)?;
             let external_references = external_references(conn, t.seq)?;
             tasks.push(TaskDump {
@@ -288,7 +341,6 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                 tags,
                 deps,
                 gates,
-                blockers,
                 commit_associations,
                 external_references,
             });
@@ -537,9 +589,6 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
         if td.status == "done" && td.gates.iter().any(|gate| gate.status == "open") {
             bail!("import: done task '{}' has an open gate", td.title);
         }
-        if td.status == "done" && td.blockers.iter().any(|blocker| blocker.status == "open") {
-            bail!("import: done task '{}' has an open blocker", td.title);
-        }
         if td.status == "done"
             && crate::kind_requires_result(&td.kind)
             && td
@@ -689,121 +738,6 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
                 params![
                     id, g.name, g.kind, g.requirement, g.status,
                     g.evidence_locator, g.evidence_sha256, g.note,
-                    resolved_at
-                ],
-            )?;
-        }
-        for blocker in &td.blockers {
-            if blocker.name.trim().is_empty() || blocker.condition.trim().is_empty() {
-                bail!(
-                    "import: blocker on '{}' has a blank name or condition",
-                    td.title
-                );
-            }
-            if !["open", "resolved", "waived"].contains(&blocker.status.as_str()) {
-                bail!(
-                    "import: blocker '{}' on '{}' has unknown status '{}'",
-                    blocker.name,
-                    td.title,
-                    blocker.status
-                );
-            }
-            let resolved_at = match blocker.status.as_str() {
-                "open" => {
-                    if blocker.evidence_locator.is_some()
-                        || blocker.evidence_sha256.is_some()
-                        || blocker.resolved_at.is_some()
-                    {
-                        bail!(
-                            "import: open blocker '{}' on '{}' carries resolution evidence",
-                            blocker.name,
-                            td.title
-                        );
-                    }
-                    None
-                }
-                "resolved" => {
-                    let locator = blocker.evidence_locator.as_deref().with_context(|| {
-                        format!(
-                            "import: resolved blocker '{}' on '{}' lacks evidence_locator",
-                            blocker.name, td.title
-                        )
-                    })?;
-                    validate_new_evidence_locator(locator).with_context(|| {
-                        format!(
-                            "import resolved blocker '{}' on '{}' has invalid evidence_locator {locator:?}",
-                            blocker.name, td.title
-                        )
-                    })?;
-                    validate_optional_sha256(blocker.evidence_sha256.as_deref())?;
-                    let resolved_at = blocker.resolved_at.as_deref().with_context(|| {
-                        format!(
-                            "import: resolved blocker '{}' on '{}' lacks resolved_at",
-                            blocker.name, td.title
-                        )
-                    })?;
-                    let resolved_at = resolved_at.trim();
-                    chrono::DateTime::parse_from_rfc3339(resolved_at).with_context(|| {
-                        format!(
-                            "import: resolved blocker '{}' on '{}' has invalid resolved_at '{}'",
-                            blocker.name,
-                            td.title,
-                            blocker.resolved_at.as_deref().unwrap_or_default()
-                        )
-                    })?;
-                    Some(resolved_at)
-                }
-                "waived" => {
-                    if blocker
-                        .note
-                        .as_deref()
-                        .map(str::trim)
-                        .is_none_or(str::is_empty)
-                    {
-                        bail!(
-                            "import: waived blocker '{}' on '{}' lacks a durable reason",
-                            blocker.name,
-                            td.title
-                        );
-                    }
-                    if blocker.evidence_locator.is_some() || blocker.evidence_sha256.is_some() {
-                        bail!(
-                            "import: waived blocker '{}' on '{}' carries resolution evidence",
-                            blocker.name,
-                            td.title
-                        );
-                    }
-                    let resolved_at = blocker.resolved_at.as_deref().with_context(|| {
-                        format!(
-                            "import: waived blocker '{}' on '{}' lacks resolved_at",
-                            blocker.name, td.title
-                        )
-                    })?;
-                    let resolved_at = resolved_at.trim();
-                    chrono::DateTime::parse_from_rfc3339(resolved_at).with_context(|| {
-                        format!(
-                            "import: waived blocker '{}' on '{}' has invalid resolved_at '{}'",
-                            blocker.name,
-                            td.title,
-                            blocker.resolved_at.as_deref().unwrap_or_default()
-                        )
-                    })?;
-                    Some(resolved_at)
-                }
-                _ => unreachable!(),
-            };
-            tx.execute(
-                "INSERT INTO task_blockers
-                 (task_id, name, condition, status, evidence_locator, evidence_sha256, note, resolved_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    id,
-                    blocker.name,
-                    blocker.condition,
-                    blocker.status,
-                    blocker.evidence_locator,
-                    blocker.evidence_sha256,
-                    blocker.note,
                     resolved_at
                 ],
             )?;

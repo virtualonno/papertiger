@@ -718,7 +718,7 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
             .collect::<Vec<_>>();
         let focus_limit = leaf_count + ready_eligible;
         let ready = StatusProjection::new(
-            "proposed leaf tasks, and parents whose children are all closed, with no open dependencies or blockers",
+            "proposed leaf tasks, and parents whose children are all closed, with no open dependencies, external gates or disputed results",
             "priority descending, then task.seq ascending",
             ready_eligible,
             ready,

@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::{
     PlanIdentity, StatusProjection, TASK_COLS, Task, TaskPickup, TaskSummary, get_plan, open_deps,
-    open_gates, open_task_blocker_names, pickup, task_ancestry, task_from_row, validate_session,
+    open_gates, pickup, task_ancestry, task_from_row, validate_session,
 };
 
 /// Handles of done dependencies whose results are unreviewed or disputed.
@@ -36,10 +36,16 @@ pub(crate) fn entry_blockers(conn: &Connection, task: &Task) -> Result<Vec<Strin
         .into_iter()
         .map(|dependency| format!("dep:#{dependency}"))
         .collect::<Vec<_>>();
+    let mut external = conn.prepare(
+        "SELECT name FROM gates
+          WHERE task_id=?1 AND kind='external' AND status='open' ORDER BY gate_id",
+    )?;
     blockers.extend(
-        open_task_blocker_names(conn, task.task_id)?
+        external
+            .query_map(params![task.task_id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
             .into_iter()
-            .map(|name| format!("blocker:{name}")),
+            .map(|name| format!("external:{name}")),
     );
     // A disputed result holds the work that builds on it, and the parent
     // that would otherwise close over it, until it is confirmed or revised.
@@ -261,9 +267,10 @@ pub(crate) fn immediate_unlock_count(conn: &Connection, task_id: i64) -> Result<
             )
             AND NOT EXISTS (
                 SELECT 1
-                  FROM task_blockers blocker
-                 WHERE blocker.task_id=dependent.task_id
-                   AND blocker.status='open'
+                  FROM gates external
+                 WHERE external.task_id=dependent.task_id
+                   AND external.kind='external'
+                   AND external.status='open'
             )",
         params![task_id],
         |row| row.get(0),

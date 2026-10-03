@@ -28,7 +28,15 @@ fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
     let blocked = add("Waiting work");
     pt::start_task(&conn, "same-harness", mine, None, Some("me")).unwrap();
     pt::start_task(&conn, "same-harness", other, None, Some("other")).unwrap();
-    pt::add_blocker(&conn, "test", other, "input", "waiting for input").unwrap();
+    pt::add_gate(
+        &conn,
+        "test",
+        other,
+        "input",
+        "external",
+        "waiting for input",
+    )
+    .unwrap();
     pt::add_dep(&conn, "test", blocked, ready, Some("prerequisite")).unwrap();
     let before = serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap();
 
@@ -121,7 +129,7 @@ fn identified_retries_are_eventless_and_real_blockers_remain_enforced() {
         before,
         serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap()
     );
-    pt::add_blocker(&conn, "test", first, "input", "missing input").unwrap();
+    pt::add_gate(&conn, "test", first, "input", "external", "missing input").unwrap();
     pt::start_task(&conn, "test", first, None, Some("b")).unwrap();
     assert!(pt::complete_task(&conn, "test", first, None).is_err());
     let focus = pt::focus(&conn, plan, 1, false, None, false, Some("b")).unwrap();
@@ -230,7 +238,18 @@ fn migration_preserves_history_without_inventing_session_identity() {
     conn.execute_batch(
         "DROP VIEW canonical_events; DROP TABLE event_quarantines; ALTER TABLE tasks DROP COLUMN pickup_at;
         ALTER TABLE tasks DROP COLUMN pickup_session;
-        ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
+        CREATE TABLE task_blockers (
+  blocker_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  name TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
+  evidence_locator TEXT,
+  evidence_sha256 TEXT,
+  note TEXT,
+  resolved_at TEXT,
+  UNIQUE (task_id, name)
+); ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
         UPDATE meta SET value='9' WHERE key='schema_version';",
     )
     .unwrap();

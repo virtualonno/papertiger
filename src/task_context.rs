@@ -6,10 +6,9 @@ use serde::Serialize;
 
 use crate::{
     CommitAssociation, EventCursor, EventRecord, ExternalReference, Plan, TASK_COLS, Task,
-    TaskActivity, TaskBlocker, TaskMiseProjectionSummary, TaskSummary, commit_associations,
-    event_log, external_references, get_plan, get_task, immediate_unlock_count, task_activity,
-    task_blockers, task_from_row, task_handle, task_mise_projection_summaries, task_tags_by_id,
-    unfinished_downstream_count,
+    TaskActivity, TaskMiseProjectionSummary, TaskSummary, commit_associations, event_log,
+    external_references, get_plan, get_task, immediate_unlock_count, task_activity, task_from_row,
+    task_handle, task_mise_projection_summaries, task_tags_by_id, unfinished_downstream_count,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,7 +38,6 @@ pub struct TaskContext {
     pub dependencies: Vec<TaskSummary>,
     pub dependents: Vec<TaskSummary>,
     pub children: Vec<TaskSummary>,
-    pub blockers: Vec<TaskBlocker>,
     pub gates: Vec<GateRecord>,
     pub commit_associations: Vec<CommitAssociation>,
     pub external_references: Vec<ExternalReference>,
@@ -199,7 +197,6 @@ fn task_context_with_history(
         dependencies: dependencies.iter().map(TaskSummary::from).collect(),
         dependents: dependents.iter().map(TaskSummary::from).collect(),
         children: children.iter().map(TaskSummary::from).collect(),
-        blockers: task_blockers(conn, task.task_id)?,
         gates,
         commit_associations: commit_associations(conn, task.seq)?,
         external_references: external_references(conn, task.seq)?,

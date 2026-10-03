@@ -220,7 +220,7 @@ fn schema_migration_is_explicit_and_preserves_v1_plan_state() {
             |row| row.get(0),
         )
         .unwrap();
-    assert!(has_blockers);
+    assert!(!has_blockers, "v14 folds blockers into external gates");
     drop(migrated);
     std::fs::remove_file(path).unwrap();
 }
@@ -247,13 +247,21 @@ SELECT gate_id, task_id, name, kind, requirement,
   FROM gates;
 DROP TABLE gates;
 ALTER TABLE gates_v12 RENAME TO gates;
-ALTER TABLE task_blockers RENAME COLUMN condition TO reason;
+CREATE TABLE task_blockers (
+  blocker_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  name TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
+  evidence_locator TEXT,
+  evidence_sha256 TEXT,
+  note TEXT,
+  resolved_at TEXT,
+  UNIQUE (task_id, name)
+);
 UPDATE meta SET value='12' WHERE key='schema_version';
 "#;
 
-/// Rewrite a current authority into the exact v12 storage shape: legacy gate
-/// vocabulary, blocker `reason`, and admission triggers calling the retired
-/// function name.
 #[test]
 fn model_report_groups_claims_by_normalized_model_and_separates_same_model_reviews() {
     let conn = db();
@@ -345,6 +353,48 @@ fn model_report_groups_claims_by_normalized_model_and_separates_same_model_revie
 }
 
 #[test]
+fn an_open_external_gate_keeps_a_task_from_starting_until_resolved() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Ship on vendor fix", "release"),
+    )
+    .unwrap();
+    pt::add_gate(
+        &conn,
+        "test",
+        task,
+        "vendor",
+        "external",
+        "vendor fix released",
+    )
+    .unwrap();
+    let focus = pt::focus(&conn, plan, 10, false, None, false, None).unwrap();
+    assert!(
+        focus.projection.entries.is_empty(),
+        "an open external gate blocks readiness"
+    );
+    let error = pt::start_task(&conn, "test", task, Some("try"), None)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("external:vendor"), "{error}");
+    pt::resolve_gate(
+        &conn,
+        "test",
+        task,
+        "vendor",
+        "note:fix released in 2.4",
+        None,
+        None,
+    )
+    .unwrap();
+    pt::start_task(&conn, "test", task, Some("vendor shipped"), None).unwrap();
+}
+
+#[test]
 fn typed_kinds_refuse_legacy_assignment_and_bugs_record_their_cause() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
@@ -432,6 +482,18 @@ fn downgrade_to_v13(path: &std::path::Path) {
          DROP TABLE tasks;
          ALTER TABLE tasks_v13 RENAME TO tasks;
          CREATE INDEX idx_tasks_plan ON tasks(plan_id);
+         CREATE TABLE task_blockers (
+           blocker_id INTEGER PRIMARY KEY,
+           task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+           name TEXT NOT NULL,
+           condition TEXT NOT NULL,
+           status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
+           evidence_locator TEXT,
+           evidence_sha256 TEXT,
+           note TEXT,
+           resolved_at TEXT,
+           UNIQUE (task_id, name)
+         );
          UPDATE meta SET value='13' WHERE key='schema_version';",
     )
     .unwrap();
@@ -526,6 +588,9 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
     std::fs::remove_file(path).unwrap();
 }
 
+/// Rewrite a current authority into the exact v12 storage shape: legacy gate
+/// vocabulary, blocker `reason`, and admission triggers calling the retired
+/// function name.
 fn downgrade_to_v12(path: &std::path::Path) {
     let raw = rusqlite::Connection::open(path).unwrap();
     for name in [
@@ -590,7 +655,6 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
     pt::add_gate(&conn, "test", task, "doc", "doc", "docs updated").unwrap();
     pt::resolve_gate(&conn, "test", task, "proof", "file:proof.json", None, None).unwrap();
     pt::waive_gate(&conn, "test", task, "doc", "not user-facing").unwrap();
-    pt::add_blocker(&conn, "test", task, "vendor", "vendor fix released").unwrap();
     let resolved_at = pt::task_context(&conn, task).unwrap().gates[0]
         .resolved_at
         .clone()
@@ -627,6 +691,12 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
         ],
     )
     .unwrap();
+    raw.execute(
+        "INSERT INTO task_blockers (task_id, name, reason, status)
+         VALUES ((SELECT task_id FROM tasks WHERE seq=?1), 'vendor', 'vendor fix released', 'open')",
+        rusqlite::params![task],
+    )
+    .unwrap();
     drop(raw);
 
     let refused = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
@@ -654,7 +724,20 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
     assert_eq!(context.gates[0].status, "resolved");
     assert_eq!(context.gates[0].resolved_at.as_deref(), Some(&*resolved_at));
     assert_eq!(context.gates[1].status, "waived");
-    assert_eq!(context.blockers[0].condition, "vendor fix released");
+    let vendor = context
+        .gates
+        .iter()
+        .find(|gate| gate.name == "vendor")
+        .unwrap();
+    assert_eq!(
+        (
+            vendor.kind.as_str(),
+            vendor.requirement.as_str(),
+            vendor.status.as_str()
+        ),
+        ("external", "vendor fix released", "open"),
+        "a v12 blocker becomes an open external gate"
+    );
     assert_eq!(
         event_rows(&migrated),
         events_before,
@@ -704,7 +787,11 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
 #[test]
 fn v10_dump_converts_with_its_kinds_and_v9_is_refused_with_a_recovery_path() {
     let v10 = r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
-        "tasks":[{"seq":1,"plan":"p","title":"legacy outcome","kind":"work"},
+        "tasks":[{"seq":1,"plan":"p","title":"legacy outcome","kind":"work","intent_source":"user",
+                  "gates":[{"name":"vendor","kind":"test","requirement":"tests pass"}],
+                  "blockers":[{"name":"vendor","condition":"vendor fix released","status":"open"},
+                              {"name":"input","condition":"operator input","status":"resolved",
+                               "evidence_locator":"note:received","resolved_at":"2026-08-02T00:00:00Z"}]},
                  {"seq":2,"plan":"p","title":"measured outcome","kind":"probe"}]}"#;
     let dump = pt::parse_dump_json(v10).unwrap();
     assert_eq!(dump.schema, "papertiger.dump.v11");
@@ -712,6 +799,27 @@ fn v10_dump_converts_with_its_kinds_and_v9_is_refused_with_a_recovery_path() {
     pt::import(&conn, "test", &dump).unwrap();
     assert_eq!(pt::get_task(&conn, 1).unwrap().kind, "work");
     assert_eq!(pt::get_task(&conn, 2).unwrap().kind, "probe");
+    let gates = pt::task_context(&conn, 1).unwrap().gates;
+    let summary: Vec<_> = gates
+        .iter()
+        .map(|gate| {
+            (
+                gate.name.as_str(),
+                gate.kind.as_str(),
+                gate.requirement.as_str(),
+                gate.status.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("vendor", "test", "tests pass", "open"),
+            ("blocker-vendor", "external", "vendor fix released", "open"),
+            ("input", "external", "operator input", "resolved"),
+        ],
+        "v10 blockers become external gates, renamed when a gate holds the name"
+    );
     assert_eq!(
         pt::export(&conn, None).unwrap().schema,
         "papertiger.dump.v11"
@@ -961,7 +1069,18 @@ fn typed_authority_identity_is_migrated_and_refuses_mise_databases() {
     legacy.execute_batch("ALTER TABLE tasks DROP COLUMN pickup_at; ALTER TABLE tasks DROP COLUMN pickup_session;").unwrap();
     legacy
         .execute_batch(
-            "ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
+            "CREATE TABLE task_blockers (
+  blocker_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  name TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
+  evidence_locator TEXT,
+  evidence_sha256 TEXT,
+  note TEXT,
+  resolved_at TEXT,
+  UNIQUE (task_id, name)
+); ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
              UPDATE meta SET value='7' WHERE key='schema_version';",
         )
         .unwrap();
@@ -1493,7 +1612,7 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
 
     assert_exact_error(
         pt::add_gate(&conn, "test", task, "proof", "invalid", "requirement"),
-        "unknown gate kind 'invalid' (expected test|benchmark|review|capture|fixture|build|doc|other)",
+        "unknown gate kind 'invalid' (expected test|benchmark|review|capture|fixture|build|doc|external|other)",
     );
     pt::add_gate(&conn, "test", task, "proof", "test", "requirement").unwrap();
     assert_exact_error(
@@ -1533,29 +1652,6 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
         &format!("no open gate 'proof' on #{task}"),
     );
     pt::reopen_gate(&conn, "test", task, "proof", "replace evidence").unwrap();
-
-    pt::add_blocker(&conn, "test", task, "input", "operator input").unwrap();
-    assert_exact_error(
-        pt::reopen_blocker(&conn, "test", task, "input", "already open"),
-        &format!("blocker 'input' on #{task} is already open"),
-    );
-    pt::resolve_blocker(&conn, "test", task, "input", "file:input.json", None, None).unwrap();
-    assert_exact_error(
-        pt::remove_blocker(&conn, "test", task, "input", "closed"),
-        &format!("no open blocker 'input' on #{task}"),
-    );
-    pt::reopen_blocker(&conn, "test", task, "input", "replace evidence").unwrap();
-    let blockers = pt::task_blockers(&conn, pt::get_task(&conn, task).unwrap().task_id).unwrap();
-    assert_eq!(blockers[0].status, "open");
-    assert_eq!(blockers[0].evidence_locator, None);
-    let event: String = conn
-        .query_row(
-            "SELECT kind FROM events WHERE kind='blocker_reopen' ORDER BY event_id DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(event, "blocker_reopen");
 }
 
 #[test]
@@ -2571,18 +2667,19 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
         },
     )
     .unwrap();
-    pt::add_blocker(
+    pt::add_gate(
         &conn,
         "test",
         decision,
         "operator input",
+        "external",
         "the owner must choose the compatibility boundary",
     )
     .unwrap();
 
     let err = pt::start_task(&conn, "test", decision, None, None).unwrap_err();
     assert!(err.to_string().contains(&format!("dep:#{prerequisite}")));
-    assert!(err.to_string().contains("blocker:operator input"));
+    assert!(err.to_string().contains("external:operator input"));
     let default_focus = pt::focus(&conn, plan, 20, false, None, false, None).unwrap();
     assert!(
         !default_focus
@@ -2602,7 +2699,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
 
     pt::complete_task(&conn, "test", prerequisite, None).unwrap();
     assert!(pt::start_task(&conn, "test", decision, None, None).is_err());
-    pt::resolve_blocker(
+    pt::resolve_gate(
         &conn,
         "test",
         decision,
@@ -2640,11 +2737,12 @@ fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
     )
     .unwrap();
     pt::start_task(&conn, "test", task, None, None).unwrap();
-    pt::add_blocker(
+    pt::add_gate(
         &conn,
         "test",
         task,
         "missing fixture",
+        "external",
         "the required fixture has not been supplied",
     )
     .unwrap();
@@ -2659,7 +2757,7 @@ fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
             .any(|finding| finding.kind == "done_with_open_blocker")
     );
 
-    pt::waive_blocker(
+    pt::waive_gate(
         &conn,
         "test",
         task,
@@ -2847,15 +2945,16 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
         },
     )
     .unwrap();
-    pt::add_blocker(
+    pt::add_gate(
         &conn,
         "test",
         task,
         "benchmark data",
+        "external",
         "the benchmark has not completed",
     )
     .unwrap();
-    pt::resolve_blocker(
+    pt::resolve_gate(
         &conn,
         "test",
         task,
@@ -2883,10 +2982,15 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
         restored_task.result.as_deref(),
         Some("Select engine B because it satisfies the bounded latency target.")
     );
-    let blockers = pt::task_blockers(&restored, restored_task.task_id).unwrap();
-    assert_eq!(blockers[0].status, "resolved");
+    let restored_context = pt::task_context(&restored, task).unwrap();
+    let external = restored_context
+        .gates
+        .iter()
+        .find(|gate| gate.kind == "external")
+        .unwrap();
+    assert_eq!(external.status, "resolved");
     assert_eq!(
-        blockers[0].evidence_locator.as_deref(),
+        external.evidence_locator.as_deref(),
         Some("benchmark:engine-comparison/2026-07-26")
     );
     assert!(pt::audit(&restored).unwrap().is_empty());
@@ -3277,15 +3381,16 @@ fn terminal_gate_and_blocker_timestamps_roundtrip_without_import_fiction() {
         None,
     )
     .unwrap();
-    pt::add_blocker(
+    pt::add_gate(
         &conn,
         "agent",
         task,
         "external receipt",
+        "external",
         "receipt not available",
     )
     .unwrap();
-    pt::resolve_blocker(
+    pt::resolve_gate(
         &conn,
         "agent",
         task,
@@ -3297,14 +3402,14 @@ fn terminal_gate_and_blocker_timestamps_roundtrip_without_import_fiction() {
     .unwrap();
     let source = pt::task_context(&conn, task).unwrap();
     let expected_gate_resolved_at = source.gates[0].resolved_at.clone();
-    let expected_resolved_at = source.blockers[0].resolved_at.clone();
+    let expected_resolved_at = source.gates[1].resolved_at.clone();
     let dump = pt::export(&conn, None).unwrap();
 
     let restored = db();
     pt::import(&restored, "restore", &dump).unwrap();
     let actual = pt::task_context(&restored, task).unwrap();
     assert_eq!(actual.gates[0].resolved_at, expected_gate_resolved_at);
-    assert_eq!(actual.blockers[0].resolved_at, expected_resolved_at);
+    assert_eq!(actual.gates[1].resolved_at, expected_resolved_at);
 }
 
 #[test]
@@ -3331,27 +3436,6 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
                 }]}]
             }"#,
             "carries completion evidence or resolved_at",
-        ),
-        (
-            r#"{
-                "schema":"papertiger.dump.v11",
-                "plans":[{"slug":"p","title":"P"}],
-                "tasks":[{"seq":1,"plan":"p","title":"task","blockers":[{
-                    "name":"receipt","condition":"missing","status":"resolved",
-                    "evidence_locator":"file:receipt.json","resolved_at":"yesterday"
-                }]}]
-            }"#,
-            "invalid resolved_at",
-        ),
-        (
-            r#"{
-                "schema":"papertiger.dump.v11",
-                "plans":[{"slug":"p","title":"P"}],
-                "tasks":[{"seq":1,"plan":"p","title":"task","blockers":[{
-                    "name":"receipt","condition":"missing","status":"waived","note":"not needed"
-                }]}]
-            }"#,
-            "lacks resolved_at",
         ),
     ] {
         let conn = db();
@@ -4348,7 +4432,18 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
          DROP VIEW canonical_events;
          DROP TABLE event_quarantines;
          DROP TABLE external_references;
-         ALTER TABLE task_blockers RENAME COLUMN condition TO reason; ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
+         CREATE TABLE task_blockers (
+  blocker_id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+  name TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','waived')),
+  evidence_locator TEXT,
+  evidence_sha256 TEXT,
+  note TEXT,
+  resolved_at TEXT,
+  UNIQUE (task_id, name)
+); ALTER TABLE gates RENAME COLUMN resolved_at TO closed_at;
          UPDATE meta SET value='5' WHERE key='schema_version';",
     )
     .unwrap();

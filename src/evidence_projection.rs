@@ -188,7 +188,7 @@ pub fn verify_evidence(
         },
         projection: EvidenceVerificationProjection {
             scope: format!(
-                "resolved gates and blockers{task_scope}; classification={}; task_state={}",
+                "resolved gates{task_scope}; classification={}; task_state={}",
                 options.classification.as_str(),
                 options.task_state.as_str()
             ),
