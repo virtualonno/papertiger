@@ -34,6 +34,16 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   captures receipts. Audit reports malformed authorship as
   `invalid_event_authorship`. A subagent inherits its parent's environment;
   pass `--model` where a launch-time model could be wrong.
+- Priority is a level, `now`, `next` (default) or `later`, ranked after
+  readiness in `focus`, `status` and the ready list; sequence between tasks
+  belongs in dependencies. `--priority`, outline `priority`, JSON and dumps
+  use the level names. The v14 migration and `papertiger.dump.v10`
+  conversion map integers (positive `now`, zero `next`, negative `later`);
+  a non-integer priority refuses migration with the previous release's
+  repair command. The text-priority recovery path and its integer guard
+  triggers are removed: the tasks table's CHECK enforces the levels. Edit
+  history keeps its recorded integers. `parse_dump_json` now refuses an
+  unsupported dump version up front with the recovery path.
 - Blockers are folded into gates: the gate kind `external` names a condition
   outside the task and, while open, keeps it from starting (readiness blocker
   `external:<name>`) as blockers did. The `blocker` command group, the

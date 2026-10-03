@@ -157,7 +157,7 @@ fn tasks_table(name: &str) -> String {
   result TEXT,
   status TEXT NOT NULL DEFAULT 'proposed'
     CHECK (status IN ('proposed','in_progress','done','retired','rejected')),
-  priority INTEGER NOT NULL DEFAULT 0,
+  priority TEXT NOT NULL DEFAULT 'next' CHECK (priority IN ('now','next','later')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   pickup_session TEXT,
@@ -190,9 +190,14 @@ fn gates_table(name: &str) -> String {
 }
 
 const TASK_COLUMNS_V14: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title,     intent, kind, result, status, priority, created_at, updated_at, pickup_session, pickup_at";
+/// The v13 columns read into [`TASK_COLUMNS_V14`]: integer priorities map to
+/// levels as [`crate::Priority::from_legacy`] does, and a value that already
+/// is a level is kept.
+const TASK_SELECT_V13: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title,     intent, kind, result, status,     CASE WHEN typeof(priority) <> 'integer' THEN priority WHEN priority > 0 THEN 'now' WHEN priority < 0 THEN 'later' ELSE 'next' END,     created_at, updated_at, pickup_session, pickup_at";
 
-/// Typed task kinds widen the kind CHECK and blockers fold into external
-/// gates, so the tasks and gates tables are rebuilt.
+/// Typed task kinds widen the kind CHECK, integer priorities become levels
+/// and blockers fold into external gates, so the tasks and gates tables are
+/// rebuilt.
 /// Stored kinds keep their values: `probe` and `decision` keep their meaning
 /// and `work` becomes the legacy kind. The intent and result source columns
 /// are dropped: authorship and review state replace them, and the sources
@@ -210,10 +215,24 @@ fn migrate_v14(tx: &Connection) -> Result<()> {
             trigger.replace('"', "\"\"")
         ))?;
     }
+    let textual: Option<i64> = tx
+        .query_row(
+            "SELECT seq FROM tasks
+              WHERE typeof(priority) <> 'integer' AND priority NOT IN ('now','next','later')
+              ORDER BY seq LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(seq) = textual {
+        bail!(
+            "task #{seq} has a non-integer priority, so it cannot map to a level; nothing was migrated. With the previous release run `papertiger edit {seq} --priority <integer> --why <reason>`, then run init again"
+        );
+    }
     tx.execute_batch(&format!(
         "DROP VIEW IF EXISTS canonical_events;
          {table}
-         INSERT INTO tasks_v14 ({TASK_COLUMNS_V14}) SELECT {TASK_COLUMNS_V14} FROM tasks;
+         INSERT INTO tasks_v14 ({TASK_COLUMNS_V14}) SELECT {TASK_SELECT_V13} FROM tasks;
          DROP TABLE tasks;
          ALTER TABLE tasks_v14 RENAME TO tasks;
          CREATE INDEX idx_tasks_plan ON tasks(plan_id);",

@@ -113,13 +113,12 @@ database can verify or bind `file:` locators beneath a supplied project root.
   legacy records that a matching release's JSON import refuses. Inspect recovery
   copies with the matching release's `--db`; never use one as a second live
   authority. Restoration is a deliberate operator action.
-- A task priority stored as text is invalid data, not a named priority level.
-  Preserve a `backup` before recovery. An explicit
-  `edit <task> --priority <integer> --why <reason>` with no other edits can replace
-  it and records a `repair_priority` event with the exact original text and the
-  chosen integer. No value is inferred; another unreadable task field rolls the
-  operation back. Other malformed storage types require a verified authority.
-  This repairs scheduling only; it does not certify the task's earlier provenance.
+- Priority is a level: `now`, `next` (default) or `later`; `focus` ranks it
+  after readiness. Express order between tasks with dependencies, not finer
+  priorities. Migration maps earlier integers: positive to `now`, zero to
+  `next`, negative to `later`; a non-integer priority left by a direct SQLite
+  write refuses migration until the previous release repairs it with
+  `edit <task> --priority <integer> --why <reason>`.
 
 Papertiger owns modeled plans, tasks, dependencies, gates, and event
 history. Domain evidence and issue systems remain authoritative for their own

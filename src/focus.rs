@@ -110,7 +110,7 @@ impl FocusResponse {
             plan: None,
             projection: StatusProjection::new(
                 "actionable leaf tasks in the selected active plan",
-                "readiness, priority descending, immediate unlocks descending, unfinished downstream descending, task.seq ascending",
+                "readiness, priority (now, next, later), immediate unlocks descending, unfinished downstream descending, task.seq ascending",
                 0,
                 Vec::new(),
                 None,
@@ -184,7 +184,7 @@ pub fn focus(
     entries.sort_by(|left, right| {
         focus_readiness_rank(&left.readiness)
             .cmp(&focus_readiness_rank(&right.readiness))
-            .then_with(|| right.task.priority.cmp(&left.task.priority))
+            .then_with(|| left.task.priority.cmp(&right.task.priority))
             .then_with(|| {
                 right
                     .immediate_unlock_count
@@ -227,7 +227,7 @@ pub fn focus(
             } else {
                 "active and unblocked proposed actionable leaf tasks and parents whose children are all closed"
             },
-            "readiness, priority descending, immediate unlocks descending, unfinished downstream descending, task.seq ascending",
+            "readiness, priority (now, next, later), immediate unlocks descending, unfinished downstream descending, task.seq ascending",
             eligible_count,
             entries,
             Some(continuation_command),
@@ -309,7 +309,7 @@ fn child_count(conn: &Connection, task_id: i64) -> Result<usize> {
     Ok(usize::try_from(count)?)
 }
 
-/// Ready tasks (proposed, no open deps), priority desc then seq asc.
+/// Ready tasks (proposed, no open deps), by priority level then seq.
 /// With `include_blocked`, blocked proposed tasks follow with named blockers.
 pub fn ready_tasks(
     conn: &Connection,
@@ -323,7 +323,7 @@ pub fn ready_tasks(
         "SELECT {TASK_COLS} FROM tasks t WHERE plan_id=?1 AND status='proposed'
          AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = t.task_id
                           AND c.status IN ('proposed','in_progress'))
-         ORDER BY priority DESC, seq ASC"
+         ORDER BY CASE priority WHEN 'now' THEN 0 WHEN 'next' THEN 1 ELSE 2 END, seq ASC"
     ))?;
     let tasks: Vec<Task> = st
         .query_map(params![plan_id], task_from_row)?

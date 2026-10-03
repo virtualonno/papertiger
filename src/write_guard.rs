@@ -41,7 +41,7 @@ fn register_admission(conn: &Connection, name: &str) -> Result<()> {
 fn canonical_guards(conn: &Connection) -> Result<Vec<(String, String)>> {
     let mut guards = Vec::new();
     for body in [
-        WRITE_GUARD_SCHEMA_V11,
+        WRITE_GUARD_SCHEMA,
         crate::history_recovery::IMMUTABILITY,
         crate::mise_projection::MISE_PROJECTION_SCHEMA_V4,
     ]
@@ -265,4 +265,35 @@ BEGIN SELECT RAISE(ABORT, 'papertiger task priority must be an integer; create t
 CREATE TRIGGER tasks_require_integer_priority_update BEFORE UPDATE OF priority ON tasks
 WHEN typeof(NEW.priority) <> 'integer'
 BEGIN SELECT RAISE(ABORT, 'papertiger task priority must be an integer; run `papertiger edit <task> --priority <integer> --why <reason>`'); END;
+"#;
+
+/// The current event and row guards. Priority levels are enforced by the
+/// tasks table's CHECK, so the v11 integer-priority triggers are dropped.
+const WRITE_GUARD_SCHEMA: &str = r#"
+DROP TRIGGER IF EXISTS events_append_only_update;
+DROP TRIGGER IF EXISTS events_append_only_delete;
+DROP TRIGGER IF EXISTS events_require_zoned_timestamp;
+DROP TRIGGER IF EXISTS events_require_json_payload;
+DROP TRIGGER IF EXISTS events_require_stable_reference;
+DROP TRIGGER IF EXISTS tasks_require_integer_priority_insert;
+DROP TRIGGER IF EXISTS tasks_require_integer_priority_update;
+CREATE TRIGGER events_append_only_update BEFORE UPDATE ON events
+BEGIN SELECT RAISE(ABORT, 'papertiger planning history is append-only; record a new event through the papertiger executable instead of editing stored events'); END;
+CREATE TRIGGER events_append_only_delete BEFORE DELETE ON events
+BEGIN SELECT RAISE(ABORT, 'papertiger planning history is append-only; record a new event through the papertiger executable instead of deleting stored events'); END;
+CREATE TRIGGER events_require_zoned_timestamp BEFORE INSERT ON events
+WHEN NOT (
+  NEW.at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][Tt ][0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'
+  AND (NEW.at GLOB '*[Zz]' OR NEW.at GLOB '*[+-][0-9][0-9]:[0-9][0-9]')
+)
+BEGIN SELECT RAISE(ABORT, 'papertiger refuses an event without an RFC3339 timestamp and zone; record planning history only through the papertiger executable, never by direct SQLite writes'); END;
+CREATE TRIGGER events_require_json_payload BEFORE INSERT ON events
+WHEN NEW.payload IS NOT NULL AND NOT json_valid(NEW.payload)
+BEGIN SELECT RAISE(ABORT, 'papertiger refuses an event whose payload is not JSON; record planning history only through the papertiger executable, never by direct SQLite writes'); END;
+CREATE TRIGGER events_require_stable_reference BEFORE INSERT ON events
+WHEN trim(NEW.actor) = '' OR trim(NEW.kind) = ''
+  OR NEW.entity NOT IN ('plan','task','dep','gate')
+  OR (NEW.entity IN ('task','dep','gate') AND (NEW.entity_seq IS NULL OR NEW.entity_plan IS NULL))
+  OR (NEW.entity = 'gate' AND NEW.gate_name IS NULL)
+BEGIN SELECT RAISE(ABORT, 'papertiger refuses an event without an actor, kind, known entity and stable plan/task reference; record planning history only through the papertiger executable, never by direct SQLite writes'); END;
 "#;

@@ -229,6 +229,10 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   `focus --unreviewed` select claims needing a check; results recorded before
   authorship are not flagged. Same-model reviews count and are reported as
   such (`same_model`).
+- Priority is a scheduling level, `--priority now|next|later` (default
+  `next`), ranked after readiness; sequence between tasks belongs in
+  dependencies. The v14 migration and `papertiger.dump.v10` conversion map
+  integer priorities: positive to `now`, zero to `next`, negative to `later`.
 - `models [--plan <slug>] [--since <RFC3339>] [--json]` reports claim
   outcomes per authoring model, grouping ids that differ only by `.` or `-`
   between digits: filings (done, retired, rejected, open, engaged) and results

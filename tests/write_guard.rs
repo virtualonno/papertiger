@@ -2,14 +2,12 @@ mod support;
 use papertiger as pt;
 use rusqlite::Connection;
 
-const GUARDS: [&str; 7] = [
+const GUARDS: [&str; 5] = [
     "events_append_only_update",
     "events_append_only_delete",
     "events_require_zoned_timestamp",
     "events_require_json_payload",
     "events_require_stable_reference",
-    "tasks_require_integer_priority_insert",
-    "tasks_require_integer_priority_update",
 ];
 
 fn authority() -> Connection {
@@ -106,19 +104,12 @@ fn observed_out_of_band_event_shapes_are_refused() {
 }
 
 #[test]
-fn text_priorities_are_refused_on_insert_and_update() {
+fn priorities_outside_the_levels_are_refused_and_levels_are_edited() {
     let conn = authority();
-    let update = refusal(&conn, "UPDATE tasks SET priority='high' WHERE seq=1");
-    assert!(
-        update.contains("papertiger edit <task> --priority <integer>"),
-        "{update}"
-    );
-    let insert = refusal(
-        &conn,
-        "INSERT INTO tasks (seq, plan_id, title, priority, created_at, updated_at)
-         VALUES (2, 1, 'direct', 'urgent', '2026-09-19T01:20:34.499Z', '2026-09-19T01:20:34.499Z')",
-    );
-    assert!(insert.contains("priority must be an integer"), "{insert}");
+    let update = refusal(&conn, "UPDATE tasks SET priority='urgent' WHERE seq=1");
+    assert!(update.contains("CHECK constraint failed"), "{update}");
+    let update = refusal(&conn, "UPDATE tasks SET priority=3 WHERE seq=1");
+    assert!(update.contains("CHECK constraint failed"), "{update}");
     pt::edit_task(
         &conn,
         "agent",
@@ -128,12 +119,12 @@ fn text_priorities_are_refused_on_insert_and_update() {
             intent: None,
             parent: None,
             kind: None,
-            priority: Some(3),
+            priority: Some(pt::Priority::Now),
         },
         "raise",
     )
     .unwrap();
-    assert_eq!(pt::get_task(&conn, 1).unwrap().priority, 3);
+    assert_eq!(pt::get_task(&conn, 1).unwrap().priority, pt::Priority::Now);
 }
 
 #[test]
@@ -281,7 +272,7 @@ fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
             "{sql}: {error}"
         );
     }
-    assert_eq!(pt::get_task(&raw, 1).unwrap().priority, 0);
+    assert_eq!(pt::get_task(&raw, 1).unwrap().priority, pt::Priority::Next);
     assert_eq!(pt::get_task(&raw, 1).unwrap().status, "proposed");
     // Opening via the public API is still read-only until mutation entry.
     let api = pt::open_existing(path.to_str().unwrap()).unwrap();

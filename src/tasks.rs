@@ -2,11 +2,11 @@
 
 use anyhow::{Result, anyhow, bail};
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     ASSIGNABLE_TASK_KINDS, LEGACY_TASK_KIND, MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES,
-    TASK_KINDS, TaskPickup, priority_recovery,
+    TASK_KINDS, TaskPickup,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,7 +27,7 @@ pub struct Task {
     pub kind: String,
     pub result: Option<String>,
     pub status: String,
-    pub priority: i64,
+    pub priority: Priority,
     pub pickup: Option<TaskPickup>,
 }
 
@@ -46,7 +46,7 @@ pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         kind,
         result: r.get(8)?,
         status: r.get(9)?,
-        priority: priority_recovery::read_priority(r, 1, 10)?,
+        priority: r.get(10)?,
         pickup: match (
             r.get::<_, Option<String>>(11)?,
             r.get::<_, Option<String>>(12)?,
@@ -59,6 +59,86 @@ pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
 }
 
 pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, kind, result, status, priority, pickup_session, pickup_at";
+
+/// When a task should run relative to other ready work: `now` before `next`
+/// (the default) before `later`. Sequence between tasks belongs in
+/// dependencies, not in finer priority values.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Priority {
+    Now,
+    #[default]
+    Next,
+    Later,
+}
+
+impl Priority {
+    pub const ALL: [Priority; 3] = [Priority::Now, Priority::Next, Priority::Later];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Now => "now",
+            Self::Next => "next",
+            Self::Later => "later",
+        }
+    }
+
+    /// The level an integer priority recorded before levels maps to.
+    pub const fn from_legacy(priority: i64) -> Self {
+        if priority > 0 {
+            Self::Now
+        } else if priority < 0 {
+            Self::Later
+        } else {
+            Self::Next
+        }
+    }
+}
+
+impl std::fmt::Display for Priority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for Priority {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|level| level.as_str() == value)
+            .ok_or_else(|| format!("unknown priority '{value}'; use now, next or later"))
+    }
+}
+
+impl<'de> Deserialize<'de> for Priority {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        value
+            .as_str()
+            .ok_or_else(|| format!("priority {value} is not a level; use now, next or later"))
+            .and_then(str::parse)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl rusqlite::types::ToSql for Priority {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
+impl rusqlite::types::FromSql for Priority {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        value
+            .as_str()?
+            .parse()
+            .map_err(|error: String| rusqlite::types::FromSqlError::Other(error.into()))
+    }
+}
 
 /// Validate a stored kind, which may be the legacy `work`.
 pub(crate) fn validate_task_kind(kind: &str) -> Result<()> {

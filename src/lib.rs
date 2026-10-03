@@ -30,7 +30,6 @@ pub mod history_recovery;
 mod inventory;
 mod mutation;
 mod pickup;
-mod priority_recovery;
 mod read_model;
 mod write_guard;
 pub use inventory::{plan_inventory, task_inventory};
@@ -134,15 +133,15 @@ mod events;
 pub use events::add_note;
 pub(crate) use events::record_event_in_mutation;
 mod tasks;
+pub use tasks::{
+    Priority, Task, get_task, kind_requires_result, leaf_tasks_with_status, list_tasks,
+    list_tasks_by_activity, resolve_task_ref, suggested_task_kind, task_handle, task_kind_letter,
+    validate_meaning_source,
+};
 pub(crate) use tasks::{
     TASK_COLS, parse_task_ref, require_nonblank, task_from_row, task_tags_by_id,
     validate_assignable_task_kind, validate_kind_filter, validate_tag, validate_task_kind,
     validate_task_title,
-};
-pub use tasks::{
-    Task, get_task, kind_requires_result, leaf_tasks_with_status, list_tasks,
-    list_tasks_by_activity, resolve_task_ref, suggested_task_kind, task_handle, task_kind_letter,
-    validate_meaning_source,
 };
 mod plans;
 pub(crate) use plans::plan_status;

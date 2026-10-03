@@ -45,8 +45,8 @@ pub struct OutlineEntry {
     #[serde(default)]
     pub tags: Vec<String>,
     /// Any integral JSON number, `2.0` included, as JSON Schema's `integer`.
-    #[serde(default, deserialize_with = "integral_priority")]
-    pub priority: i64,
+    #[serde(default)]
+    pub priority: crate::Priority,
     /// Strings name sibling keys; integers name existing task numbers.
     #[serde(default)]
     pub deps: Vec<serde_json::Value>,
@@ -63,12 +63,6 @@ fn integral(number: &serde_json::Number) -> Option<i64> {
             })
             .map(|value| value as i64)
     })
-}
-
-fn integral_priority<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
-    let number = serde_json::Number::deserialize(deserializer)?;
-    integral(&number)
-        .ok_or_else(|| de::Error::custom(format!("priority {number} is not an integer")))
 }
 
 /// Walks any JSON value and refuses an object that repeats a key, which
@@ -549,19 +543,22 @@ mod tests {
     #[test]
     fn integral_numbers_are_integers_and_oversized_input_is_refused() {
         let outline = parse_task_outline(
-            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","priority":2.0,"deps":[3.0]}]}"#,
+            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","priority":"now","deps":[3.0]}]}"#,
         )
         .unwrap();
-        assert_eq!(outline.children[0].priority, 2);
+        assert_eq!(outline.children[0].priority, crate::Priority::Now);
         let serde_json::Value::Number(dependency) = &outline.children[0].deps[0] else {
             panic!("dependency is a number");
         };
         assert_eq!(integral(dependency), Some(3));
-        let fraction = parse_task_outline(
-            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","priority":2.5}]}"#,
+        let numeric = parse_task_outline(
+            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","priority":2}]}"#,
         )
         .unwrap_err();
-        assert!(format!("{fraction:#}").contains("priority 2.5 is not an integer"));
+        assert!(
+            format!("{numeric:#}").contains("priority 2 is not a level; use now, next or later"),
+            "{numeric:#}"
+        );
         let oversized = vec![b' '; MAX_OUTLINE_BYTES + 1];
         let error = parse_task_outline(&oversized).unwrap_err().to_string();
         assert!(

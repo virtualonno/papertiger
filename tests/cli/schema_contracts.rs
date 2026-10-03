@@ -115,7 +115,7 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
     let outline = json!({"schema": "papertiger.task_outline.v1", "children": [
         {"key": "model", "title": "Model outline work", "kind": "change", "intent": "Split outline work",
          "why": "exercise the outline receipt", "tags": ["outline"],
-         "priority": 1},
+         "priority": "now"},
         {"key": "check", "title": "Check outline work", "kind": "probe", "deps": ["model", 1]}
     ]});
     validator
@@ -145,14 +145,14 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
         *corrupt.pointer_mut(path).unwrap() = invalid;
         assert!(!validator.is_valid(&corrupt), "accepted invalid {path}");
     }
-    // The parser trims titles and tags and reads integral numbers as integers.
+    // The parser trims titles and tags and reads priority levels.
     for (path, valid) in [
         (
             "/children/0/title",
             json!(format!("  {}  ", "t".repeat(160))),
         ),
         ("/children/0/tags", json!([format!(" {} ", "t".repeat(64))])),
-        ("/children/0/priority", json!(2.0)),
+        ("/children/0/priority", json!("later")),
     ] {
         let mut accepted = outline.clone();
         *accepted.pointer_mut(path).unwrap() = valid;

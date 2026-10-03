@@ -80,7 +80,7 @@ fn decompose_creates_children_edges_and_ready_starts_in_one_receipt() {
     let children = outline(json!([
         {"key": "persist", "title": "Persist records", "kind": "feature", "intent": "Records survive restarts",
          "why": "Storage comes first", "deps": [1],
-         "tags": ["storage"], "priority": 3},
+         "tags": ["storage"], "priority": "now"},
         {"key": "serve", "title": "Serve records", "kind": "feature", "why": "Clients read records",
          "deps": ["persist"]},
         {"key": "measure", "title": "Measure record reads", "kind": "probe",
@@ -141,7 +141,7 @@ fn decompose_creates_children_edges_and_ready_starts_in_one_receipt() {
     let persisted = json_of(&papertiger(&db.0, &["show", "4", "--json"]));
     assert_eq!(persisted["parent"]["seq"], 3);
     assert_eq!(persisted["tags"], json!(["storage"]));
-    assert_eq!(persisted["task"]["priority"], 3);
+    assert_eq!(persisted["task"]["priority"], "now");
     let measured = json_of(&papertiger(&db.0, &["show", "6", "--json"]));
     assert_eq!(measured["task"]["kind"], "probe");
     let mut dependencies = measured["dependencies"]
@@ -351,7 +351,7 @@ fn decompose_names_the_plan_step_first_and_reads_outline_files() {
         &["plan", "set", "closed", "done", "--why", "shipped"],
     ));
     let children = outline(
-        json!([{"key": "follow", "title": "Follow up", "kind": "feature", "priority": 2.0}]),
+        json!([{"key": "follow", "title": "Follow up", "kind": "feature", "priority": "now"}]),
     );
     let head = log_head(&db);
     let refused = decompose(&db, "1", &children, &[]);
@@ -395,7 +395,7 @@ fn decompose_names_the_plan_step_first_and_reads_outline_files() {
     std::fs::remove_file(&path).unwrap();
     assert_eq!(created(&applied), [(2, "Follow up".to_owned())]);
     let child = json_of(&papertiger(&db.0, &["show", "2", "--json"]));
-    assert_eq!(child["task"]["priority"], 2);
+    assert_eq!(child["task"]["priority"], "now");
     assert_eq!(child["parent"]["seq"], 1);
 }
 

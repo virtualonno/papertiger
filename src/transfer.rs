@@ -36,8 +36,13 @@ const DUMP_SCHEMA_V10: &str = "papertiger.dump.v10";
 pub fn parse_dump_json(text: &str) -> Result<Dump> {
     let mut value: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .context("parse papertiger dump")?;
-    if value.get("schema").and_then(serde_json::Value::as_str) == Some(DUMP_SCHEMA_V10) {
-        value = convert_dump_v10(value)?;
+    match value.get("schema").and_then(serde_json::Value::as_str) {
+        Some(DUMP_SCHEMA_V10) => value = convert_dump_v10(value)?,
+        Some(DUMP_SCHEMA) => {}
+        other => bail!(
+            "unsupported dump schema {}; `papertiger import <file>` reads {DUMP_SCHEMA} and converts {DUMP_SCHEMA_V10}; for older dumps, import into a temporary authority with the Papertiger release that produced it, run current `papertiger --db <temporary-authority> init`, then re-export {DUMP_SCHEMA}",
+            other.map_or_else(|| "(missing)".to_owned(), |schema| format!("'{schema}'"))
+        ),
     }
     serde_json::from_value(value).context("parse papertiger dump")
 }
@@ -46,7 +51,9 @@ pub fn parse_dump_json(text: &str) -> Result<Dump> {
 /// and `decision`, which v11 stores unchanged (`work` as the legacy kind),
 /// and carried per-task `intent_source` and `result_source`, which v11
 /// drops: the creation and completion events keep the recorded sources.
-/// Each v10 blocker becomes an `external` gate with the same condition,
+/// Integer priorities map to levels (positive `now`, zero `next`,
+/// negative `later`). Each v10 blocker becomes an `external` gate with the
+/// same condition,
 /// outcome and evidence, renamed `blocker-<name>` if a gate holds its name.
 /// Events and Mise projection documents are historical records and pass
 /// through unchanged.
@@ -69,6 +76,10 @@ pub fn convert_dump_v10(mut value: serde_json::Value) -> Result<serde_json::Valu
             let task = task.as_object_mut().ok_or_else(invalid)?;
             task.remove("intent_source");
             task.remove("result_source");
+            if let Some(priority) = task.get("priority") {
+                let level = crate::Priority::from_legacy(priority.as_i64().ok_or_else(invalid)?);
+                task.insert("priority".into(), level.as_str().into());
+            }
             let Some(blockers) = task.remove("blockers") else {
                 continue;
             };
@@ -155,7 +166,7 @@ pub struct TaskDump {
     #[serde(default = "default_proposed")]
     pub status: String,
     #[serde(default)]
-    pub priority: i64,
+    pub priority: crate::Priority,
     #[serde(default)]
     pub parent_seq: Option<i64>,
     #[serde(default)]

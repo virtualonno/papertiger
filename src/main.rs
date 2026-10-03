@@ -103,9 +103,9 @@ enum Cmd {
         /// Searchable task tags, comma-separated or repeated
         #[arg(long, value_delimiter = ',')]
         tag: Vec<String>,
-        /// Scheduling priority; higher values run first within readiness order
-        #[arg(long, default_value_t = 0)]
-        priority: i64,
+        /// Scheduling level within readiness order: now, next (default) or later; sequence work with --dep
+        #[arg(long, default_value = "next")]
+        priority: pt::Priority,
         #[command(flatten)]
         why: WhyArgs,
         /// Atomically create and transition the task to in_progress; requires --why
@@ -114,7 +114,7 @@ enum Cmd {
     },
     /// Create a parent's child tasks and their dependencies from a JSON outline in one atomic call
     #[command(
-        after_help = "Outline: papertiger.task_outline.v1 in `papertiger schema`. Each child has a batch-local \"key\", a \"title\" and a \"kind\", and optionally \"intent\", \"why\", \"tags\", \"priority\" and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
+        after_help = "Outline: papertiger.task_outline.v1 in `papertiger schema`. Each child has a batch-local \"key\", a \"title\" and a \"kind\", and optionally \"intent\", \"why\", \"tags\", \"priority\" (now, next or later) and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
     )]
     Decompose {
         /// Parent task: N, #N or its handle (e.g. G-N)
@@ -202,9 +202,9 @@ enum Cmd {
         /// Replacement kind: goal, feature, change, bug, probe, decision, or release
         #[arg(long)]
         kind: Option<String>,
-        /// Replacement scheduling priority
+        /// Replacement scheduling level: now, next or later
         #[arg(long)]
-        priority: Option<i64>,
+        priority: Option<pt::Priority>,
         #[command(flatten)]
         why: WhyArgs,
     },
@@ -965,7 +965,7 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
             replacement.title
         );
     }
-    if task.priority != 0 {
+    if task.priority != pt::Priority::Next {
         pt::outln!("  priority: {}", task.priority);
     }
     if !context.tags.is_empty() {

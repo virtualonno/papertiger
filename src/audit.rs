@@ -8,9 +8,8 @@ use std::collections::HashMap;
 use crate::{
     ASSIGNABLE_TASK_KINDS, LEGACY_TASK_KIND, MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES,
     TASK_STATUSES, TaskPickup, external_references, get_task, history_recovery, mise_projection,
-    pickup, plan_move, priority_recovery, suggested_task_kind, task_graph,
-    valid_task_definition_revision_payload, validate_commit_oid, validate_new_evidence_locator,
-    validate_optional_sha256, write_guard,
+    pickup, plan_move, suggested_task_kind, task_graph, valid_task_definition_revision_payload,
+    validate_commit_oid, validate_new_evidence_locator, validate_optional_sha256, write_guard,
 };
 
 #[derive(Serialize)]
@@ -85,7 +84,7 @@ pub(crate) fn terminal_replacement_repair_instruction(target: i64) -> String {
 
 pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     history_recovery::validate(conn)?;
-    let mut findings = priority_recovery::audit_priorities(conn)?;
+    let mut findings = Vec::new();
     findings.extend(history_recovery::audit_structure(conn)?);
     let drifted = write_guard::drift(conn)?;
     if !drifted.is_empty() {

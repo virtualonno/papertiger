@@ -5,8 +5,8 @@ use rusqlite::{Connection, Transaction, params};
 use std::collections::HashSet;
 
 use crate::{
-    MEANING_SOURCES, TASK_DEFINITION_REVISION_SCHEMA, TASK_KINDS, begin_mutation, find_cycle,
-    get_task, kind_requires_result, now, plan_status, priority_recovery, record_event_in_mutation,
+    MEANING_SOURCES, Priority, TASK_DEFINITION_REVISION_SCHEMA, TASK_KINDS, begin_mutation,
+    find_cycle, get_task, kind_requires_result, now, plan_status, record_event_in_mutation,
     resolve_plan, start_task_in_mutation, task_graph, validate_assignable_task_kind, validate_tag,
     validate_task_title,
 };
@@ -20,7 +20,7 @@ pub struct TaskCreation<'a> {
     pub parent: Option<i64>,
     pub deps: &'a [i64],
     pub tags: &'a [String],
-    pub priority: i64,
+    pub priority: Priority,
     pub why: Option<&'a str>,
     pub start: bool,
     pub session: Option<&'a str>,
@@ -36,7 +36,7 @@ impl<'a> TaskCreation<'a> {
             parent: None,
             deps: &[],
             tags: &[],
-            priority: 0,
+            priority: Priority::Next,
             why: None,
             start: false,
             session: None,
@@ -112,7 +112,7 @@ pub(crate) fn add_task_in_mutation(
     parent: Option<i64>,
     deps: &[i64],
     tags: &[String],
-    priority: i64,
+    priority: Priority,
     why: Option<&str>,
 ) -> Result<i64> {
     validate_assignable_task_kind(kind)?;
@@ -177,7 +177,7 @@ pub struct TaskEdit<'a> {
     pub intent: Option<&'a str>,
     pub parent: Option<Option<i64>>,
     pub kind: Option<&'a str>,
-    pub priority: Option<i64>,
+    pub priority: Option<Priority>,
 }
 
 pub(crate) fn valid_task_definition_revision_payload(value: &serde_json::Value) -> bool {
@@ -251,7 +251,15 @@ pub(crate) fn valid_task_definition_revision_payload(value: &serde_json::Value) 
             "parent" => [before, after].into_iter().all(|value| {
                 value.is_null() || value.as_i64().is_some_and(|parent_seq| parent_seq > 0)
             }),
-            "priority" => before.is_i64() && after.is_i64(),
+            // Edits before priority levels recorded integers.
+            "priority" => {
+                (before.is_i64() && after.is_i64())
+                    || [before, after].into_iter().all(|value| {
+                        value
+                            .as_str()
+                            .is_some_and(|level| level.parse::<Priority>().is_ok())
+                    })
+            }
             "plan" => [before, after]
                 .into_iter()
                 .all(|value| value.as_str().is_some_and(|slug| !slug.trim().is_empty())),
@@ -284,10 +292,6 @@ pub fn edit_task(
         validate_assignable_task_kind(kind)?;
     }
     let tx = begin_mutation(conn)?;
-    if priority_recovery::repair_text_priority(&tx, actor, seq, &edit, why)? {
-        tx.commit()?;
-        return Ok(vec!["priority"]);
-    }
     let task = get_task(&tx, seq)?;
     let edited_at = now();
     let mut changed = Vec::new();

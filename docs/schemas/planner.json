@@ -147,7 +147,12 @@
           ]
         },
         "priority": {
-          "type": "integer"
+          "description": "Scheduling level within readiness order: now, next (default) or later.",
+          "enum": [
+            "now",
+            "next",
+            "later"
+          ]
         }
       },
       "required": [
@@ -190,7 +195,12 @@
           ]
         },
         "priority": {
-          "type": "integer"
+          "description": "Scheduling level within readiness order: now, next (default) or later.",
+          "enum": [
+            "now",
+            "next",
+            "later"
+          ]
         },
         "intent": {
           "type": "string"
@@ -1448,7 +1458,12 @@
           "$ref": "#/$defs/task_status"
         },
         "priority": {
-          "type": "integer"
+          "description": "Scheduling level within readiness order: now, next (default) or later.",
+          "enum": [
+            "now",
+            "next",
+            "later"
+          ]
         },
         "parent_seq": {
           "anyOf": [
@@ -2435,8 +2450,12 @@
                 }
               },
               "priority": {
-                "description": "Any integral number; 2.0 is 2.",
-                "type": "integer"
+                "description": "Scheduling level within readiness order: now, next (default) or later.",
+                "enum": [
+                  "now",
+                  "next",
+                  "later"
+                ]
               },
               "deps": {
                 "description": "Each dependency once; an integral number such as 3.0 names task 3.",

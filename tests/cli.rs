@@ -3003,7 +3003,7 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     assert!(
         task_add.contains("Concise outcome-oriented task title")
             && task_add.contains("Parent task: N, #N or its handle (e.g. G-N)")
-            && task_add.contains("Scheduling priority"),
+            && task_add.contains("Scheduling level within readiness order"),
         "{task_add}"
     );
     let gate_add = command_help(&["gate", "add"]);
@@ -3836,9 +3836,11 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
         ));
         assert_success(&papertiger(&db.0, &["start", &leaf_seq]));
     }
-    for priority in 1..=6 {
-        let title = format!("Ready {priority}");
-        let priority = priority.to_string();
+    for (index, priority) in ["now", "now", "next", "next", "later", "later"]
+        .into_iter()
+        .enumerate()
+    {
+        let title = format!("Ready {}", index + 1);
         assert_success(&papertiger(
             &db.0,
             &[
@@ -3849,7 +3851,7 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
                 "--plan",
                 "work",
                 "--priority",
-                &priority,
+                priority,
             ],
         ));
     }
@@ -3892,7 +3894,7 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
         work["ready"]["continuation_command"],
         "papertiger focus --plan work --limit 11 --json"
     );
-    assert_eq!(work["ready"]["entries"][0]["task"]["title"], "Ready 6");
+    assert_eq!(work["ready"]["entries"][0]["task"]["title"], "Ready 1");
 
     let empty = &status["active_plans"][1];
     assert_eq!(empty["plan"]["slug"], "empty");
@@ -3944,7 +3946,7 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
             "--intent",
             "parent intent",
             "--priority",
-            "1",
+            "now",
         ],
     ));
     assert_success(&papertiger(
@@ -3959,7 +3961,7 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
             "--intent",
             "child intent",
             "--priority",
-            "2",
+            "later",
         ],
     ));
     assert_success(&papertiger(
@@ -3976,7 +3978,7 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
             "--kind",
             "probe",
             "--priority",
-            "9",
+            "next",
             "--why",
             "align the durable task definition",
         ],
@@ -4009,8 +4011,8 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
         serde_json::Value::Null
     );
     assert_eq!(edit["payload"]["changes"]["parent"]["after"], 1);
-    assert_eq!(edit["payload"]["changes"]["priority"]["before"], 2);
-    assert_eq!(edit["payload"]["changes"]["priority"]["after"], 9);
+    assert_eq!(edit["payload"]["changes"]["priority"]["before"], "later");
+    assert_eq!(edit["payload"]["changes"]["priority"]["after"], "next");
     assert_no_internal_identity_keys(edit);
 
     let export_output = papertiger(&db.0, &["export", "--plan", "work"]);
@@ -4061,7 +4063,7 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
             "--title",
             "Child revised",
             "--priority",
-            "9",
+            "next",
             "--why",
             "must not mint history",
         ],

@@ -353,6 +353,36 @@ fn model_report_groups_claims_by_normalized_model_and_separates_same_model_revie
 }
 
 #[test]
+fn focus_ranks_now_before_next_before_later_within_readiness() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
+    for (title, priority) in [
+        ("Later work", pt::Priority::Later),
+        ("Next work", pt::Priority::Next),
+        ("Urgent work", pt::Priority::Now),
+    ] {
+        pt::add_task(
+            &conn,
+            "test",
+            plan,
+            pt::TaskCreation {
+                priority,
+                ..pt::TaskCreation::new(title, "feature")
+            },
+        )
+        .unwrap();
+    }
+    let titles: Vec<_> = pt::focus(&conn, plan, 10, false, None, false, None)
+        .unwrap()
+        .projection
+        .entries
+        .into_iter()
+        .map(|entry| entry.task.title)
+        .collect();
+    assert_eq!(titles, ["Urgent work", "Next work", "Later work"]);
+}
+
+#[test]
 fn an_open_external_gate_keeps_a_task_from_starting_until_resolved() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
@@ -475,8 +505,10 @@ fn downgrade_to_v13(path: &std::path::Path) {
          );
          INSERT INTO tasks_v13
            SELECT task_id, seq, plan_id, parent_id, title, intent,
-                  CASE kind WHEN 'feature' THEN 'work' ELSE kind END,
-                  result, status, priority, created_at, updated_at, replacement_task_id,
+                  CASE WHEN kind IN ('probe','decision') THEN kind ELSE 'work' END,
+                  result, status,
+                  CASE priority WHEN 'now' THEN 5 WHEN 'later' THEN -1 ELSE 0 END,
+                  created_at, updated_at, replacement_task_id,
                   NULL, NULL, pickup_session, pickup_at
              FROM tasks;
          DROP TABLE tasks;
@@ -519,7 +551,18 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
         plan,
         pt::TaskCreation {
             parent: Some(parent),
+            priority: pt::Priority::Now,
             ..pt::TaskCreation::new("Measure plan reads", "probe")
+        },
+    )
+    .unwrap();
+    let deferred = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            priority: pt::Priority::Later,
+            ..pt::TaskCreation::new("Archive old plans", "change")
         },
     )
     .unwrap();
@@ -542,6 +585,11 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
     assert!(pt::verify_write_guards(&conn).is_ok());
     assert_eq!(pt::get_task(&conn, parent).unwrap().kind, "work");
     assert_eq!(pt::get_task(&conn, probe).unwrap().kind, "probe");
+    assert_eq!(
+        [parent, probe, deferred].map(|seq| pt::get_task(&conn, seq).unwrap().priority),
+        [pt::Priority::Next, pt::Priority::Now, pt::Priority::Later],
+        "integer priorities 0, 5 and -1 become next, now and later"
+    );
     assert_eq!(
         pt::get_task(&conn, probe).unwrap().parent_id,
         Some(
@@ -582,7 +630,8 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
         pt::audit(&conn)
             .unwrap()
             .iter()
-            .all(|finding| finding.kind != "legacy_task_kind")
+            .all(|finding| !finding.detail.starts_with(&format!("#{parent} "))),
+        "the retyped task is no longer legacy work"
     );
     drop(conn);
     std::fs::remove_file(path).unwrap();
@@ -787,7 +836,7 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
 #[test]
 fn v10_dump_converts_with_its_kinds_and_v9_is_refused_with_a_recovery_path() {
     let v10 = r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
-        "tasks":[{"seq":1,"plan":"p","title":"legacy outcome","kind":"work","intent_source":"user",
+        "tasks":[{"seq":1,"plan":"p","title":"legacy outcome","kind":"work","intent_source":"user","priority":7,
                   "gates":[{"name":"vendor","kind":"test","requirement":"tests pass"}],
                   "blockers":[{"name":"vendor","condition":"vendor fix released","status":"open"},
                               {"name":"input","condition":"operator input","status":"resolved",
@@ -799,6 +848,8 @@ fn v10_dump_converts_with_its_kinds_and_v9_is_refused_with_a_recovery_path() {
     pt::import(&conn, "test", &dump).unwrap();
     assert_eq!(pt::get_task(&conn, 1).unwrap().kind, "work");
     assert_eq!(pt::get_task(&conn, 2).unwrap().kind, "probe");
+    assert_eq!(pt::get_task(&conn, 1).unwrap().priority, pt::Priority::Now);
+    assert_eq!(pt::get_task(&conn, 2).unwrap().priority, pt::Priority::Next);
     let gates = pt::task_context(&conn, 1).unwrap().gates;
     let summary: Vec<_> = gates
         .iter()
@@ -826,10 +877,7 @@ fn v10_dump_converts_with_its_kinds_and_v9_is_refused_with_a_recovery_path() {
     );
 
     let v9 = v10.replace("papertiger.dump.v10", "papertiger.dump.v9");
-    let error = pt::import(&conn, "test", &pt::parse_dump_json(&v9).unwrap())
-        .err()
-        .unwrap()
-        .to_string();
+    let error = pt::parse_dump_json(&v9).err().unwrap().to_string();
     assert!(error.contains("converts papertiger.dump.v10"), "{error}");
     assert!(pt::convert_dump_v10(serde_json::json!({"schema": "papertiger.dump.v9"})).is_err());
 }
@@ -1415,7 +1463,7 @@ fn dependency_cycles_rejected_and_readiness_derived() {
         plan,
         pt::TaskCreation {
             deps: &[b],
-            priority: 5,
+            priority: pt::Priority::Now,
             ..pt::TaskCreation::new("c", "feature")
         },
     )
@@ -1862,7 +1910,7 @@ fn priority_orders_ready_queue() {
         "test",
         plan,
         pt::TaskCreation {
-            priority: 9,
+            priority: pt::Priority::Now,
             ..pt::TaskCreation::new("high", "feature")
         },
     )
@@ -1891,7 +1939,7 @@ fn ready_limit_applies_to_the_whole_result() {
             "test",
             plan,
             pt::TaskCreation {
-                priority: 1,
+                priority: pt::Priority::Now,
                 ..pt::TaskCreation::new(title, "feature")
             },
         )
@@ -1992,7 +2040,7 @@ fn export_import_roundtrip_preserves_graph() {
         pt::TaskCreation {
             intent: "intent a",
             tags: &["track:x".into()],
-            priority: 2,
+            priority: pt::Priority::Now,
             why: Some("roundtrip fixture"),
             ..pt::TaskCreation::new("a", "feature")
         },
@@ -2489,7 +2537,7 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
         "test",
         plan,
         pt::TaskCreation {
-            priority: 100,
+            priority: pt::Priority::Now,
             ..pt::TaskCreation::new("container", "feature")
         },
     )
@@ -2516,7 +2564,7 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
         "test",
         plan,
         pt::TaskCreation {
-            priority: 50,
+            priority: pt::Priority::Now,
             ..pt::TaskCreation::new("independent", "feature")
         },
     )
@@ -2662,7 +2710,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
         pt::TaskCreation {
             kind: "decision",
             deps: &[prerequisite],
-            priority: 5,
+            priority: pt::Priority::Now,
             ..pt::TaskCreation::new("select design", "feature")
         },
     )
@@ -2939,7 +2987,7 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
             intent: "Test the two viable engines and select one.",
             kind: "decision",
             tags: &["architecture".into()],
-            priority: 7,
+            priority: pt::Priority::Now,
             why: Some("decision fixture"),
             ..pt::TaskCreation::new("choose engine", "feature")
         },
@@ -3226,7 +3274,7 @@ fn canonical_task_queries_cover_status_tag_and_leaf_filters() {
         plan,
         pt::TaskCreation {
             tags: &["selected".to_owned()],
-            priority: 10,
+            priority: pt::Priority::Now,
             ..pt::TaskCreation::new("parent", "feature")
         },
     )
@@ -3238,7 +3286,7 @@ fn canonical_task_queries_cover_status_tag_and_leaf_filters() {
         pt::TaskCreation {
             parent: Some(parent),
             tags: &["selected".to_owned()],
-            priority: 20,
+            priority: pt::Priority::Now,
             ..pt::TaskCreation::new("child", "feature")
         },
     )

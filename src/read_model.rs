@@ -90,7 +90,7 @@ pub struct TaskSummary {
     pub title: String,
     pub status: String,
     pub kind: String,
-    pub priority: i64,
+    pub priority: crate::Priority,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -719,7 +719,7 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
         let focus_limit = leaf_count + ready_eligible;
         let ready = StatusProjection::new(
             "proposed leaf tasks, and parents whose children are all closed, with no open dependencies, external gates or disputed results",
-            "priority descending, then task.seq ascending",
+            "priority (now, next, later), then task.seq ascending",
             ready_eligible,
             ready,
             Some(format!(
