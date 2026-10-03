@@ -60,17 +60,19 @@ ordinary selection.
 
 ```bash
 papertiger status
-papertiger focus --json
-papertiger search "<terms>" --compact
-papertiger show <task.seq> --json
+papertiger focus
+papertiger search "<terms>"
+papertiger show <task.seq>
 papertiger brief <task.seq>
-papertiger list --all-plans --status unfinished --json
+papertiger list --all-plans --status unfinished
 papertiger audit
 ```
 
-Pass `--plan <slug>` when more than one plan is active. Bounded reads report
-what they omitted; follow their `continuation_command` instead of treating the
-visible entries as complete. Reads never change the authority.
+Pass `--plan <slug>` when more than one plan is active. Text output is meant
+for reading and is the cheapest; `--json` emits versioned documents for
+scripts (`search --compact` is the bounded JSON search). Bounded reads report
+what they omitted; follow their continuation instead of treating the visible
+entries as complete. Reads never change the authority.
 
 `brief <task.seq>` reads a task and its whole subtree: what it is for,
 progress, the next ready leaves, open work with pickup and owner state, open
@@ -83,14 +85,14 @@ Choose each task's kind when creating it: `goal` for a container of child
 outcomes, `feature`, `change` (refactor, migration, hardening, removal), `bug`,
 `probe`, `decision`, or `release` (publishing, rollout and other chores). The
 legacy `work` kind cannot be assigned; retype an open `work` task with
-`edit <task.seq> --kind <kind> --why <reason>` (`audit` suggests one). Probe,
+`edit <task.seq> --kind <kind>` (`audit` suggests one). Probe,
 decision and bug tasks require `--result` or `--result-file`; a bug's result
 names its cause.
 
 Output shows each task by its handle, kind letter and number (`F-924`; JSON
 `handle`). Commands accept the handle, `N` or `#N`; prefer the handle or bare
-`N`, since `#` starts a shell comment. A handle whose letter no longer matches
-the task's kind is refused with the current one. `show`, `focus` and `brief`
+`N`, since `#` starts a shell comment. A handle with a stale letter (the task
+was retyped) still resolves by its number; output shows the current handle. `show`, `focus` and `brief`
 place a task under its ancestors (`path: G-1 › F-2`). Keep task numbers and
 handles out of shared commits, pull requests and release notes; record shared
 artifacts inward with `reference add`.
@@ -151,7 +153,10 @@ reason to resume the work with `start`, never an automatic transition.
 ## Mutations and receipts
 
 Write `--why` for anything a future session could question, in language that
-stands alone. Long text uses `--intent-file`, `--why-file`, `--result-file` or
+stands alone. `reject`, `retire` without `--into`, `review` and `gate
+waive`/`remove` require it; other corrections such as `edit`, `reopen`,
+`move-plan`, `plan set` and `retire --into` record it only when given. Long
+text uses `--intent-file`, `--why-file`, `--result-file` or
 `note --text-file`, with `-` for stdin; text must be UTF-8.
 
 For scripted chains pass `--json` and read `papertiger.mutation.v2`: `changed`
@@ -172,9 +177,9 @@ papertiger done <task.seq> --result "Outcome and verification"
 `done` refuses open dependencies, gates or children; resolve or waive them
 with evidence and reasons rather than routing around the refusal. Check
 `list --status rejected` before reviving an old approach; `reopen` revisits a
-rejected task. For a duplicate, `retire <duplicate> --into <canonical> --why
-<reason>`; for an approach that should not be pursued, `reject`. Rehome a
-connected set with `move-plan <N>... --plan <destination> --why <reason>`.
+rejected task. For a duplicate, `retire <duplicate> --into <canonical>`; for an
+approach that should not be pursued, `reject --why <reason>`. Rehome a
+connected set with `move-plan <N>... --plan <destination>`.
 
 ## Gates and evidence
 

@@ -496,8 +496,83 @@ fn tag_and_dependency_edits_take_an_optional_reason_and_transitions_keep_theirs(
     let retire = run(&["retire", "2"]);
     assert!(
         !retire.status.success(),
-        "lifecycle transitions still require a reason"
+        "bare retirement still requires a reason"
     );
+}
+
+#[test]
+fn low_stakes_corrections_take_an_optional_reason_and_dispositions_keep_theirs() {
+    let db = TestDatabase::new("optional-correction-reasons");
+    let run = |args: &[&str]| papertiger(&db.0, args);
+    let oid = "0123456789abcdef0123456789abcdef01234567";
+    for setup in [
+        &["init"][..],
+        &["plan", "add", "work", "Work"],
+        &["add", "--kind", "feature", "Canonical"],
+        &["add", "--kind", "feature", "Movable"],
+        &["add", "--kind", "feature", "Duplicate"],
+        &["add", "--kind", "feature", "Kept"],
+        &["plan", "add", "other", "Other"],
+        &[
+            "gate",
+            "add",
+            "1",
+            "proof",
+            "--kind",
+            "test",
+            "--requirement",
+            "Tests pass",
+        ],
+        &["gate", "waive", "1", "proof", "--why", "covered elsewhere"],
+        &["commit", "add", "1", oid],
+    ] {
+        assert_success(&run(setup));
+    }
+    for relaxed in [
+        &["edit", "1", "--title", "Canonical outcome"][..],
+        &["plan", "edit", "work", "--title", "Work edited"],
+        &["plan", "set", "other", "paused"],
+        &["plan", "set", "other", "active"],
+        &["move-plan", "2", "--plan", "other"],
+        &["gate", "reopen", "1", "proof"],
+        &["commit", "remove", "1", oid],
+        &["retire", "3", "--into", "1"],
+        &["reopen", "3"],
+    ] {
+        assert_success(&run(relaxed));
+    }
+    let log = run(&["log", "--json"]);
+    assert_success(&log);
+    let log: serde_json::Value = serde_json::from_slice(&log.stdout).unwrap();
+    let events = log["events"].as_array().unwrap();
+    // Setup recorded no reason except the waiver; every relaxed command recorded none.
+    let reasons: Vec<_> = events
+        .iter()
+        .filter(|event| !event["why"].is_null())
+        .collect();
+    assert_eq!(reasons.len(), 1, "{log}");
+    assert_eq!(reasons[0]["why"], "covered elsewhere", "{log}");
+
+    let retire = run(&["retire", "4"]);
+    assert!(!retire.status.success());
+    assert!(
+        String::from_utf8_lossy(&retire.stderr).contains(
+            "retire without --into requires --why <reason>; or name the replacement with --into <task>"
+        ),
+        "{}",
+        String::from_utf8_lossy(&retire.stderr)
+    );
+    let reject = run(&["reject", "4"]);
+    assert!(!reject.status.success());
+    assert!(
+        String::from_utf8_lossy(&reject.stderr).contains("pass --why or --why-file"),
+        "{}",
+        String::from_utf8_lossy(&reject.stderr)
+    );
+    let shown = run(&["show", "4", "--json"]);
+    assert_success(&shown);
+    let shown: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(shown["task"]["status"], "proposed");
 }
 
 #[test]
@@ -1320,7 +1395,7 @@ fn authority_refusals_print_paths_without_windows_verbatim_prefixes() {
 }
 
 #[test]
-fn handles_name_the_kind_resolve_like_numbers_and_refuse_when_stale() {
+fn handles_name_the_kind_and_resolve_like_numbers_even_when_stale() {
     let db = TestDatabase::new("handles");
     let run = |args: &[&str]| papertiger(&db.0, args);
     assert_success(&run(&["init"]));
@@ -1358,12 +1433,11 @@ fn handles_name_the_kind_resolve_like_numbers_and_refuse_when_stale() {
         "a receipt names the task by its handle after the mutation"
     );
     let stale = run(&["show", "B-1"]);
-    assert!(!stale.status.success());
+    assert_success(&stale);
     assert!(
-        String::from_utf8_lossy(&stale.stderr)
-            .contains("does not match #1, which is a feature task (F-1); use F-1 or 1"),
-        "{}",
-        String::from_utf8_lossy(&stale.stderr)
+        String::from_utf8_lossy(&stale.stdout).starts_with("· F-1 "),
+        "a stale handle resolves and output shows the current one: {}",
+        String::from_utf8_lossy(&stale.stdout)
     );
     let outline = serde_json::json!({
         "schema": "papertiger.task_outline.v2",

@@ -1,5 +1,6 @@
 use super::{
-    begin_mutation, get_task, now, record_event_in_mutation, require_nonblank, validate_commit_oid,
+    begin_mutation, get_task, given_reason, now, record_event_in_mutation, require_nonblank,
+    validate_commit_oid,
 };
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, params};
@@ -86,11 +87,11 @@ pub fn remove_commit_association(
     seq: i64,
     repository: &str,
     commit_oid: &str,
-    why: &str,
+    why: Option<&str>,
 ) -> Result<()> {
     let repository = require_nonblank("commit repository label", repository)?;
     validate_commit_oid(commit_oid)?;
-    let why = require_nonblank("commit removal reason", why)?;
+    let why = given_reason(why);
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     let removed = tx.execute(
@@ -109,7 +110,7 @@ pub fn remove_commit_association(
         "task",
         Some(task.task_id),
         "commit_association_remove",
-        Some(why),
+        why,
         Some(&serde_json::json!({
             "seq": seq,
             "repository": repository,

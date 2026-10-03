@@ -145,7 +145,7 @@ pub use tasks::{
     task_kind_letter, validate_meaning_source,
 };
 pub(crate) use tasks::{
-    TASK_COLS, parse_task_ref, require_nonblank, task_from_row, task_tags_by_id,
+    TASK_COLS, given_reason, parse_task_ref, require_nonblank, task_from_row, task_tags_by_id,
     validate_assignable_task_kind, validate_kind_filter, validate_tag, validate_task_kind,
     validate_task_title,
 };

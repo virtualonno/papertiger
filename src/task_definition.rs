@@ -6,9 +6,9 @@ use std::collections::HashSet;
 
 use crate::{
     MEANING_SOURCES, Priority, TASK_DEFINITION_REVISION_SCHEMA, TASK_KINDS, begin_mutation,
-    find_cycle, get_task, kind_requires_result, now, plan_status, record_event_in_mutation,
-    resolve_plan, seq_handle, start_task_in_mutation, task_graph, validate_assignable_task_kind,
-    validate_tag, validate_task_title,
+    find_cycle, get_task, given_reason, kind_requires_result, now, plan_status,
+    record_event_in_mutation, resolve_plan, seq_handle, start_task_in_mutation, task_graph,
+    validate_assignable_task_kind, validate_tag, validate_task_title,
 };
 
 /// Everything a new task records. Start from [`TaskCreation::new`] and set
@@ -279,11 +279,9 @@ pub fn edit_task(
     actor: &str,
     seq: i64,
     edit: TaskEdit<'_>,
-    why: &str,
+    why: Option<&str>,
 ) -> Result<Vec<&'static str>> {
-    if why.trim().is_empty() {
-        bail!("editing a task requires a nonblank reason");
-    }
+    let why = given_reason(why);
     if edit.title.is_none()
         && edit.intent.is_none()
         && edit.parent.is_none()
@@ -466,7 +464,7 @@ pub fn edit_task(
         "task",
         Some(task.task_id),
         "edit",
-        Some(why),
+        why,
         Some(&serde_json::json!({
             "seq": task.seq,
             "revision_schema": TASK_DEFINITION_REVISION_SCHEMA,

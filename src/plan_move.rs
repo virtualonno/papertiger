@@ -5,8 +5,8 @@ use rusqlite::{Connection, params};
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Dump, EventDump, TASK_DEFINITION_REVISION_SCHEMA, begin_mutation, get_plan, get_task, now,
-    record_event_in_mutation, resolve_plan,
+    Dump, EventDump, TASK_DEFINITION_REVISION_SCHEMA, begin_mutation, get_plan, get_task,
+    given_reason, now, record_event_in_mutation, resolve_plan,
 };
 
 pub fn move_tasks_to_plan(
@@ -14,13 +14,12 @@ pub fn move_tasks_to_plan(
     actor: &str,
     sequences: &[i64],
     destination: &str,
-    why: &str,
+    why: Option<&str>,
 ) -> Result<()> {
-    if sequences.is_empty() || why.trim().is_empty() {
-        bail!(
-            "moving tasks requires explicit task sequences, --plan <destination>, and --why <reason>"
-        );
+    if sequences.is_empty() {
+        bail!("moving tasks requires explicit task sequences and --plan <destination>");
     }
+    let why = given_reason(why);
     let selected = sequences.iter().copied().collect::<HashSet<_>>();
     if selected.len() != sequences.len() {
         bail!("move-plan contains repeated task sequences; supply each task once");
@@ -97,7 +96,7 @@ pub fn move_tasks_to_plan(
             "task",
             Some(task.task_id),
             "edit",
-            Some(why),
+            why,
             Some(&serde_json::json!({
                 "seq": task.seq, "revision_schema": TASK_DEFINITION_REVISION_SCHEMA,
                 "fields": ["plan"], "changes": {"plan": {"before": source.slug, "after": destination}},

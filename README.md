@@ -120,7 +120,7 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
   subagent inherits its parent's environment, so a model set at launch can
   misattribute a subagent running another model; pass `--model` there. This is
   attribution, not authenticated identity or a model-quality score.
-- `move-plan <N>... --plan <slug> --why <reason>` moves an explicitly selected
+- `move-plan <N>... --plan <slug> [--why <reason>]` moves an explicitly selected
   related set atomically. Dependencies, hierarchy, replacement links, gates,
   references, status, and task identity remain intact. A partial set refuses
   with the missing task selectors. Historical events keep their original plans.
@@ -202,7 +202,7 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
   events on readiness failure.
 - Optional caller-resolved commit associations support local task/commit lookup
   without invoking Git or coupling commits to completion.
-- `retire <old> --into <canonical> --why ...` records measured task
+- `retire <old> --into <canonical> [--why ...]` records measured task
   consolidation as a same-plan replacement without turning tasks into a
   generic relation graph or redirecting `show`. A canonical target with inbound
   replacements cannot be rejected or retired without its own live replacement;
@@ -241,8 +241,8 @@ evidence and issue trackers remain authoritative for their own facts.
 
 Task sequences are local selectors, not shared issue identifiers. Output shows
 each task by its handle, its kind letter and number (`F-924`); commands accept
-the handle, `N` or `#N`, and refuse a handle whose letter no longer matches the
-task's kind. Never place a Papertiger task number or handle in a shared commit,
+the handle, `N` or `#N`. A handle whose letter no longer matches a retyped
+task still resolves by its number, and output shows the current handle. Never place a Papertiger task number or handle in a shared commit,
 pull request, changelog, or public artifact. Shared prose must stand alone; record stable external URLs and useful
 Git snapshot associations inward in the private Papertiger authority.
 

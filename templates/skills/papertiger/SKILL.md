@@ -34,18 +34,19 @@ outside a harness set `PAPERTIGER_SESSION` to one unique session ID.
 ## Enter, work, finish
 
 Orient to an unfamiliar authority with `status` once. For a known task, read
-`show <N> --json` and resume it (`--no-history` rechecks current state); for a
-goal or parent, `brief <N>` shows its whole subtree. Otherwise select work with
-`focus --plan <slug> --json`, and before adding, search with
-`search "<terms>" --plan <slug> --compact`; follow continuations when relevant.
+`show <N>` and resume it; for a goal or parent, `brief <N>` shows its whole
+subtree. Otherwise select work with `focus --plan <slug>`, and before adding,
+search with `search "<terms>" --plan <slug>`. Text output is written for you
+to read and is the cheapest; add `--json` only when a script parses the
+output or you need a field the text omits.
 Another session's pickup is advisory: not a lock, and no reason to ask
 permission for requested work.
 
 ```text
-papertiger start <N> --why "Why this work resumes" --json
-papertiger add "Outcome" --kind <kind> --plan <slug> --start --intent "Standalone purpose" --why "Why now" --json
-papertiger done <N> --result "Outcome and verification" --json
-papertiger decompose <N> --outline-file outline.json --start-ready --json
+papertiger start <N>
+papertiger add "Outcome" --kind <kind> --plan <slug> --start --intent "Standalone purpose"
+papertiger done <N> --result "Outcome and verification"
+papertiger decompose <N> --outline-file outline.json --start-ready
 ```
 
 Choose each task's kind: goal, feature, change, bug, probe, decision or
@@ -64,9 +65,10 @@ could question, and record decisions with `note --text "..." --task <N>`;
 `--intent-file`, `--why-file`, `--result-file` and `note --text-file` read
 UTF-8 text when shell quoting becomes awkward.
 
-Don't truncate JSON with head/tail; use `--compact`, `--no-history` or
-`--limit`. New task numbers are in `events[].task.seq`. If output handling
-fails after a successful mutation, check with `show`/`log`; never replay it.
+Each receipt names the task's handle (`F-12 added to app`). Bound large reads
+with `--limit` rather than head/tail, and follow a printed continuation. If
+output handling fails after a successful mutation, check with `show`/`log`;
+never replay it.
 
 Before completion, record any commit that represents the outcome with
 `commit add <N> <full-oid>` (add `--repo <label>` only for a nested or external

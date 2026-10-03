@@ -317,7 +317,7 @@ fn model_report_groups_claims_by_normalized_model_and_separates_same_model_revie
         "verified",
     )
     .unwrap();
-    pt::reopen_task(&conn, "strong-2", filed, "cold path still misses").unwrap();
+    pt::reopen_task(&conn, "strong-2", filed, Some("cold path still misses")).unwrap();
 
     let report = pt::model_report(&conn, None, None).unwrap();
     let by_model = |model: &str| {
@@ -525,7 +525,7 @@ fn typed_kinds_refuse_legacy_assignment_and_bugs_record_their_cause() {
         kind: Some(kind),
         priority: None,
     };
-    let error = pt::edit_task(&conn, "test", bug, retype("work"), "reclassify")
+    let error = pt::edit_task(&conn, "test", bug, retype("work"), Some("reclassify"))
         .unwrap_err()
         .to_string();
     assert!(error.contains("cannot be assigned"), "{error}");
@@ -696,7 +696,7 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
             kind: Some("bug"),
             priority: None,
         },
-        "retype legacy work",
+        Some("retype legacy work"),
     )
     .unwrap();
     assert!(
@@ -1458,12 +1458,20 @@ fn task_lifecycle_and_gate_honesty_rule() {
 }
 
 #[test]
-fn waive_requires_why_via_retire_reject_paths() {
+fn bare_retirement_and_rejection_require_why() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
     let seq = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("t", "feature")).unwrap();
-    assert!(pt::retire_task(&conn, "test", seq, None, "").is_err());
-    assert!(pt::reject_task(&conn, "test", seq, "").is_err());
+    for why in [None, Some(" ")] {
+        assert_exact_error(
+            pt::retire_task(&conn, "test", seq, None, why),
+            "retire without --into requires --why <reason>; or name the replacement with --into <task>",
+        );
+    }
+    assert_exact_error(
+        pt::reject_task(&conn, "test", seq, ""),
+        "reject requires --why <reason>",
+    );
     pt::reject_task(&conn, "test", seq, "approach disproven").unwrap();
 }
 
@@ -1692,12 +1700,8 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
         &format!("F-{dependency} is already done"),
     );
     assert_exact_error(
-        pt::reopen_task(&conn, "test", blocked, "not terminal"),
+        pt::reopen_task(&conn, "test", blocked, Some("not terminal")),
         &format!("F-{blocked} is proposed; only terminal tasks can be reopened"),
-    );
-    assert_exact_error(
-        pt::reopen_task(&conn, "test", dependency, ""),
-        "reopening a task requires a nonblank reason",
     );
 
     let decision = pt::add_task(
@@ -1721,7 +1725,7 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
         "unknown meaning source 'operator' (expected user|agent|external)",
     );
 
-    pt::set_plan_status(&conn, "test", "p", "paused", "exercise plan refusal").unwrap();
+    pt::set_plan_status(&conn, "test", "p", "paused", Some("exercise plan refusal")).unwrap();
     assert_exact_error(
         pt::start_task(&conn, "test", blocked, None, None),
         &format!("plan is paused; set it active before starting task F-{blocked}"),
@@ -1773,7 +1777,7 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
         );
     }
     assert_exact_error(
-        pt::reopen_gate(&conn, "test", task, "proof", "already open"),
+        pt::reopen_gate(&conn, "test", task, "proof", Some("already open")),
         &format!("gate 'proof' on F-{task} is already open"),
     );
     assert_exact_error(
@@ -1785,7 +1789,7 @@ fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
         pt::remove_gate(&conn, "test", task, "proof", "closed"),
         &format!("no open gate 'proof' on F-{task}"),
     );
-    pt::reopen_gate(&conn, "test", task, "proof", "replace evidence").unwrap();
+    pt::reopen_gate(&conn, "test", task, "proof", Some("replace evidence")).unwrap();
 }
 
 #[test]
@@ -2376,7 +2380,7 @@ fn plan_edits_are_evented_and_atomic() {
         "one",
         Some("New title"),
         Some("New intent"),
-        "current evidence changed the campaign boundary",
+        Some("current evidence changed the campaign boundary"),
     )
     .unwrap();
     assert_eq!(changed, vec!["title", "intent"]);
@@ -2402,10 +2406,21 @@ fn plan_edits_are_evented_and_atomic() {
     assert_eq!(payload["slug"], "one");
     assert_eq!(payload["fields"], serde_json::json!(["title", "intent"]));
 
-    assert!(pt::edit_plan(&conn, "agent", "one", Some(""), None, "invalid").is_err());
+    assert!(pt::edit_plan(&conn, "agent", "one", Some(""), None, Some("invalid")).is_err());
     assert_eq!(pt::get_plan(&conn, plan_id).unwrap().title, "New title");
-    assert!(pt::edit_plan(&conn, "agent", "one", None, None, "invalid").is_err());
-    assert!(pt::edit_plan(&conn, "agent", "one", Some("Other"), None, "").is_err());
+    assert!(pt::edit_plan(&conn, "agent", "one", None, None, Some("invalid")).is_err());
+
+    // A blank reason records no reason rather than refusing the edit.
+    pt::edit_plan(&conn, "agent", "one", Some("Other"), None, Some("  ")).unwrap();
+    let why: Option<String> = conn
+        .query_row(
+            "SELECT why FROM events WHERE entity='plan' AND entity_id=?1
+             ORDER BY event_id DESC LIMIT 1",
+            [plan_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(why, None);
 }
 
 #[test]
@@ -2441,10 +2456,14 @@ fn task_references_are_canonical_sequences_or_matching_handles() {
             "{task_ref}"
         );
     }
-    let stale = pt::resolve_task_ref(&conn, "B-1").unwrap_err().to_string();
+    assert_eq!(
+        pt::resolve_task_ref(&conn, "B-1").unwrap(),
+        1,
+        "a stale letter (the task was retyped) still names the same task"
+    );
     assert!(
-        stale.contains("does not match #1, which is a feature task (F-1); use F-1 or 1"),
-        "{stale}"
+        pt::resolve_task_ref(&conn, "B-99").is_err(),
+        "the task must exist"
     );
     let unknown = pt::resolve_task_ref(&conn, "X-1").unwrap_err().to_string();
     assert!(
@@ -2948,7 +2967,7 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
         &conn,
         "test",
         task,
-        "the scope expanded to a second input family",
+        Some("the scope expanded to a second input family"),
     )
     .unwrap();
     let reopened = pt::get_task(&conn, task).unwrap();
@@ -2966,7 +2985,7 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
         "test",
         task,
         "reproduction",
-        "the original run does not cover the expanded input family",
+        Some("the original run does not cover the expanded input family"),
     )
     .unwrap();
     let context = pt::task_context(&conn, task).unwrap();
@@ -3011,17 +3030,17 @@ fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
         .is_err()
     );
     assert!(
-        pt::reopen_task(&conn, "test", child, "new evidence").is_err(),
+        pt::reopen_task(&conn, "test", child, Some("new evidence")).is_err(),
         "a child cannot become live beneath a terminal parent"
     );
     pt::reopen_task(
         &conn,
         "test",
         parent,
-        "the outcome needs another deliverable",
+        Some("the outcome needs another deliverable"),
     )
     .unwrap();
-    pt::reopen_task(&conn, "test", child, "the deliverable needs revision").unwrap();
+    pt::reopen_task(&conn, "test", child, Some("the deliverable needs revision")).unwrap();
 
     let prerequisite = pt::add_task(
         &conn,
@@ -3043,21 +3062,21 @@ fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
     pt::complete_task(&conn, "test", prerequisite, None).unwrap();
     pt::complete_task(&conn, "test", dependent, None).unwrap();
     assert!(
-        pt::reopen_task(&conn, "test", prerequisite, "recheck evidence").is_err(),
+        pt::reopen_task(&conn, "test", prerequisite, Some("recheck evidence")).is_err(),
         "reopening a prerequisite must not silently invalidate a completed dependent"
     );
     pt::reopen_task(
         &conn,
         "test",
         dependent,
-        "the prerequisite will be rechecked",
+        Some("the prerequisite will be rechecked"),
     )
     .unwrap();
-    pt::reopen_task(&conn, "test", prerequisite, "recheck evidence").unwrap();
+    pt::reopen_task(&conn, "test", prerequisite, Some("recheck evidence")).unwrap();
 
-    pt::set_plan_status(&conn, "test", "truth", "paused", "hold execution").unwrap();
+    pt::set_plan_status(&conn, "test", "truth", "paused", Some("hold execution")).unwrap();
     assert!(pt::start_task(&conn, "test", prerequisite, None, None).is_err());
-    pt::set_plan_status(&conn, "test", "truth", "active", "resume execution").unwrap();
+    pt::set_plan_status(&conn, "test", "truth", "active", Some("resume execution")).unwrap();
     pt::start_task(&conn, "test", prerequisite, None, None).unwrap();
 }
 
@@ -3312,7 +3331,7 @@ fn task_context_includes_gate_waiver_and_reopen_history() {
     .unwrap();
     pt::add_gate(&conn, "test", task, "proof", "test", "must pass").unwrap();
     pt::waive_gate(&conn, "test", task, "proof", "fixture unavailable").unwrap();
-    pt::reopen_gate(&conn, "test", task, "proof", "fixture restored").unwrap();
+    pt::reopen_gate(&conn, "test", task, "proof", Some("fixture restored")).unwrap();
 
     let context = pt::task_context(&conn, task).unwrap();
     let kinds = context
@@ -3803,7 +3822,7 @@ fn commit_associations_are_exact_evented_reversible_and_transferable() {
         task,
         "  crates/widget  ",
         &oid,
-        "the snapshot included unrelated work",
+        Some("the snapshot included unrelated work"),
     )
     .unwrap();
     assert!(pt::commit_associations(&restored, task).unwrap().is_empty());
@@ -3880,7 +3899,7 @@ fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
     let done = pt::task_activity(&conn, first).unwrap();
     assert!(done.completed_event.is_some());
     assert_eq!(done.started_event, None);
-    pt::reopen_task(&conn, "agent", first, "more work emerged").unwrap();
+    pt::reopen_task(&conn, "agent", first, Some("more work emerged")).unwrap();
     let reopened = pt::task_activity(&conn, first).unwrap();
     assert_eq!(reopened.completed_event, None);
     assert_eq!(reopened.started_event, None);
@@ -4076,17 +4095,24 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
         pt::TaskCreation::new("cycle target", "feature"),
     )
     .unwrap();
-    pt::retire_task(&conn, "test", retired_target, None, "no longer canonical").unwrap();
+    pt::retire_task(
+        &conn,
+        "test",
+        retired_target,
+        None,
+        Some("no longer canonical"),
+    )
+    .unwrap();
     pt::reject_task(&conn, "test", rejected_target, "disproven approach").unwrap();
 
     assert!(
-        pt::retire_task(&conn, "test", duplicate, Some(duplicate), "same task")
+        pt::retire_task(&conn, "test", duplicate, Some(duplicate), Some("same task"))
             .unwrap_err()
             .to_string()
             .contains("cannot replace itself")
     );
     assert!(
-        pt::retire_task(&conn, "test", duplicate, Some(other), "cross-plan")
+        pt::retire_task(&conn, "test", duplicate, Some(other), Some("cross-plan"))
             .unwrap_err()
             .to_string()
             .contains("different plans")
@@ -4097,7 +4123,7 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
             "test",
             duplicate,
             Some(terminal_target),
-            "not a live canonical target",
+            Some("not a live canonical target"),
         )
         .unwrap_err()
         .to_string();
@@ -4113,7 +4139,7 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
         "test",
         duplicate,
         Some(canonical),
-        "the canonical task owns the same outcome",
+        Some("the canonical task owns the same outcome"),
     )
     .unwrap();
     let retired = pt::get_task(&conn, duplicate).unwrap();
@@ -4151,7 +4177,7 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
             "test",
             canonical,
             None,
-            "would end the replacement chain",
+            Some("would end the replacement chain"),
         )
         .unwrap_err()
         .to_string(),
@@ -4164,7 +4190,7 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
         "test",
         canonical,
         Some(final_target),
-        "extend the consolidation chain",
+        Some("extend the consolidation chain"),
     )
     .unwrap();
     let canonical_context = pt::task_context(&conn, canonical).unwrap();
@@ -4180,7 +4206,7 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
             .any(|finding| finding.kind == "replacement_terminal_dead_end")
     );
 
-    pt::reopen_task(&conn, "test", duplicate, "the tasks diverged again").unwrap();
+    pt::reopen_task(&conn, "test", duplicate, Some("the tasks diverged again")).unwrap();
     assert_eq!(
         pt::get_task(&conn, duplicate).unwrap().replacement_task_id,
         None,
@@ -4198,7 +4224,7 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
         "test",
         duplicate,
         Some(cycle_target),
-        "would close the loop",
+        Some("would close the loop"),
     )
     .unwrap_err();
     assert!(cycle.to_string().contains("replacement would create cycle"));
@@ -4236,7 +4262,7 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
             "test",
             duplicate,
             Some(canonical),
-            "one durable task is enough",
+            Some("one durable task is enough"),
         )
         .unwrap();
         pt::retire_task(
@@ -4244,7 +4270,7 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
             "test",
             canonical,
             Some(final_target),
-            "the canonical work was consolidated again",
+            Some("the canonical work was consolidated again"),
         )
         .unwrap();
 
@@ -4493,7 +4519,7 @@ fn audit_and_export_refuse_terminal_replacement_dead_ends() {
         "test",
         rejected_source,
         Some(rejected_target),
-        "initially canonical",
+        Some("initially canonical"),
     )
     .unwrap();
     pt::retire_task(
@@ -4501,7 +4527,7 @@ fn audit_and_export_refuse_terminal_replacement_dead_ends() {
         "test",
         retired_source,
         Some(retired_target),
-        "initially canonical",
+        Some("initially canonical"),
     )
     .unwrap();
     conn.execute(

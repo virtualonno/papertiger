@@ -4,8 +4,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{
-    GATE_KINDS, begin_mutation, get_task, now, record_event_in_mutation, require_nonblank,
-    validate_sha256,
+    GATE_KINDS, begin_mutation, get_task, given_reason, now, record_event_in_mutation,
+    require_nonblank, validate_sha256,
 };
 
 pub fn add_gate(
@@ -139,10 +139,14 @@ pub fn remove_gate(conn: &Connection, actor: &str, seq: i64, name: &str, why: &s
     Ok(())
 }
 
-pub fn reopen_gate(conn: &Connection, actor: &str, seq: i64, name: &str, why: &str) -> Result<()> {
-    if why.trim().is_empty() {
-        bail!("reopening a gate requires a nonblank reason");
-    }
+pub fn reopen_gate(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    name: &str,
+    why: Option<&str>,
+) -> Result<()> {
+    let why = given_reason(why);
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     if matches!(task.status.as_str(), "done" | "retired" | "rejected") {
@@ -176,7 +180,7 @@ pub fn reopen_gate(conn: &Connection, actor: &str, seq: i64, name: &str, why: &s
         "gate",
         Some(gate_id),
         "reopen",
-        Some(why.trim()),
+        why,
         Some(&serde_json::json!({
             "task": seq,
             "name": name,

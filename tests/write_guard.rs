@@ -121,7 +121,7 @@ fn priorities_outside_the_levels_are_refused_and_levels_are_edited() {
             kind: None,
             priority: Some(pt::Priority::Now),
         },
-        "raise",
+        Some("raise"),
     )
     .unwrap();
     assert_eq!(pt::get_task(&conn, 1).unwrap().priority, pt::Priority::Now);

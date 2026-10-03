@@ -4,8 +4,9 @@ use anyhow::{Result, bail};
 use rusqlite::{Connection, Transaction, params};
 
 use crate::{
-    Task, TaskPickup, begin_mutation, entry_blockers, find_cycle, get_task, kind_requires_result,
-    now, pickup, plan_status, record_event_in_mutation, seq_handle, task_graph, validate_session,
+    Task, TaskPickup, begin_mutation, entry_blockers, find_cycle, get_task, given_reason,
+    kind_requires_result, now, pickup, plan_status, record_event_in_mutation, seq_handle,
+    task_graph, validate_session,
 };
 
 pub fn start_task(
@@ -181,10 +182,8 @@ pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&s
     Ok(())
 }
 
-pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Result<()> {
-    if why.trim().is_empty() {
-        bail!("reopening a task requires a nonblank reason");
-    }
+pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: Option<&str>) -> Result<()> {
+    let why = given_reason(why);
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     if !matches!(task.status.as_str(), "done" | "retired" | "rejected") {
@@ -243,7 +242,7 @@ pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Resul
         &task,
         TaskTransition {
             status: "proposed",
-            why: Some(why),
+            why,
             result: None,
             replacement: None,
             pickup: None,
@@ -258,13 +257,13 @@ pub fn retire_task(
     actor: &str,
     seq: i64,
     replacement_seq: Option<i64>,
-    why: &str,
+    why: Option<&str>,
 ) -> Result<()> {
     terminate_task(conn, actor, seq, "retired", replacement_seq, why)
 }
 
 pub fn reject_task(conn: &Connection, actor: &str, seq: i64, why: &str) -> Result<()> {
-    terminate_task(conn, actor, seq, "rejected", None, why)
+    terminate_task(conn, actor, seq, "rejected", None, Some(why))
 }
 
 fn terminate_task(
@@ -273,14 +272,23 @@ fn terminate_task(
     seq: i64,
     status: &str,
     replacement_seq: Option<i64>,
-    why: &str,
+    why: Option<&str>,
 ) -> Result<()> {
     if !matches!(status, "retired" | "rejected") {
         bail!("terminal disposition must be retired or rejected");
     }
-    let why = why.trim();
-    if why.is_empty() {
-        bail!("{status} requires --why");
+    // Naming the replacement explains a retirement; any other disposition
+    // needs its reason written down.
+    let why = given_reason(why);
+    if why.is_none() {
+        if status == "rejected" {
+            bail!("reject requires --why <reason>");
+        }
+        if replacement_seq.is_none() {
+            bail!(
+                "retire without --into requires --why <reason>; or name the replacement with --into <task>"
+            );
+        }
     }
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
@@ -375,8 +383,8 @@ fn terminate_task(
         &task,
         TaskTransition {
             status,
-            why: Some(why),
-            result: Some(why),
+            why,
+            result: why,
             replacement: replacement.as_ref(),
             pickup: None,
         },

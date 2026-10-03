@@ -1595,20 +1595,20 @@ fn run_planner(cli: Cli) -> Result<()> {
                     ("why", why.reads_stdin()),
                 ])?;
                 let intent = intent.optional()?;
-                let why = why.required()?;
+                let why = why.optional()?;
                 let changed = pt::edit_plan(
                     &conn,
                     &actor,
                     &slug,
                     title.as_deref(),
                     intent.as_deref(),
-                    &why,
+                    why.as_deref(),
                 )?;
                 mutation_output!("plan {slug} updated ({})", changed.join(", "));
             }
             PlanCmd::Set { slug, status, why } => {
-                let why = why.required()?;
-                pt::set_plan_status(&conn, &actor, &slug, &status, &why)?;
+                let why = why.optional()?;
+                pt::set_plan_status(&conn, &actor, &slug, &status, why.as_deref())?;
                 mutation_output!("plan {slug} -> {status}");
             }
         },
@@ -1846,7 +1846,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         } => {
             reject_multiple_stdin(&[("intent", intent.reads_stdin()), ("why", why.reads_stdin())])?;
             let intent = intent.optional()?;
-            let why = why.required()?;
+            let why = why.optional()?;
             let parent = if clear_parent {
                 Some(None)
             } else {
@@ -1866,7 +1866,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     kind: kind.as_deref(),
                     priority,
                 },
-                &why,
+                why.as_deref(),
             )?;
             let handle = pt::seq_handle(&conn, seq)?;
             mutation_output!("{handle} updated ({})", changed.join(", "));
@@ -1879,12 +1879,12 @@ fn run_planner(cli: Cli) -> Result<()> {
             mutation_output!("{handle} in progress");
         }
         Cmd::MovePlan { tasks, plan, why } => {
-            let why = why.required()?;
+            let why = why.optional()?;
             let sequences = tasks
                 .iter()
                 .map(|task| pt::resolve_task_ref(&conn, task))
                 .collect::<Result<Vec<_>>>()?;
-            pt::move_tasks_to_plan(&conn, &actor, &sequences, &plan, &why)?;
+            pt::move_tasks_to_plan(&conn, &actor, &sequences, &plan, why.as_deref())?;
             mutation_output!("moved {} task(s) to {plan}", sequences.len());
         }
         Cmd::Done { task, result } => {
@@ -1895,20 +1895,20 @@ fn run_planner(cli: Cli) -> Result<()> {
             mutation_output!("{handle} done");
         }
         Cmd::Reopen { task, why } => {
-            let why = why.required()?;
+            let why = why.optional()?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
-            pt::reopen_task(&conn, &actor, seq, &why)?;
+            pt::reopen_task(&conn, &actor, seq, why.as_deref())?;
             let handle = pt::seq_handle(&conn, seq)?;
             mutation_output!("{handle} reopened");
         }
         Cmd::Retire { task, into, why } => {
-            let why = why.required()?;
+            let why = why.optional()?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             let replacement_seq = into
                 .as_deref()
                 .map(|task| pt::resolve_task_ref(&conn, task))
                 .transpose()?;
-            pt::retire_task(&conn, &actor, seq, replacement_seq, &why)?;
+            pt::retire_task(&conn, &actor, seq, replacement_seq, why.as_deref())?;
             if let Some(replacement_seq) = replacement_seq {
                 let (handle, replacement) = (
                     pt::seq_handle(&conn, seq)?,
@@ -2065,9 +2065,9 @@ fn run_planner(cli: Cli) -> Result<()> {
                 mutation_output!("gate '{name}' on {handle} waived");
             }
             GateCmd::Reopen { task, name, why } => {
-                let why = why.required()?;
+                let why = why.optional()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
-                pt::reopen_gate(&conn, &actor, seq, &name, &why)?;
+                pt::reopen_gate(&conn, &actor, seq, &name, why.as_deref())?;
                 let handle = pt::seq_handle(&conn, seq)?;
                 mutation_output!("gate '{name}' on {handle} reopened");
             }
@@ -2183,9 +2183,16 @@ fn run_planner(cli: Cli) -> Result<()> {
                 repo,
                 why,
             } => {
-                let why = why.required()?;
+                let why = why.optional()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
-                pt::remove_commit_association(&conn, &actor, seq, &repo, &commit_oid, &why)?;
+                pt::remove_commit_association(
+                    &conn,
+                    &actor,
+                    seq,
+                    &repo,
+                    &commit_oid,
+                    why.as_deref(),
+                )?;
                 let handle = pt::seq_handle(&conn, seq)?;
                 mutation_output!("commit {commit_oid} ({repo}) removed from {handle}");
             }

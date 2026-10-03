@@ -77,7 +77,7 @@ fn model_history_and_receipts_capture_only_committed_operations() {
         activity.completed_event.unwrap().model.as_deref(),
         Some("review-model")
     );
-    pt::reopen_task(&conn, "human", seq, "new proof required").unwrap();
+    pt::reopen_task(&conn, "human", seq, Some("new proof required")).unwrap();
     assert!(
         pt::task_activity(&conn, seq)
             .unwrap()
@@ -328,14 +328,14 @@ fn relocation_preserves_edges_gate_refusals_cursors_and_scoped_recovery() {
         "author",
         duplicate,
         Some(child),
-        "same intended outcome",
+        Some("same intended outcome"),
     )
     .unwrap();
     pt::add_gate(&conn, "author", child, "proof", "test", "real proof").unwrap();
     let cursor = pt::event_head(&conn).unwrap().unwrap();
     let before = serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap();
     assert!(
-        pt::move_tasks_to_plan(&conn, "author", &[child], "new", "rehome")
+        pt::move_tasks_to_plan(&conn, "author", &[child], "new", Some("rehome"))
             .unwrap_err()
             .to_string()
             .contains("also supply related tasks")
@@ -349,7 +349,7 @@ fn relocation_preserves_edges_gate_refusals_cursors_and_scoped_recovery() {
         "author",
         &[child, parent, duplicate],
         "new",
-        "correct initiative",
+        Some("correct initiative"),
     )
     .unwrap();
     assert_eq!(
@@ -362,8 +362,14 @@ fn relocation_preserves_edges_gate_refusals_cursors_and_scoped_recovery() {
     assert_eq!(context.gates[0].status, "open");
     assert!(pt::complete_task(&conn, "author", child, Some("not proven")).is_err());
     assert!(
-        pt::move_tasks_to_plan(&conn, "author", &[child, parent, duplicate], "new", "no-op")
-            .is_err()
+        pt::move_tasks_to_plan(
+            &conn,
+            "author",
+            &[child, parent, duplicate],
+            "new",
+            Some("no-op")
+        )
+        .is_err()
     );
     let old = pt::export(&conn, Some("old")).unwrap();
     assert!(old.tasks.is_empty());
@@ -383,7 +389,7 @@ fn relocation_preserves_edges_gate_refusals_cursors_and_scoped_recovery() {
         "author",
         &[parent, child, duplicate],
         "old",
-        "return initiative",
+        Some("return initiative"),
     )
     .unwrap();
     assert!(pt::audit(&conn).unwrap().is_empty());
@@ -434,7 +440,14 @@ fn references_are_exact_evented_inward_links_not_completion_evidence() {
         reference
     );
     assert!(pt::complete_task(&conn, "author", seq, Some("reference is not proof")).is_err());
-    pt::move_tasks_to_plan(&conn, "author", &[seq], "new", "relocate evidence owner").unwrap();
+    pt::move_tasks_to_plan(
+        &conn,
+        "author",
+        &[seq],
+        "new",
+        Some("relocate evidence owner"),
+    )
+    .unwrap();
     let dump = pt::export(&conn, None).unwrap();
     let restored = rusqlite::Connection::open_in_memory().unwrap();
     pt::init(&restored).unwrap();

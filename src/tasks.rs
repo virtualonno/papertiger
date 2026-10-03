@@ -305,6 +305,11 @@ pub(crate) fn require_nonblank<'a>(field: &str, value: &'a str) -> Result<&'a st
     Ok(value)
 }
 
+/// An optional rationale: trimmed when given, and absent when blank.
+pub(crate) fn given_reason(why: Option<&str>) -> Option<&str> {
+    why.map(str::trim).filter(|why| !why.is_empty())
+}
+
 pub fn get_task(conn: &Connection, seq: i64) -> Result<Task> {
     conn.query_row(
         &format!("SELECT {TASK_COLS} FROM tasks WHERE seq=?1"),
@@ -460,16 +465,12 @@ pub(crate) fn parse_task_ref(task_ref: &str) -> Result<(i64, Option<char>)> {
 /// task's current kind, so a reference made before a retype is refused with
 /// the current handle instead of silently naming different work.
 pub fn resolve_task_ref(conn: &Connection, task_ref: &str) -> Result<i64> {
+    // The number alone identifies a task. A letter that no longer matches its
+    // kind is a stale reference (the task was retyped), not a different task,
+    // so it resolves; output shows the current handle.
     let (seq, letter) = parse_task_ref(task_ref)?;
-    if let Some(letter) = letter {
-        let task = get_task(conn, seq)?;
-        let current = task_handle(seq, &task.kind);
-        if task_kind_letter(&task.kind) != Some(letter) {
-            bail!(
-                "task handle '{task_ref}' does not match #{seq}, which is a {} task ({current}); use {current} or {seq}",
-                task.kind
-            );
-        }
+    if letter.is_some() {
+        get_task(conn, seq)?;
     }
     Ok(seq)
 }

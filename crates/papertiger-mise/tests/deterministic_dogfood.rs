@@ -1392,7 +1392,7 @@ impl DogfoodFixture {
             "independent-operator",
             task,
             "successor-admission",
-            "exercise gate TOCTOU refusal",
+            Some("exercise gate TOCTOU refusal"),
         )
         .expect("reopen gate");
         let error = admit_verified_successor(connection, ACTOR, &verified)
@@ -1477,7 +1477,7 @@ impl DogfoodFixture {
             "independent-operator",
             task,
             "successor-admission",
-            "prove divergent gate replay is refused",
+            Some("prove divergent gate replay is refused"),
         )
         .expect("reopen admitted gate");
         std::thread::sleep(Duration::from_millis(2));

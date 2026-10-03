@@ -36,6 +36,11 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   `decompose --start-ready` accept a missing `--why` like `start` does. A task
   outline may carry one top-level `why` that every child without its own
   inherits.
+- Low-stakes corrections no longer require a rationale: `edit`, `plan edit`,
+  `plan set`, `move-plan`, `reopen`, `gate reopen`, `commit remove` and
+  `retire --into <task>` accept a missing `--why` and record none. `reject`,
+  `retire` without `--into`, `review`, `gate waive`, `gate remove`,
+  `repair-guards` and `history quarantine` still require one.
 - Authority selection: `--db` or `PAPERTIGER_DB`; else `--project-root <root>`,
   which names `<root>/state/papertiger.sqlite`; else the nearest
   `state/papertiger.sqlite` above the working directory, the way Git finds a
@@ -160,8 +165,8 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   and `decompose` receipts; every JSON task and task summary carries `handle`
   next to `seq`. Commands (and `papertiger-mise promotion verify-parent
   --task`) accept the handle, upper or lower case, as well as `N` and `#N`. A
-  handle whose letter no longer matches the task's kind is refused with the
-  current handle. Outline keys that read as handles are refused, so `deps`
+  handle whose letter no longer matches a retyped task still resolves by its
+  number; output shows the current handle. Outline keys that read as handles are refused, so `deps`
   stay unambiguous.
 - Text output names tasks by handle: mutation receipts (`F-12 done`, `gate
   'proof' on F-12 resolved`, `F-3 now depends on F-2`; an `edit --kind`

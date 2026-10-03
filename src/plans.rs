@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use crate::{begin_mutation, now, record_event_in_mutation, require_nonblank};
+use crate::{begin_mutation, given_reason, now, record_event_in_mutation, require_nonblank};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
@@ -114,11 +114,9 @@ pub fn edit_plan(
     slug: &str,
     title: Option<&str>,
     intent: Option<&str>,
-    why: &str,
+    why: Option<&str>,
 ) -> Result<Vec<&'static str>> {
-    if why.trim().is_empty() {
-        bail!("editing a plan requires a nonblank reason");
-    }
+    let why = given_reason(why);
     if title.is_none() && intent.is_none() {
         bail!("plan edit requires at least one of --title or --intent");
     }
@@ -146,7 +144,7 @@ pub fn edit_plan(
         "plan",
         Some(plan_id),
         "edit",
-        Some(why),
+        why,
         Some(&serde_json::json!({"slug": slug, "fields": changed})),
     )?;
     tx.commit()?;
@@ -158,14 +156,12 @@ pub fn set_plan_status(
     actor: &str,
     slug: &str,
     status: &str,
-    why: &str,
+    why: Option<&str>,
 ) -> Result<()> {
     if !["active", "paused", "done", "retired"].contains(&status) {
         bail!("unknown plan status '{status}'");
     }
-    if why.trim().is_empty() {
-        bail!("changing plan status requires a nonblank reason");
-    }
+    let why = given_reason(why);
     let tx = begin_mutation(conn)?;
     let (plan_id, _) = resolve_plan(&tx, Some(slug))?;
     if status == "done" {
@@ -191,7 +187,7 @@ pub fn set_plan_status(
         "plan",
         Some(plan_id),
         "status",
-        Some(why),
+        why,
         Some(&serde_json::json!({"to": status})),
     )?;
     tx.commit()?;
