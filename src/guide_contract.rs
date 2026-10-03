@@ -55,7 +55,10 @@ mod tests {
         let mut tokens = line.split_whitespace().peekable();
         if tokens.peek() == Some(&"papertiger") {
             tokens.next();
-        } else if tokens.peek().is_some_and(|token| token.starts_with("papertiger")) {
+        } else if tokens
+            .peek()
+            .is_some_and(|token| token.starts_with("papertiger"))
+        {
             return None;
         }
         let first = *tokens.peek()?;
@@ -118,10 +121,22 @@ mod tests {
     #[test]
     fn the_guide_check_refuses_a_retired_flag() {
         let root = crate::Cli::command();
-        assert!(check(&root, "papertiger add \"x\" --intent-source user").unwrap().is_err());
-        assert!(check(&root, "blocker add 1 vendor").is_none(), "not a command any more");
-        assert!(check(&root, "gate add <N> <name> --kind external --requirement <c>")
+        assert!(
+            check(&root, "papertiger add \"x\" --intent-source user")
+                .unwrap()
+                .is_err()
+        );
+        assert!(
+            check(&root, "blocker add 1 vendor").is_none(),
+            "not a command any more"
+        );
+        assert!(
+            check(
+                &root,
+                "gate add <N> <name> --kind external --requirement <c>"
+            )
             .unwrap()
-            .is_ok());
+            .is_ok()
+        );
     }
 }
