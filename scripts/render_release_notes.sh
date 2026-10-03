@@ -133,6 +133,6 @@ fi
 printf '%s\n\n' "$body"
 cat <<'EOF'
 Prebuilt archives are attached for Windows x64, Linux x64, Intel macOS, and Apple Silicon macOS.
-Merge `.agents`, `.claude`, and `tools` into the project root. Skills are ready to discover; executables, documentation, licenses and the source manifest live under `tools/papertiger`.
+Each archive holds one `papertiger` skill directory: extract it into your agent skills directory (for example `~/.agents/skills` or `~/.claude/skills`); the executables live in its `bin`.
 Verify the adjacent SHA-256 asset before extraction.
 EOF

@@ -144,71 +144,20 @@ jobs:
       - name: Build release binaries
         run: cargo build --locked --release --workspace --bins --target ${{ matrix.target }}
 
-      - name: Stage release bundle (Unix)
-        if: runner.os != 'Windows'
+      - name: Package the skill directory
         shell: bash
-        env:
-          VERSION: ${{ inputs.artifact_version }}
         run: |
           set -euo pipefail
-          bundle="dist/${{ steps.names.outputs.bundle }}"
           archive="dist/${{ steps.names.outputs.archive }}"
-          mkdir -p "${bundle}"
-          cp "target/${{ matrix.target }}/release/papertiger" "${bundle}/"
-          cp "target/${{ matrix.target }}/release/papertiger-mise" "${bundle}/"
-          cp README.md CHANGELOG.md MISE.md templates/agent_integration.md \
-             LICENSE LICENSE-SSL LICENSE-VPL "${bundle}/"
-          cat > "${bundle}/manifest.json" <<EOF
-          {
-            "schema": "papertiger.release_manifest.v1",
-            "name": "papertiger",
-            "version": "${VERSION}",
-            "source_commit": "${GITHUB_SHA}",
-            "target": "${{ matrix.target }}",
-            "platform": "${{ matrix.platform }}",
-            "archive": "${{ steps.names.outputs.archive }}",
-            "binaries": ["papertiger", "papertiger-mise"],
-            "planner_setup_installs_mise": false
-          }
-          EOF
-          chmod +x "${bundle}/papertiger" "${bundle}/papertiger-mise"
-          python scripts/package_project.py "$bundle" "$archive"
+          mkdir -p dist
+          python scripts/package_skill.py "target/${{ matrix.target }}/release" "$archive"
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum "${{ steps.names.outputs.archive }}" > "${{ steps.names.outputs.archive }}.sha256")
           else
             (cd dist && shasum -a 256 "${{ steps.names.outputs.archive }}" > "${{ steps.names.outputs.archive }}.sha256")
           fi
 
-      - name: Stage release bundle (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          bundle="dist/${{ steps.names.outputs.bundle }}"
-          archive="dist/${{ steps.names.outputs.archive }}"
-          mkdir -p "$bundle"
-          cp "target/${{ matrix.target }}/release/papertiger.exe" "$bundle/"
-          cp "target/${{ matrix.target }}/release/papertiger-mise.exe" "$bundle/"
-          cp README.md CHANGELOG.md MISE.md templates/agent_integration.md \
-             LICENSE LICENSE-SSL LICENSE-VPL "$bundle/"
-          cat > "$bundle/manifest.json" <<EOF
-          {
-            "schema": "papertiger.release_manifest.v1",
-            "name": "papertiger",
-            "version": "${{ inputs.artifact_version }}",
-            "source_commit": "${GITHUB_SHA}",
-            "target": "${{ matrix.target }}",
-            "platform": "${{ matrix.platform }}",
-            "archive": "${{ steps.names.outputs.archive }}",
-            "binaries": ["papertiger.exe", "papertiger-mise.exe"],
-            "planner_setup_installs_mise": false
-          }
-          EOF
-          python scripts/package_project.py "$bundle" "$archive"
-          (cd dist && sha256sum "${{ steps.names.outputs.archive }}" > "${{ steps.names.outputs.archive }}.sha256")
-
-      - name: Verify packaged release (Unix)
-        if: runner.os != 'Windows'
+      - name: Verify the packaged skill directory
         shell: bash
         env:
           VERSION: ${{ inputs.artifact_version }}
@@ -217,205 +166,40 @@ jobs:
           archive="dist/${{ steps.names.outputs.archive }}"
           verify="dist/verify-${{ matrix.platform }}"
           mkdir -p "$verify"
-          tar -xzf "$archive" -C "$verify"
-          bundle="$verify/tools/papertiger"
-          python scripts/verify_project_bundle.py "$verify"
-          python scripts/verify_user_install.py "$bundle/bin/papertiger${{ matrix.executable_suffix }}"
-          test "$("$bundle/bin/papertiger" --version)" = "papertiger ${VERSION}"
-          test "$("$bundle/bin/papertiger-mise" --version)" = "papertiger-mise ${VERSION}"
-          grep -q 'setup-project' < <("$bundle/bin/papertiger" --help)
-          grep -q 'uninstall-project' < <("$bundle/bin/papertiger" --help)
-          grep -q -- '--project-root' < <("$bundle/bin/papertiger-mise" --help)
-          grep -Fq '"schema": "papertiger.release_manifest.v3"' "$bundle/manifest.json"
-          grep -Fq '"name": "papertiger"' "$bundle/manifest.json"
-          grep -Fq "\"version\": \"${VERSION}\"" "$bundle/manifest.json"
-          grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "$bundle/manifest.json"
-          grep -Fq '"target": "${{ matrix.target }}"' "$bundle/manifest.json"
-          grep -Fq '"platform": "${{ matrix.platform }}"' "$bundle/manifest.json"
-          grep -Fq '"archive": "${{ steps.names.outputs.archive }}"' "$bundle/manifest.json"
-          grep -Fq '"planner_setup_installs_mise": false' "$bundle/manifest.json"
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum -c "${{ steps.names.outputs.archive }}.sha256")
           else
             (cd dist && shasum -a 256 -c "${{ steps.names.outputs.archive }}.sha256")
           fi
+          case "$archive" in
+            *.zip) 7z x -y "$archive" "-o$verify" >/dev/null ;;
+            *) tar -xzf "$archive" -C "$verify" ;;
+          esac
+          test "$(ls "$verify")" = "papertiger"
+          python scripts/verify_skill.py "$verify/papertiger" "$VERSION"
 
-          project="$verify/consumer"
-          mkdir -p "$project/nested/work"
-          printf 'repository contract\n' > "$project/AGENTS.md"
-          printf 'target/\n' > "$project/.gitignore"
-          "$bundle/bin/papertiger" setup-project "$project" --json > "$verify/setup.json"
-          grep -Fq '"schema": "papertiger.project_install_result.v7"' "$verify/setup.json"
-          test -f "$project/tools/papertiger/bin/papertiger"
-          test ! -e "$project/tools/papertiger/bin/papertiger.runtime-install.json"
-          test ! -e "$project/tools/papertiger/bin/papertiger-mise"
-          test -f "$project/tools/papertiger/project-install.json"
-          grep -Fq '"schema": "papertiger.project_install.v3"' \
-              "$project/tools/papertiger/project-install.json"
-          grep -Fq "\"papertiger_version\": \"${VERSION}\"" \
-              "$project/tools/papertiger/project-install.json"
-          grep -Fq '"authority_path": "state/papertiger.sqlite"' \
-              "$project/tools/papertiger/project-install.json"
-          grep -Fq '"agents"' "$project/tools/papertiger/project-install.json"
-          cmp "$project/tools/papertiger/agent_integration.md" \
-              "$bundle/agent_integration.md"
-          test -f "$project/.agents/skills/papertiger/SKILL.md"
-          test ! -e "$project/.claude/skills/papertiger/SKILL.md"
-          cmp "$project/.agents/skills/papertiger/SKILL.md" \
-              templates/skills/papertiger/SKILL.md
-          test "$(cat "$project/AGENTS.md")" = "repository contract"
-          installed_planner="$(cd "$project/tools/papertiger/bin" && pwd)/papertiger"
-          test "$(cd "$project" && "$installed_planner" --version)" = "papertiger ${VERSION}"
-          (cd "$project/nested/work" && "$installed_planner" init)
-          (cd "$project/nested/work" && "$installed_planner" status) > "$verify/planner-status.txt"
-          (cd "$project/nested/work" && "$installed_planner" audit)
-          test -f "$project/state/papertiger.sqlite"
-          test ! -e "$project/nested/work/state"
-          "$bundle/bin/papertiger-mise" --project-root "$project" status --json > "$verify/mise-before.json"
-          grep -q '"initialized": false' "$verify/mise-before.json"
-          "$bundle/bin/papertiger-mise" --project-root "$project" init
-          "$bundle/bin/papertiger-mise" --project-root "$project" status --json > "$verify/mise-after.json"
-          grep -q '"initialized": true' "$verify/mise-after.json"
-          test ! -e "$project/tools/papertiger/bin/papertiger-mise"
-          ignore_fingerprint="$(cksum "$project/.gitignore")"
-          planner_db_fingerprint="$(cksum "$project/state/papertiger.sqlite")"
-          mise_db_fingerprint="$(cksum "$project/state/papertiger-mise.sqlite")"
-          "$bundle/bin/papertiger" uninstall-project "$project" --dry-run --json > "$verify/uninstall-dry-run.json"
-          grep -Fq '"schema": "papertiger.project_uninstall.v3"' "$verify/uninstall-dry-run.json"
-          test -f "$project/tools/papertiger/project-install.json"
-          "$bundle/bin/papertiger" uninstall-project "$project" --json > "$verify/uninstall.json"
-          test ! -e "$project/tools/papertiger/project-install.json"
-          test ! -e "$installed_planner"
-          test ! -e "$project/tools/papertiger/agent_integration.md"
-          test ! -e "$project/.agents/skills/papertiger/SKILL.md"
-          test "$(cat "$project/AGENTS.md")" = "repository contract"
-          test "$(cksum "$project/.gitignore")" = "$ignore_fingerprint"
-          test "$(cksum "$project/state/papertiger.sqlite")" = "$planner_db_fingerprint"
-          test "$(cksum "$project/state/papertiger-mise.sqlite")" = "$mise_db_fingerprint"
-
-      - name: Verify packaged release (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          VERSION: ${{ inputs.artifact_version }}
-        run: |
-          set -euo pipefail
-          archive="dist/${{ steps.names.outputs.archive }}"
-          verify="dist/verify-${{ matrix.platform }}"
-          mkdir -p "$verify"
-          7z x -y "${archive}" "-o${verify}" >/dev/null
-          bundle="$verify/tools/papertiger"
-          python scripts/verify_project_bundle.py "$verify"
-          python scripts/verify_user_install.py "$bundle/bin/papertiger${{ matrix.executable_suffix }}"
-          planner="$bundle/bin/papertiger.exe"
-          mise="$bundle/bin/papertiger-mise.exe"
-          test "$("$planner" --version)" = "papertiger ${VERSION}"
-          test "$("$mise" --version)" = "papertiger-mise ${VERSION}"
-          grep -q 'setup-project' < <("$planner" --help)
-          grep -q 'uninstall-project' < <("$planner" --help)
-          grep -q -- '--project-root' < <("$mise" --help)
-          grep -Fq '"schema": "papertiger.release_manifest.v3"' "$bundle/manifest.json"
-          grep -Fq '"name": "papertiger"' "$bundle/manifest.json"
-          grep -Fq "\"version\": \"${VERSION}\"" "$bundle/manifest.json"
-          grep -Fq "\"source_commit\": \"${GITHUB_SHA}\"" "$bundle/manifest.json"
-          grep -Fq '"target": "${{ matrix.target }}"' "$bundle/manifest.json"
-          grep -Fq '"platform": "${{ matrix.platform }}"' "$bundle/manifest.json"
-          grep -Fq '"archive": "${{ steps.names.outputs.archive }}"' "$bundle/manifest.json"
-          grep -Fq '"planner_setup_installs_mise": false' "$bundle/manifest.json"
-          (cd dist && sha256sum -c "${{ steps.names.outputs.archive }}.sha256")
-
-          project="$verify/consumer"
-          mkdir -p "$project/nested/work"
-          printf 'repository contract\n' > "$project/AGENTS.md"
-          printf 'target/\n' > "$project/.gitignore"
-          "$planner" setup-project "$project" --json > "$verify/setup.json"
-          grep -Fq '"schema": "papertiger.project_install_result.v7"' "$verify/setup.json"
-          test -f "$project/tools/papertiger/bin/papertiger.exe"
-          test ! -e "$project/tools/papertiger/bin/papertiger.exe.runtime-install.json"
-          test ! -e "$project/tools/papertiger/bin/papertiger-mise.exe"
-          test -f "$project/tools/papertiger/project-install.json"
-          grep -Fq '"schema": "papertiger.project_install.v3"' \
-              "$project/tools/papertiger/project-install.json"
-          grep -Fq "\"papertiger_version\": \"${VERSION}\"" \
-              "$project/tools/papertiger/project-install.json"
-          grep -Fq '"authority_path": "state/papertiger.sqlite"' \
-              "$project/tools/papertiger/project-install.json"
-          grep -Fq '"agents"' "$project/tools/papertiger/project-install.json"
-          cmp "$project/tools/papertiger/agent_integration.md" \
-              "$bundle/agent_integration.md"
-          test -f "$project/.agents/skills/papertiger/SKILL.md"
-          test ! -e "$project/.claude/skills/papertiger/SKILL.md"
-          cmp "$project/.agents/skills/papertiger/SKILL.md" \
-              templates/skills/papertiger/SKILL.md
-          test "$(cat "$project/AGENTS.md")" = "repository contract"
-          installed_planner="$(cd "$project/tools/papertiger/bin" && pwd)/papertiger.exe"
-          test "$(cd "$project" && "$installed_planner" --version)" = "papertiger ${VERSION}"
-          (cd "$project/nested/work" && "$installed_planner" init)
-          (cd "$project/nested/work" && "$installed_planner" status) > "$verify/planner-status.txt"
-          (cd "$project/nested/work" && "$installed_planner" audit)
-          test -f "$project/state/papertiger.sqlite"
-          test ! -e "$project/nested/work/state"
-          "$mise" --project-root "$project" status --json > "$verify/mise-before.json"
-          grep -q '"initialized": false' "$verify/mise-before.json"
-          "$mise" --project-root "$project" init
-          "$mise" --project-root "$project" status --json > "$verify/mise-after.json"
-          grep -q '"initialized": true' "$verify/mise-after.json"
-          test ! -e "$project/tools/papertiger/bin/papertiger-mise.exe"
-
-      - name: Verify packaged Windows native lifecycle from PowerShell
+      - name: Verify the skill binary from PowerShell
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           VERSION: ${{ inputs.artifact_version }}
+          PAPERTIGER_MODEL: human
         run: |
-          $project = (Resolve-Path (Join-Path "dist/verify-${{ matrix.platform }}" "consumer")).Path
-          $bundle = (Resolve-Path (Join-Path "dist/verify-${{ matrix.platform }}" "tools/papertiger")).Path
-          $planner = Join-Path $bundle "bin/papertiger.exe"
-          $installedPlanner = Join-Path $project "tools/papertiger/bin/papertiger.exe"
+          $planner = (Resolve-Path "dist/verify-${{ matrix.platform }}/papertiger/bin/papertiger.exe").Path
+          $project = Join-Path $env:RUNNER_TEMP "papertiger-pwsh-project"
+          New-Item -ItemType Directory -Force (Join-Path $project "nested/work") | Out-Null
+          & $planner --project-root $project init | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "init through --project-root failed" }
           Push-Location (Join-Path $project "nested/work")
           try {
-            $actualVersion = (& $installedPlanner --version).Trim()
-            if ($LASTEXITCODE -ne 0) {
-              throw "project-local native Papertiger invocation failed"
-            }
+            $actualVersion = (& $planner --version).Trim()
             if ($actualVersion -ne "papertiger $env:VERSION") {
-              throw "project-local Papertiger reported '$actualVersion', expected 'papertiger $env:VERSION'"
+              throw "skill binary reported '$actualVersion', expected 'papertiger $env:VERSION'"
             }
-            & $installedPlanner status | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-              throw "nested native Papertiger invocation failed"
-            }
+            & $planner status | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "nested native Papertiger invocation failed" }
           } finally {
             Pop-Location
-          }
-          $ignoreHash = (Get-FileHash -LiteralPath (Join-Path $project ".gitignore") -Algorithm SHA256).Hash
-          $plannerDbHash = (Get-FileHash -LiteralPath (Join-Path $project "state/papertiger.sqlite") -Algorithm SHA256).Hash
-          $miseDbHash = (Get-FileHash -LiteralPath (Join-Path $project "state/papertiger-mise.sqlite") -Algorithm SHA256).Hash
-          & $planner uninstall-project $project --dry-run --json | Out-Null
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $project "tools/papertiger/project-install.json"))) {
-            throw "uninstall dry-run changed the installation or failed"
-          }
-          & $planner uninstall-project $project --json | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            throw "uninstall-project failed"
-          }
-          foreach ($removed in @(
-            "tools/papertiger/project-install.json",
-            "tools/papertiger/bin/papertiger.exe",
-            "tools/papertiger/agent_integration.md",
-            ".agents/skills/papertiger/SKILL.md"
-          )) {
-            if (Test-Path -LiteralPath (Join-Path $project $removed)) {
-              throw "uninstall retained receipt-owned path $removed"
-            }
-          }
-          if ((Get-Content -LiteralPath (Join-Path $project "AGENTS.md") -Raw).Trim() -ne "repository contract") {
-            throw "uninstall changed AGENTS.md"
-          }
-          if ((Get-FileHash -LiteralPath (Join-Path $project ".gitignore") -Algorithm SHA256).Hash -ne $ignoreHash -or
-              (Get-FileHash -LiteralPath (Join-Path $project "state/papertiger.sqlite") -Algorithm SHA256).Hash -ne $plannerDbHash -or
-              (Get-FileHash -LiteralPath (Join-Path $project "state/papertiger-mise.sqlite") -Algorithm SHA256).Hash -ne $miseDbHash) {
-            throw "uninstall changed retained policy or authority data"
           }
 
       - name: Verify packaged planner recovery
@@ -423,8 +207,10 @@ jobs:
         run: |
           set -euo pipefail
           verify="dist/verify-${{ matrix.platform }}"
-          planner="$verify/tools/papertiger/bin/papertiger${{ matrix.executable_suffix }}"
-          authority="$verify/consumer/state/papertiger.sqlite"
+          planner="$verify/papertiger/bin/papertiger${{ matrix.executable_suffix }}"
+          authority="$verify/recovery-source.sqlite"
+          "$planner" --db "$authority" init
+          PAPERTIGER_MODEL=human "$planner" --db "$authority" plan add work "Recovery work"
           recovery="$verify/planner-recovery.sqlite"
           authority_before="$(cksum "$authority")"
           "$planner" --db "$authority" export > "$verify/before-recovery.json"
