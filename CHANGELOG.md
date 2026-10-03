@@ -32,6 +32,9 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Changed
 
+- Task, gate and reference kinds read in any letter case (`--kind Feature`,
+  outline `"kind": "Bug"`), and usage lines name the kinds, so a missing
+  `--kind` shows the choices.
 - Text `status` stays one screen: per plan it shows up to 8 in-progress tasks
   (live owners first, then the latest pickups) with a count and a `list`
   command for the rest, caps note text, and points omitted ready work at text

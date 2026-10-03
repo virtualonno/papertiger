@@ -173,9 +173,14 @@ pub fn parse_task_outline(bytes: &[u8]) -> Result<TaskOutline> {
         ),
         None => bail!("task outline requires \"schema\": \"{TASK_OUTLINE_SCHEMA}\""),
     }
-    serde_json::from_value(value).context(
+    let mut outline: TaskOutline = serde_json::from_value(value).context(
         "task outline does not match papertiger.task_outline.v2; see `papertiger schema` for its fields",
-    )
+    )?;
+    // Kinds read in any letter case, as on the command line.
+    for child in &mut outline.children {
+        child.kind = child.kind.to_ascii_lowercase();
+    }
+    Ok(outline)
 }
 
 fn valid_key(key: &str) -> bool {

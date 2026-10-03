@@ -64,8 +64,8 @@ enum Cmd {
         plan: Option<String>,
         #[command(flatten)]
         intent: IntentArgs,
-        /// Kind of outcome: goal, feature, change, bug, probe, decision, or release
-        #[arg(long)]
+        /// Kind of outcome (any letter case)
+        #[arg(long, value_name = "goal|feature|change|bug|probe|decision|release", value_parser = lowercase)]
         kind: String,
         /// Parent task: N, #N or its handle (e.g. G-N)
         #[arg(long)]
@@ -127,8 +127,8 @@ enum Cmd {
         /// Filter by tag
         #[arg(long)]
         tag: Option<String>,
-        /// Filter by kind: goal, feature, change, bug, probe, decision, release, or work
-        #[arg(long)]
+        /// Filter by kind (any letter case)
+        #[arg(long, value_name = "goal|feature|change|bug|probe|decision|release|work", value_parser = lowercase)]
         kind: Option<String>,
         /// Only tasks whose filing or result still needs someone else's review
         #[arg(long)]
@@ -147,8 +147,8 @@ enum Cmd {
         /// Restrict results to one task status
         #[arg(long)]
         status: Option<String>,
-        /// Filter by kind: goal, feature, change, bug, probe, decision, release, or work
-        #[arg(long)]
+        /// Filter by kind (any letter case)
+        #[arg(long, value_name = "goal|feature|change|bug|probe|decision|release|work", value_parser = lowercase)]
         kind: Option<String>,
         /// Maximum ranked results (default 20; 5 with --compact)
         #[arg(long)]
@@ -172,8 +172,8 @@ enum Cmd {
         /// Remove the current parent
         #[arg(long)]
         clear_parent: bool,
-        /// Replacement kind: goal, feature, change, bug, probe, decision, or release
-        #[arg(long)]
+        /// Replacement kind (any letter case)
+        #[arg(long, value_name = "goal|feature|change|bug|probe|decision|release", value_parser = lowercase)]
         kind: Option<String>,
         /// Replacement scheduling level: now, next or later
         #[arg(long)]
@@ -288,8 +288,8 @@ enum Cmd {
         /// Include proposed work that is currently blocked
         #[arg(long)]
         include_blocked: bool,
-        /// Filter by kind: goal, feature, change, bug, probe, decision, release, or work
-        #[arg(long)]
+        /// Filter by kind (any letter case)
+        #[arg(long, value_name = "goal|feature|change|bug|probe|decision|release|work", value_parser = lowercase)]
         kind: Option<String>,
         /// Only tasks whose filing still needs someone else's review
         #[arg(long)]
@@ -305,8 +305,8 @@ enum Cmd {
         /// Plan slug; optional when exactly one plan is active
         #[arg(long)]
         plan: Option<String>,
-        /// Show tasks of this kind with the ancestors that place them
-        #[arg(long)]
+        /// Show tasks of this kind with the ancestors that place them (any letter case)
+        #[arg(long, value_name = "goal|feature|change|bug|probe|decision|release|work", value_parser = lowercase)]
         kind: Option<String>,
     },
     /// Record a free-standing evented note (course changes, decisions)
@@ -412,7 +412,7 @@ enum ReferenceCmd {
         /// Locator of the external item, such as a URL or repository path
         locator: String,
         /// Reference kind
-        #[arg(long, value_name = "pull_request|issue|review|adr|input|other")]
+        #[arg(long, value_name = "pull_request|issue|review|adr|input|other", value_parser = lowercase)]
         kind: String,
         /// Optional lowercase SHA-256 digest binding the referenced bytes
         #[arg(long)]
@@ -428,7 +428,7 @@ enum ReferenceCmd {
         /// Locator recorded on the task
         locator: String,
         /// Kind recorded with the locator
-        #[arg(long, value_name = "pull_request|issue|review|adr|input|other")]
+        #[arg(long, value_name = "pull_request|issue|review|adr|input|other", value_parser = lowercase)]
         kind: String,
         #[command(flatten)]
         why: WhyArgs,
@@ -578,8 +578,8 @@ enum GateCmd {
         task: String,
         /// Stable gate name within the task
         name: String,
-        /// Evidence kind: test, benchmark, review, capture, fixture, build, doc, external (a condition outside the task that blocks starting it), or other
-        #[arg(long)]
+        /// Evidence kind; external is a condition outside the task that blocks starting it (any letter case)
+        #[arg(long, value_name = "test|benchmark|review|capture|fixture|build|doc|external|other", value_parser = lowercase)]
         kind: String,
         /// Proof required to resolve the gate
         #[arg(long)]
@@ -952,6 +952,11 @@ fn review_marker(prefix: &str, claim: &pt::ClaimReview, triage: bool) -> String 
         claim.state.as_str(),
         claim.author_model.as_deref().unwrap_or("model unknown")
     )
+}
+
+/// A kind or similar keyword in any letter case; the lists are lowercase.
+fn lowercase(value: &str) -> Result<String, std::convert::Infallible> {
+    Ok(value.to_ascii_lowercase())
 }
 
 /// One readable line per event: who, which task, what changed and why. The

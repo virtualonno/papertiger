@@ -989,6 +989,19 @@ fn starting_and_reading_ask_for_nothing_extra() {
     assert_success(&show);
     let show: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
     assert_eq!(show["task"]["status"], "in_progress");
+    // Kinds read in any letter case, and a missing kind names the choices.
+    assert_success(&papertiger(&db.0, &["add", "--kind", "Bug", "Crash"]));
+    assert!(
+        String::from_utf8_lossy(&papertiger(&db.0, &["list", "--kind", "BUG"]).stdout)
+            .contains("B-2 Crash")
+    );
+    let missing = papertiger(&db.0, &["add", "No kind"]);
+    assert!(
+        String::from_utf8_lossy(&missing.stderr)
+            .contains("--kind <goal|feature|change|bug|probe|decision|release>"),
+        "{}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
     // A read has nothing to attribute, so authorship flags are ignored.
     for read in [&["status"][..], &["show", "F-1"], &["init"]] {
         let mut args = read.to_vec();
