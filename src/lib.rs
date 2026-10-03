@@ -167,7 +167,9 @@ pub use blockers::{
     waive_blocker,
 };
 mod task_context;
-pub use task_context::{GateRecord, TaskContext, open_deps, task_context, task_current};
+pub use task_context::{
+    GateRecord, TaskContext, open_deps, task_ancestry, task_context, task_current,
+};
 mod audit;
 pub use audit::{AuditFinding, audit};
 pub(crate) use audit::{

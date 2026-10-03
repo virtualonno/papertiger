@@ -508,6 +508,62 @@ fn tag_and_dependency_edits_take_an_optional_reason_and_transitions_keep_theirs(
 }
 
 #[test]
+fn breadcrumbs_place_each_task_and_a_goal_surfaces_for_closing() {
+    let db = TestDatabase::new("breadcrumbs");
+    let run = |args: &[&str]| {
+        let output = papertiger(&db.0, args);
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "work", "Work"]);
+    run(&["add", "--kind", "goal", "Ship reliable plans"]);
+    run(&[
+        "add",
+        "--kind",
+        "feature",
+        "--parent",
+        "G-1",
+        "Plan templates",
+    ]);
+    run(&[
+        "add",
+        "--kind",
+        "decision",
+        "--parent",
+        "F-2",
+        "Choose the template format",
+    ]);
+
+    let show = run(&["show", "D-3"]);
+    assert!(show.contains("  path: G-1 › F-2"), "{show}");
+    let show: serde_json::Value = serde_json::from_str(&run(&["show", "3", "--json"])).unwrap();
+    assert_eq!(show["ancestry"], serde_json::json!(["G-1", "F-2"]));
+    let root: serde_json::Value = serde_json::from_str(&run(&["show", "1", "--json"])).unwrap();
+    assert_eq!(root["ancestry"], serde_json::json!([]));
+
+    let focus = run(&["focus"]);
+    assert!(
+        focus.contains("D-3 Choose the template format [in G-1 › F-2]"),
+        "{focus}"
+    );
+    let focus: serde_json::Value = serde_json::from_str(&run(&["focus", "--json"])).unwrap();
+    assert_eq!(
+        focus["entries"][0]["ancestry"],
+        serde_json::json!(["G-1", "F-2"])
+    );
+
+    run(&["done", "3", "--result", "Markdown with front matter"]);
+    run(&["done", "2"]);
+    let focus = run(&["focus"]);
+    assert!(
+        focus.contains("G-1 Ship reliable plans")
+            && focus.contains("[close: all 1 children closed]"),
+        "{focus}"
+    );
+}
+
+#[test]
 fn kind_filters_select_one_kind_and_status_counts_open_work_by_kind() {
     let db = TestDatabase::new("kind-filters");
     let run = |args: &[&str]| {

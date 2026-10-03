@@ -194,7 +194,8 @@ evidence and record the repository's full commit object ID separately with
 the kind letter and number (`F-924`; JSON carries it as `handle` next to
 `seq`). Commands accept the handle, `N` or `#N`; prefer the handle or bare `N`,
 since `#N` must be quoted where `#` begins a comment. A handle whose letter no
-longer matches the task's kind is refused with the current handle.
+longer matches the task's kind is refused with the current handle. `show` and
+`focus` place a task under its ancestors (`path: G-1 › F-2`; JSON `ancestry`).
 
 `task.seq` is private to one authority. Never write a Papertiger task number in
 a shared commit, pull request, changelog, release note, or public artifact. Such

@@ -20,6 +20,10 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   `legacy_task_kind` with a title-based suggestion and the `edit --kind`
   command that retypes it.
 - Bug tasks, like probes and decisions, require `--result` before `done`.
+- `show` and `focus` place each task by its ancestors: a `path: G-1 › F-2`
+  line in `show`, an `[in G-1 › F-2]` suffix in `focus`, and an `ancestry`
+  list of handles (root first) in both JSON documents. Hierarchy stays a
+  parent link; there are no path-derived task numbers.
 - `tag add/remove` and `dep add/remove` no longer require `--why`; a reason
   that is given must be nonblank and is recorded as before. Lifecycle
   transitions (retire, reject, reopen, waive, plan status) still require one.

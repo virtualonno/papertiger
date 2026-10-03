@@ -756,6 +756,14 @@
             "type": "string"
           }
         },
+        "ancestry": {
+          "description": "Ancestor handles from the root down to the direct parent; empty for a root task.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[GFCBPDRW]-[1-9][0-9]*$"
+          }
+        },
         "parent": {
           "anyOf": [
             {
@@ -858,6 +866,7 @@
         "plan",
         "task",
         "tags",
+        "ancestry",
         "parent",
         "replacement",
         "dependencies",
@@ -2300,6 +2309,14 @@
                 "type": "integer",
                 "minimum": 0
               },
+              "ancestry": {
+                "description": "Ancestor handles from the root down to the direct parent; empty for a root task.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[GFCBPDRW]-[1-9][0-9]*$"
+                }
+              },
               "pickup": {
                 "$ref": "#/$defs/pickup"
               }
@@ -2312,7 +2329,8 @@
               "open_gate_count",
               "immediate_unlock_count",
               "unfinished_downstream_count",
-              "closed_child_count"
+              "closed_child_count",
+              "ancestry"
             ],
             "additionalProperties": false
           }

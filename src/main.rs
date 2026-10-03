@@ -922,6 +922,9 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
         task.title,
         extra
     );
+    if !context.ancestry.is_empty() {
+        pt::outln!("  path: {}", context.ancestry.join(" › "));
+    }
     if !task.intent.is_empty() {
         let label = task
             .intent_source
@@ -2315,15 +2318,21 @@ fn run_planner(cli: Cli) -> Result<()> {
                     } else {
                         format!(" [blocked by {}]", entry.blockers.join(" "))
                     };
+                    let path = if entry.ancestry.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [in {}]", entry.ancestry.join(" › "))
+                    };
                     let closing = if entry.closed_child_count > 0 {
                         format!(" [close: all {} children closed]", entry.closed_child_count)
                     } else {
                         String::new()
                     };
                     pt::outln!(
-                        "  {} {} [priority {} unlocks {} downstream {} gates {}]{}{}{}",
+                        "  {} {}{} [priority {} unlocks {} downstream {} gates {}]{}{}{}",
                         entry.task.handle,
                         entry.task.title,
+                        path,
                         entry.task.priority,
                         entry.immediate_unlock_count,
                         entry.unfinished_downstream_count,

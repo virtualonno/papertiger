@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::{
     PlanIdentity, StatusProjection, TASK_COLS, Task, TaskPickup, TaskSummary, get_plan, open_deps,
-    open_gates, open_task_blocker_names, pickup, task_from_row, validate_session,
+    open_gates, open_task_blocker_names, pickup, task_ancestry, task_from_row, validate_session,
 };
 
 pub(crate) fn entry_blockers(conn: &Connection, task: &Task) -> Result<Vec<String>> {
@@ -40,6 +40,8 @@ pub struct FocusEntry {
     /// Children of a parent whose children are all closed; the remaining
     /// work is closing the parent itself. Zero for leaf tasks.
     pub closed_child_count: usize,
+    /// Ancestor handles from the root down to the direct parent.
+    pub ancestry: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,6 +112,7 @@ pub fn focus(
                 immediate_unlock_count: immediate_unlock_count(conn, task.task_id)?,
                 unfinished_downstream_count: unfinished_downstream_count(conn, task.task_id)?,
                 closed_child_count: child_count(conn, task.task_id)?,
+                ancestry: task_ancestry(conn, &task)?,
                 task: TaskSummary::from(&task),
                 pickup: task.pickup,
                 readiness: readiness.to_string(),

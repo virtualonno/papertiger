@@ -1,6 +1,6 @@
 //! Full task context reads: related tasks, gates, history and open dependencies.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
@@ -8,7 +8,7 @@ use crate::{
     CommitAssociation, EventCursor, EventRecord, ExternalReference, Plan, TASK_COLS, Task,
     TaskActivity, TaskBlocker, TaskMiseProjectionSummary, TaskSummary, commit_associations,
     event_log, external_references, get_plan, get_task, immediate_unlock_count, task_activity,
-    task_blockers, task_from_row, task_mise_projection_summaries, task_tags_by_id,
+    task_blockers, task_from_row, task_handle, task_mise_projection_summaries, task_tags_by_id,
     unfinished_downstream_count,
 };
 
@@ -30,6 +30,8 @@ pub struct TaskContext {
     pub plan: Plan,
     pub task: Task,
     pub tags: Vec<String>,
+    /// Ancestor handles from the root down to the direct parent.
+    pub ancestry: Vec<String>,
     pub parent: Option<TaskSummary>,
     pub replacement: Option<TaskSummary>,
     pub dependencies: Vec<TaskSummary>,
@@ -46,6 +48,31 @@ pub struct TaskContext {
     pub recent_events: Vec<EventRecord>,
     pub recent_events_truncated: bool,
     pub older_events_cursor: Option<EventCursor>,
+}
+
+/// Handles of a task's ancestors from the root down to its direct parent;
+/// empty for a root task.
+pub fn task_ancestry(conn: &Connection, task: &Task) -> Result<Vec<String>> {
+    let mut ancestry = Vec::new();
+    let mut seen = std::collections::HashSet::from([task.task_id]);
+    let mut next = task.parent_id;
+    while let Some(task_id) = next {
+        if !seen.insert(task_id) {
+            bail!(
+                "{} sits in a parent cycle; run `papertiger audit` and restore a verified export",
+                task.handle
+            );
+        }
+        let (seq, kind, parent_id): (i64, String, Option<i64>) = conn.query_row(
+            "SELECT seq, kind, parent_id FROM tasks WHERE task_id=?1",
+            params![task_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        ancestry.push(task_handle(seq, &kind));
+        next = parent_id;
+    }
+    ancestry.reverse();
+    Ok(ancestry)
 }
 
 pub fn task_context(conn: &Connection, seq: i64) -> Result<TaskContext> {
@@ -157,10 +184,12 @@ fn task_context_with_history(
         (Vec::new(), false, None)
     };
 
+    let ancestry = task_ancestry(conn, &task)?;
     Ok(TaskContext {
         schema: "papertiger.task_context.v8".into(),
         plan,
         tags,
+        ancestry,
         parent: parent.as_ref().map(TaskSummary::from),
         replacement: replacement.as_ref().map(TaskSummary::from),
         dependencies: dependencies.iter().map(TaskSummary::from).collect(),
