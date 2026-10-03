@@ -8,8 +8,7 @@ and `setup-user` are optional managed installations; installation, upgrade and
 removal are covered by `--help` and the README, not by this reference.
 
 Start from the authority the project already has. Only a genuinely new project
-with no planning history gets a new one: set `PAPERTIGER_ACTOR` and a stable
-`PAPERTIGER_SESSION`, then run `init` with the same executable and selectors you
+with no planning history gets a new one: run `init` with the same executable and selectors you
 use for `status` (it reports in plain text and refuses `--json`). Add the
 database and its `-journal`, `-wal` and `-shm` sidecars to Git's ignore rules
 before `init`.
@@ -205,8 +204,9 @@ flows outward.
 
 ## Concurrent pickup without reservations
 
-Set `PAPERTIGER_SESSION` once to a unique identity for this agent session, or
-pass global `--session <id>`; reuse it across commands. Give concurrent agents
+A detected harness (Claude Code, Codex, pi, OpenCode, Cursor) supplies the
+session. Otherwise set `PAPERTIGER_SESSION` once to a unique identity for this
+agent session, or pass global `--session <id>`; reuse it across commands. Give concurrent agents
 different identities even when they use the same model or actor. Do not create
 an identity per CLI invocation. Identity accepts 1–128 ASCII letters, digits,
 `.`, `_`, `:`, and `-`, starting with a letter or digit. Omission is supported for
@@ -245,14 +245,20 @@ domain's own coordination mechanism.
 
 ## Mutations
 
-Set `PAPERTIGER_ACTOR` to a concise human-readable author label before
-mutating. It records who wrote each event; it is historical provenance, never
-an assignee, claim, lease, session handle, or liveness signal. Write `--why`
+Every write records the model that authored it; without one it is refused.
+Pass `--model <your-model-id>` with your own exact model, or rely on
+`PAPERTIGER_MODEL` set where the session was launched; events record which
+(`model_source`). Never use `human` (the operator's manual model; refused
+inside a harness) or `runtime` (reserved for the tool). Harness, session and
+the actor label (e.g. `claude-e2affada`) come from the environment;
+`PAPERTIGER_ACTOR` only overrides the label. Authorship is historical
+provenance, never an assignee, claim, lease, session handle, or liveness
+signal. Write `--why`
 for anything a future session could question, using language that stands alone
 without chat context.
 
-Pass `--model`/`--reasoning-effort` (or `PAPERTIGER_MODEL`/`PAPERTIGER_REASONING_EFFORT`)
-only with exact known values; effort requires a model; never guess or backfill.
+Pass `--reasoning-effort` only with an exact known value; Claude Code's is
+derived. Never guess or backfill a model or effort.
 
 ### Mutation receipts
 

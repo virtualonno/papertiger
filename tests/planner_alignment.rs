@@ -1,9 +1,11 @@
+mod support;
 use papertiger as pt;
 
 fn planner() -> rusqlite::Connection {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     conn.pragma_update(None, "foreign_keys", "ON").unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     pt::add_plan(&conn, "operator", "old", "Old", "").unwrap();
     pt::add_plan(&conn, "operator", "new", "New", "").unwrap();
     conn
@@ -27,7 +29,11 @@ fn model_history_and_receipts_capture_only_committed_operations() {
     let conn = planner();
     let seq;
     {
-        let recorder = pt::MutationRecorder::new(&conn, Some("gpt-5.6-luna")).unwrap();
+        let recorder = {
+            support::author_as(&conn, "gpt-5.6-luna", None);
+            pt::MutationRecorder::new(&conn)
+        }
+        .unwrap();
         seq = task(&conn, "proposal");
         pt::add_gate(&conn, "recorder", seq, "proof", "test", "must pass").unwrap();
         let before = serde_json::to_value(recorder.receipt().unwrap()).unwrap();
@@ -41,7 +47,11 @@ fn model_history_and_receipts_capture_only_committed_operations() {
         assert_eq!(before["events"][0]["plan"]["slug"], "old");
     }
     {
-        let recorder = pt::MutationRecorder::new(&conn, Some("review-model")).unwrap();
+        let recorder = {
+            support::author_as(&conn, "review-model", None);
+            pt::MutationRecorder::new(&conn)
+        }
+        .unwrap();
         pt::waive_gate(&conn, "reviewer", seq, "proof", "bounded fixture waiver").unwrap();
         pt::complete_task(&conn, "reviewer", seq, Some("verified outcome"), None).unwrap();
         assert_eq!(
@@ -74,18 +84,22 @@ fn model_history_and_receipts_capture_only_committed_operations() {
             .completed_event
             .is_none()
     );
-    let unknown = task(&conn, "unknown model");
-    assert!(
-        pt::task_activity(&conn, unknown)
+    support::author(&conn);
+    let manual = task(&conn, "operator write");
+    assert_eq!(
+        pt::task_activity(&conn, manual)
             .unwrap()
             .created_event
             .unwrap()
             .model
-            .is_none()
+            .as_deref(),
+        Some("human"),
+        "each write carries the connection's current authorship"
     );
     let dump = pt::export(&conn, None).unwrap();
     let restored = rusqlite::Connection::open_in_memory().unwrap();
     pt::init(&restored).unwrap();
+    support::author(&restored);
     pt::import(&restored, "restore", &dump).unwrap();
     assert_eq!(
         pt::task_activity(&restored, seq)
@@ -98,22 +112,37 @@ fn model_history_and_receipts_capture_only_committed_operations() {
     );
     assert!(pt::audit(&restored).unwrap().is_empty());
     for invalid in ["", " ", "model\nforged", "display name", "🦁"] {
-        assert!(pt::MutationRecorder::new(&conn, Some(invalid)).is_err());
+        assert!(
+            pt::resolve_authorship(
+                pt::AuthorshipFlags {
+                    model: Some(invalid),
+                    ..Default::default()
+                },
+                &|_| None
+            )
+            .is_err()
+        );
     }
     {
-        let recorder = pt::MutationRecorder::new(&conn, Some("unfinished-scope")).unwrap();
+        let recorder = {
+            support::author_as(&conn, "unfinished-scope", None);
+            pt::MutationRecorder::new(&conn)
+        }
+        .unwrap();
         conn.execute_batch("BEGIN DEFERRED TRANSACTION").unwrap();
         assert!(recorder.receipt().is_err());
     }
     assert!(conn.is_autocommit());
     let after = task(&conn, "after unfinished scope");
-    assert!(
+    assert_eq!(
         pt::task_activity(&conn, after)
             .unwrap()
             .created_event
             .unwrap()
             .model
-            .is_none()
+            .as_deref(),
+        Some("unfinished-scope"),
+        "dropping a receipt scope ends capture, not the connection's authorship"
     );
     let mut invalid = pt::export(&conn, None).unwrap();
     let event = invalid
@@ -124,6 +153,7 @@ fn model_history_and_receipts_capture_only_committed_operations() {
     event.payload.as_mut().unwrap()["model"] = serde_json::json!(17);
     let refused = rusqlite::Connection::open_in_memory().unwrap();
     pt::init(&refused).unwrap();
+    support::author(&refused);
     assert!(pt::import(&refused, "restore", &invalid).is_err());
     assert!(pt::export(&refused, None).unwrap().tasks.is_empty());
 }
@@ -133,9 +163,11 @@ fn reasoning_effort_follows_each_author_and_survives_recovery() {
     let conn = planner();
     let seq;
     {
-        let recorder =
-            pt::MutationRecorder::with_reasoning_effort(&conn, Some("gpt-6-astra"), Some("high"))
-                .unwrap();
+        let recorder = {
+            support::author_as(&conn, "gpt-6-astra", Some("high"));
+            pt::MutationRecorder::new(&conn)
+        }
+        .unwrap();
         seq = task(&conn, "precise attribution");
         pt::add_gate(&conn, "creator", seq, "proof", "test", "must pass").unwrap();
         let before = serde_json::to_value(recorder.receipt().unwrap()).unwrap();
@@ -147,9 +179,11 @@ fn reasoning_effort_follows_each_author_and_survives_recovery() {
         );
     }
     {
-        let _recorder =
-            pt::MutationRecorder::with_reasoning_effort(&conn, Some("other-model"), Some("medium"))
-                .unwrap();
+        let _recorder = {
+            support::author_as(&conn, "other-model", Some("medium"));
+            pt::MutationRecorder::new(&conn)
+        }
+        .unwrap();
         pt::waive_gate(&conn, "reviewer", seq, "proof", "fixture waiver").unwrap();
         let activity = pt::task_activity(&conn, seq).unwrap();
         assert_eq!(
@@ -165,18 +199,21 @@ fn reasoning_effort_follows_each_author_and_survives_recovery() {
     assert_eq!(created.reasoning_effort.as_deref(), Some("high"));
     assert_eq!(completed.model.as_deref(), Some("other-model"));
     assert_eq!(completed.reasoning_effort.as_deref(), Some("medium"));
-    let unknown = task(&conn, "after attributed scope");
+    support::author(&conn);
+    let manual = task(&conn, "after attributed scope");
     assert!(
-        pt::task_activity(&conn, unknown)
+        pt::task_activity(&conn, manual)
             .unwrap()
             .created_event
             .unwrap()
             .reasoning_effort
-            .is_none()
+            .is_none(),
+        "a new author does not inherit the previous author's effort"
     );
     let dump = pt::export(&conn, None).unwrap();
     let restored = rusqlite::Connection::open_in_memory().unwrap();
     pt::init(&restored).unwrap();
+    support::author(&restored);
     pt::import(&restored, "restore", &dump).unwrap();
     assert_eq!(
         pt::task_activity(&conn, seq).unwrap(),
@@ -186,11 +223,28 @@ fn reasoning_effort_follows_each_author_and_survives_recovery() {
 
     for invalid in ["", " ", "high\nforged", "very high"] {
         assert!(
-            pt::MutationRecorder::with_reasoning_effort(&conn, Some("model"), Some(invalid))
-                .is_err()
+            pt::resolve_authorship(
+                pt::AuthorshipFlags {
+                    model: Some("model"),
+                    reasoning_effort: Some(invalid),
+                    ..Default::default()
+                },
+                &|_| None
+            )
+            .is_err()
         );
     }
-    assert!(pt::MutationRecorder::with_reasoning_effort(&conn, None, Some("high")).is_err());
+    assert!(
+        pt::resolve_authorship(
+            pt::AuthorshipFlags {
+                reasoning_effort: Some("high"),
+                ..Default::default()
+            },
+            &|_| None
+        )
+        .is_err(),
+        "effort without a model is refused"
+    );
     for invalid in [serde_json::json!(17), serde_json::json!("high\nforged")] {
         let mut malformed = pt::export(&conn, None).unwrap();
         let event = malformed
@@ -201,6 +255,7 @@ fn reasoning_effort_follows_each_author_and_survives_recovery() {
         event.payload.as_mut().unwrap()["reasoning_effort"] = invalid;
         let empty = rusqlite::Connection::open_in_memory().unwrap();
         pt::init(&empty).unwrap();
+        support::author(&empty);
         assert!(pt::import(&empty, "restore", &malformed).is_err());
         assert!(pt::export(&empty, None).unwrap().tasks.is_empty());
     }
@@ -213,6 +268,7 @@ fn reasoning_effort_follows_each_author_and_survives_recovery() {
     event.payload.as_mut().unwrap()["model"] = serde_json::Value::Null;
     let empty = rusqlite::Connection::open_in_memory().unwrap();
     pt::init(&empty).unwrap();
+    support::author(&empty);
     assert!(pt::import(&empty, "restore", &orphan).is_err());
     assert!(pt::export(&empty, None).unwrap().tasks.is_empty());
 }
@@ -229,10 +285,16 @@ fn receipt_snapshots_exclude_later_concurrent_writers() {
     ));
     let first = pt::open_for_init(path.to_str().unwrap()).unwrap();
     pt::init(&first).unwrap();
+    support::author(&first);
     pt::add_plan(&first, "setup", "old", "Old", "").unwrap();
     let second = pt::open_existing(path.to_str().unwrap()).unwrap();
+    support::author(&second);
     {
-        let recorder = pt::MutationRecorder::new(&first, Some("author-model")).unwrap();
+        let recorder = {
+            support::author_as(&first, "author-model", None);
+            pt::MutationRecorder::new(&first)
+        }
+        .unwrap();
         let seq = task(&first, "a concurrent task");
         pt::start_task(&second, "concurrent", seq, Some("separate writer"), None).unwrap();
         let receipt = recorder.receipt().unwrap();
@@ -311,6 +373,7 @@ fn relocation_preserves_edges_gate_refusals_cursors_and_scoped_recovery() {
     assert!(moved.plans.iter().any(|plan| plan.slug == "old"));
     let restored = rusqlite::Connection::open_in_memory().unwrap();
     pt::init(&restored).unwrap();
+    support::author(&restored);
     pt::import(&restored, "restore", &moved).unwrap();
     assert_eq!(pt::task_context(&restored, child).unwrap().plan.slug, "new");
     assert!(pt::audit(&restored).unwrap().is_empty());
@@ -326,6 +389,7 @@ fn relocation_preserves_edges_gate_refusals_cursors_and_scoped_recovery() {
     assert!(pt::audit(&conn).unwrap().is_empty());
     let refused = rusqlite::Connection::open_in_memory().unwrap();
     pt::init(&refused).unwrap();
+    support::author(&refused);
     // With no intermediate events, deleting both moves cannot be distinguished
     // from absence. Corrupt one boundary instead, which must fail closed.
     let mut corrupted = pt::export(&conn, None).unwrap();
@@ -374,6 +438,7 @@ fn references_are_exact_evented_inward_links_not_completion_evidence() {
     let dump = pt::export(&conn, None).unwrap();
     let restored = rusqlite::Connection::open_in_memory().unwrap();
     pt::init(&restored).unwrap();
+    support::author(&restored);
     pt::import(&restored, "restore", &dump).unwrap();
     assert_eq!(
         pt::external_references(&restored, seq).unwrap(),

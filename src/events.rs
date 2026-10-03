@@ -42,23 +42,15 @@ pub(crate) fn record_event_in_mutation(
     payload: Option<&serde_json::Value>,
 ) -> Result<()> {
     let mut payload = payload.cloned();
-    let (model, reasoning_effort) = mutation::current_attribution(tx)?;
-    if let Some(model) = model {
-        let object = payload.get_or_insert_with(|| serde_json::json!({}));
-        object
-            .as_object_mut()
-            .context("event payload must be an object to record model attribution")?
-            .insert("model".into(), model.into());
+    let object = payload
+        .get_or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .context("event payload must be an object to record its authorship")?;
+    for (key, value) in crate::authorship::current_authorship(tx)? {
+        // A pickup event names its session already; the author's session is the same one.
+        object.entry(key).or_insert(value);
     }
-    if let Some(effort) = reasoning_effort {
-        payload
-            .get_or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-            .context("event payload must be an object to record reasoning effort")?
-            .insert("reasoning_effort".into(), effort.into());
-    }
-    mutation::payload_model(payload.as_ref())?;
-    mutation::payload_reasoning_effort(payload.as_ref())?;
+    crate::authorship::validate_payload_authorship(payload.as_ref())?;
     let (entity_plan, entity_seq, gate_name): (Option<String>, Option<i64>, Option<String>) =
         match (entity, entity_id) {
             ("plan", Some(plan_id)) => (

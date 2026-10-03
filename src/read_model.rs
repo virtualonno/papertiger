@@ -28,6 +28,11 @@ pub struct EventRecord {
     pub at: String,
     pub actor: String,
     pub model: Option<String>,
+    /// How the model was reported: `flag` (the author's own report) or
+    /// `environment` (configured at launch); absent on older events.
+    pub model_source: Option<String>,
+    pub harness: Option<String>,
+    pub session: Option<String>,
     pub reasoning_effort: Option<String>,
     pub entity: String,
     pub plan: Option<String>,
@@ -58,6 +63,11 @@ pub struct ActivityEvent {
     pub at: String,
     pub actor: String,
     pub model: Option<String>,
+    /// How the model was reported: `flag` (the author's own report) or
+    /// `environment` (configured at launch); absent on older events.
+    pub model_source: Option<String>,
+    pub harness: Option<String>,
+    pub session: Option<String>,
     pub reasoning_effort: Option<String>,
     pub entity: String,
     pub kind: String,
@@ -280,9 +290,13 @@ impl StoredEvent {
         } else {
             None
         };
+        let authorship = crate::authorship::payload_authorship(payload.as_ref())?;
         Ok(EventRecord {
-            model: crate::mutation::payload_model(payload.as_ref())?,
-            reasoning_effort: crate::mutation::payload_reasoning_effort(payload.as_ref())?,
+            model: authorship.model,
+            model_source: authorship.model_source,
+            harness: authorship.harness,
+            session: authorship.session,
+            reasoning_effort: authorship.reasoning_effort,
             event_id: self.event_id,
             at: self.at,
             actor: self.actor,
@@ -303,9 +317,13 @@ impl StoredEvent {
             .as_deref()
             .map(serde_json::from_str)
             .transpose()?;
+        let authorship = crate::authorship::payload_authorship(payload.as_ref())?;
         Ok(ActivityEvent {
-            model: crate::mutation::payload_model(payload.as_ref())?,
-            reasoning_effort: crate::mutation::payload_reasoning_effort(payload.as_ref())?,
+            model: authorship.model,
+            model_source: authorship.model_source,
+            harness: authorship.harness,
+            session: authorship.session,
+            reasoning_effort: authorship.reasoning_effort,
             event_id: self.event_id,
             at: self.at.clone(),
             actor: self.actor.clone(),

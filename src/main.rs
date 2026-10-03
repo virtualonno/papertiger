@@ -1188,12 +1188,6 @@ fn run(cli: Cli) -> Result<()> {
 
 fn run_planner(cli: Cli) -> Result<()> {
     let json = cli.json || cli.cmd.implies_json();
-    let session = cli
-        .session
-        .or_else(|| std::env::var("PAPERTIGER_SESSION").ok());
-    if let Some(session) = &session {
-        pt::validate_session(session)?;
-    }
     if matches!(cli.cmd, Cmd::Schema) {
         pt::outln!(
             "{}",
@@ -1204,7 +1198,11 @@ fn run_planner(cli: Cli) -> Result<()> {
     let mutation = !cli.cmd.opens_authority_read_only()
         && !matches!(
             cli.cmd,
-            Cmd::SetupProject { .. } | Cmd::UninstallProject { .. } | Cmd::Init
+            Cmd::SetupProject { .. }
+                | Cmd::UninstallProject { .. }
+                | Cmd::Init
+                | Cmd::Backup { .. }
+                | Cmd::RepairGuards { dry_run: true, .. }
         );
     if cli.model.is_some() && !mutation {
         bail!(
@@ -1216,28 +1214,23 @@ fn run_planner(cli: Cli) -> Result<()> {
             "--reasoning-effort records planning event authorship; omit --reasoning-effort for commands that do not record events"
         );
     }
-    let model = if mutation {
-        cli.model.or_else(|| std::env::var("PAPERTIGER_MODEL").ok())
+    let flags = pt::AuthorshipFlags {
+        actor: cli.actor.as_deref(),
+        session: cli.session.as_deref(),
+        model: cli.model.as_deref(),
+        reasoning_effort: cli.reasoning_effort.as_deref(),
+    };
+    // Every write records its author; reads only need the session that
+    // recognizes this caller's own pickups.
+    let authorship = if mutation {
+        Some(pt::resolve_authorship_from_env(flags)?)
     } else {
         None
     };
-    if let Some(model) = &model {
-        pt::validate_model(model)?;
-    }
-    let reasoning_effort = if mutation {
-        cli.reasoning_effort
-            .or_else(|| std::env::var("PAPERTIGER_REASONING_EFFORT").ok())
-    } else {
-        None
+    let session = match &authorship {
+        Some(authorship) => authorship.session.clone(),
+        None => pt::authorship::resolve_session_from_env(cli.session.as_deref())?,
     };
-    if let Some(effort) = &reasoning_effort {
-        pt::validate_reasoning_effort(effort)?;
-        if model.is_none() {
-            bail!(
-                "reasoning effort requires a model identifier; supply --model <model-id> or PAPERTIGER_MODEL, or omit --reasoning-effort and PAPERTIGER_REASONING_EFFORT"
-            );
-        }
-    }
     if json && matches!(cli.cmd, Cmd::Init) {
         bail!(
             "init reports in plain text only: one line naming the authority and whether it was initialized, migrated, or already current; omit --json and read that line, or run `status --json` afterwards"
@@ -1393,10 +1386,10 @@ fn run_planner(cli: Cli) -> Result<()> {
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(|| "state/papertiger.sqlite".into()),
     };
-    let actor = cli
-        .actor
-        .or_else(|| std::env::var("PAPERTIGER_ACTOR").ok())
-        .unwrap_or_else(|| "operator".into());
+    let actor = authorship
+        .as_ref()
+        .map(|authorship| authorship.actor.clone())
+        .unwrap_or_default();
 
     if let Cmd::Init = cli.cmd {
         if let Some(dir) = std::path::Path::new(&db_path).parent()
@@ -1447,6 +1440,9 @@ fn run_planner(cli: Cli) -> Result<()> {
                     "repair-guards requires --why <reason>; preview first with --dry-run"
                 )
             })?;
+            if let Some(authorship) = &authorship {
+                pt::set_authorship(&conn, authorship)?;
+            }
             pt::repair_write_guards(&conn, &actor, why)?
         };
         if json {
@@ -1497,12 +1493,11 @@ fn run_planner(cli: Cli) -> Result<()> {
             .context("begin read-only Papertiger authority snapshot")?;
     }
 
-    let recorder = if mutation && (json || model.is_some()) {
-        Some(pt::MutationRecorder::with_reasoning_effort(
-            &conn,
-            model.as_deref(),
-            reasoning_effort.as_deref(),
-        )?)
+    if let Some(authorship) = &authorship {
+        pt::set_authorship(&conn, authorship)?;
+    }
+    let recorder = if mutation && json {
+        Some(pt::MutationRecorder::new(&conn)?)
     } else {
         None
     };

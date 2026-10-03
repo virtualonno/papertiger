@@ -1,4 +1,9 @@
+pub mod authorship;
 mod digest;
+pub use authorship::{
+    Authorship, AuthorshipFlags, HUMAN_MODEL, ModelSource, RUNTIME_MODEL, resolve_authorship,
+    resolve_authorship_from_env, set_authorship, validate_model, validate_reasoning_effort,
+};
 mod stdout;
 pub use digest::{sha256, sha256_bytes, validate_sha256};
 pub use stdout::{OutputClosed, is_output_closed, print_stdout, write_stdout};
@@ -29,9 +34,7 @@ mod priority_recovery;
 mod read_model;
 mod write_guard;
 pub use inventory::{plan_inventory, task_inventory};
-pub use mutation::{
-    MutationEvent, MutationReceipt, MutationRecorder, validate_model, validate_reasoning_effort,
-};
+pub use mutation::{MutationEvent, MutationReceipt, MutationRecorder};
 pub use pickup::{TaskPickup, validate_session};
 pub use write_guard::{GuardDrift, GuardDriftState};
 mod plan_move;

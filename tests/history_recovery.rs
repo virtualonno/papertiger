@@ -1,9 +1,11 @@
+mod support;
 use papertiger as pt;
 use rusqlite::Connection;
 
 fn damaged() -> (Connection, i64) {
     let conn = Connection::open_in_memory().unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     pt::add_plan(&conn, "test", "work", "Work", "").unwrap();
     // Deliberately emulate a legacy writer only inside this disposable fixture.
     conn.execute_batch("DROP TRIGGER events_require_zoned_timestamp; DROP TRIGGER events_require_json_payload; DROP TRIGGER events_require_stable_reference;").unwrap();
@@ -21,7 +23,7 @@ fn quarantine_preserves_exact_evidence_and_round_trips_without_inventing_provena
     assert!(pt::export(&conn, None).is_err());
     let before = pt::history_recovery::inspect(&conn, id).unwrap();
     assert_eq!(before.problems.len(), 3);
-    let recorder = pt::MutationRecorder::new(&conn, None).unwrap();
+    let recorder = pt::MutationRecorder::new(&conn).unwrap();
     let recovery = pt::history_recovery::quarantine(
         &conn,
         "operator",
@@ -56,6 +58,7 @@ fn quarantine_preserves_exact_evidence_and_round_trips_without_inventing_provena
     assert!(payload["original"]["entity_seq"].is_null());
     let restored = Connection::open_in_memory().unwrap();
     pt::init(&restored).unwrap();
+    support::author(&restored);
     pt::import(&restored, "restore", &dump).unwrap();
     assert!(pt::audit(&restored).unwrap().is_empty());
     let redump = pt::export(&restored, None).unwrap();
@@ -81,6 +84,7 @@ fn quarantine_preserves_exact_evidence_and_round_trips_without_inventing_provena
             .unwrap()["schema"] = serde_json::json!(schema);
         let fresh = Connection::open_in_memory().unwrap();
         pt::init(&fresh).unwrap();
+        support::author(&fresh);
         assert_eq!(
             pt::import(&fresh, "restore", &legacy).is_ok(),
             accepted,
@@ -98,6 +102,7 @@ fn quarantine_preserves_exact_evidence_and_round_trips_without_inventing_provena
         .unwrap()["source_event_sha256"] = serde_json::json!("0".repeat(64));
     let fresh = Connection::open_in_memory().unwrap();
     pt::init(&fresh).unwrap();
+    support::author(&fresh);
     assert!(pt::import(&fresh, "restore", &forged).is_err());
     assert_eq!(
         fresh

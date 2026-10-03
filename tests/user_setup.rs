@@ -1,8 +1,9 @@
+mod support;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 const TOOL: &str = "papertiger";
 const BINARY: &str = env!("CARGO_BIN_EXE_papertiger");
@@ -19,7 +20,7 @@ impl Fixture {
         Self(p)
     }
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(BINARY)
+        support::papertiger_command(BINARY)
             .args(args)
             .arg("--home")
             .arg(&self.0)
@@ -87,7 +88,10 @@ fn personal_install_is_guidance_free_idempotent_and_reversible() {
     let installed = snapshot(&f.0);
     f.install();
     assert_eq!(snapshot(&f.0), installed);
-    let version = Command::new(f.runtime()).arg("--version").output().unwrap();
+    let version = support::papertiger_command(f.runtime())
+        .arg("--version")
+        .output()
+        .unwrap();
     assert!(
         version.status.success(),
         "{}",
@@ -119,7 +123,10 @@ fn personal_skills_are_release_owned_and_runtime_receipt_names_its_release() {
     }));
     f.install();
     fs::write(f.skill(), "Modified installed skill").unwrap();
-    let runtime = Command::new(f.runtime()).arg("--version").output().unwrap();
+    let runtime = support::papertiger_command(f.runtime())
+        .arg("--version")
+        .output()
+        .unwrap();
     assert!(
         runtime.status.success(),
         "{}",
@@ -136,7 +143,10 @@ fn personal_skills_are_release_owned_and_runtime_receipt_names_its_release() {
     );
     receipt["version"] = Value::String("0.1.0".into());
     fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
-    let runtime = Command::new(f.runtime()).arg("--version").output().unwrap();
+    let runtime = support::papertiger_command(f.runtime())
+        .arg("--version")
+        .output()
+        .unwrap();
     assert!(
         !runtime.status.success(),
         "a runtime whose receipt names another release must refuse"
@@ -156,7 +166,7 @@ fn personal_skills_are_release_owned_and_runtime_receipt_names_its_release() {
     assert!(!f.skill().exists());
     f.install();
     assert!(
-        Command::new(f.runtime())
+        support::papertiger_command(f.runtime())
             .arg("--version")
             .output()
             .unwrap()
@@ -205,7 +215,7 @@ fn personal_receipt_cannot_claim_foreign_paths_or_downgrade() {
 fn missing_runtime_repairs_but_installed_runtime_cannot_overwrite_itself() {
     let f = Fixture::new();
     f.install();
-    let output = Command::new(f.runtime())
+    let output = support::papertiger_command(f.runtime())
         .arg("setup-user")
         .arg("--home")
         .arg(&f.0)
@@ -264,7 +274,7 @@ fn setup_finishes_interrupted_initialization_without_replacing_authority() {
     let f = Fixture::new();
     let db = f.0.join(".local/share/papertiger/state/papertiger.sqlite");
     fs::create_dir_all(db.parent().unwrap()).unwrap();
-    let initialized = Command::new(BINARY)
+    let initialized = support::papertiger_command(BINARY)
         .arg("--db")
         .arg(&db)
         .arg("init")
@@ -272,7 +282,7 @@ fn setup_finishes_interrupted_initialization_without_replacing_authority() {
         .unwrap();
     assert!(initialized.status.success());
     f.install();
-    let output = Command::new(f.runtime())
+    let output = support::papertiger_command(f.runtime())
         .arg("--db")
         .arg(&db)
         .args(["plan", "list", "--json"])
@@ -292,7 +302,7 @@ fn personal_default_uses_project_receipts_before_private_store_from_nested_cwd()
     let nested = project.0.join("nested/work");
     fs::create_dir_all(&nested).unwrap();
     let status = || {
-        let output = Command::new(home.runtime())
+        let output = support::papertiger_command(home.runtime())
             .args(["status", "--json"])
             .current_dir(&nested)
             .env_remove("PAPERTIGER_DB")
@@ -306,7 +316,7 @@ fn personal_default_uses_project_receipts_before_private_store_from_nested_cwd()
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
     assert_eq!(status()["active_plans"][0]["plan"]["slug"], "personal");
-    let install = Command::new(BINARY)
+    let install = support::papertiger_command(BINARY)
         .arg("setup-project")
         .arg(&project.0)
         .args(["--skill-target", "none"])
@@ -324,7 +334,7 @@ fn personal_default_uses_project_receipts_before_private_store_from_nested_cwd()
             "Existing project authority",
         ],
     ] {
-        let output = Command::new(BINARY)
+        let output = support::papertiger_command(BINARY)
             .arg("--project-root")
             .arg(&project.0)
             .args(args)

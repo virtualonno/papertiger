@@ -36,9 +36,11 @@ each under 32 KiB.
 - `papertiger init` is the only migration path. Read commands refuse older
   schemas with the exact command to run; run it deliberately, never as a
   reflex inside a script.
-- Set `PAPERTIGER_ACTOR` to a concise author label before mutating;
-  unattributed events make cold history unreadable. It is event provenance,
-  never task ownership or session liveness.
+- Every planner write records the model that authored it: pass `--model
+  <your-model-id>` or launch with `PAPERTIGER_MODEL` set (`human` only for
+  manual operator use, refused inside a harness). Harness, session and the
+  default actor label come from the environment. Authorship is event
+  provenance, never task ownership or session liveness.
 - One canonical planning worktree owns the DB. Never initialize or mutate a
   forked copy from another worktree; `export` is transfer/recovery, not a
   second authority.

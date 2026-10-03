@@ -1,3 +1,4 @@
+mod support;
 use papertiger as pt;
 use rusqlite::Connection;
 
@@ -14,6 +15,7 @@ const GUARDS: [&str; 7] = [
 fn authority() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     let plan = pt::add_plan(&conn, "test", "work", "Work", "Guard history").unwrap();
     pt::add_task(
         &conn,
@@ -215,6 +217,7 @@ fn import_accepts_rfc3339_offsets_under_the_guard() {
     }
     let restored = Connection::open_in_memory().unwrap();
     pt::init(&restored).unwrap();
+    support::author(&restored);
     pt::import(&restored, "restore", &dump).unwrap();
     let offset_events: i64 = restored
         .query_row(
@@ -243,6 +246,7 @@ fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
     let path = database_path("raw");
     let conn = Connection::open(&path).unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     let plan = pt::add_plan(&conn, "test", "work", "Work", "").unwrap();
     pt::add_task(
         &conn,
@@ -271,6 +275,7 @@ fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
     assert_eq!(pt::get_task(&raw, 1).unwrap().status, "proposed");
     // Opening via the public API is still read-only until mutation entry.
     let api = pt::open_existing(path.to_str().unwrap()).unwrap();
+    support::author(&api);
     assert!(
         refusal(&api, "UPDATE tasks SET priority=4")
             .contains("papertiger_write_requires_public_api")
@@ -318,6 +323,7 @@ fn guard_drift_blocks_writes_but_never_reads_and_repair_restores_it() {
         let db = path.to_str().unwrap();
         let conn = Connection::open(&path).unwrap();
         pt::init(&conn).unwrap();
+        support::author(&conn);
         let plan = pt::add_plan(&conn, "test", "work", "Work", "Keep").unwrap();
         pt::add_task(
             &conn,
@@ -348,6 +354,8 @@ fn guard_drift_blocks_writes_but_never_reads_and_repair_restores_it() {
         drop(reader);
 
         let repair = pt::open_existing_for_guard_repair(db).unwrap();
+
+        support::author(&repair);
         let repaired =
             pt::repair_write_guards(&repair, "operator", "agent dropped a guard").unwrap();
         assert_eq!(repaired.len(), 1, "{alteration}");
@@ -359,6 +367,8 @@ fn guard_drift_blocks_writes_but_never_reads_and_repair_restores_it() {
         drop(repair);
 
         let conn = pt::open_existing(db).unwrap();
+
+        support::author(&conn);
         assert!(pt::audit(&conn).unwrap().is_empty());
         let payload: String = conn
             .query_row(
@@ -382,6 +392,7 @@ fn foreign_triggers_are_drift_and_repair_removes_them() {
     let db = path.to_str().unwrap();
     let conn = Connection::open(&path).unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     let plan = pt::add_plan(&conn, "test", "work", "Work", "Keep").unwrap();
     pt::add_task(
         &conn,
@@ -414,6 +425,8 @@ fn foreign_triggers_are_drift_and_repair_removes_them() {
     drop(reader);
 
     let repair = pt::open_existing_for_guard_repair(db).unwrap();
+
+    support::author(&repair);
     let repaired = pt::repair_write_guards(&repair, "operator", "agent added a trigger").unwrap();
     assert_eq!(repaired.len(), 1);
     assert_eq!(repaired[0].name, "foreign_touch");
@@ -428,6 +441,8 @@ fn foreign_triggers_are_drift_and_repair_removes_them() {
     drop(repair);
 
     let conn = pt::open_existing(db).unwrap();
+
+    support::author(&conn);
     pt::add_note(&conn, "agent", Some(1), "after repair", None).unwrap();
     assert_eq!(pt::get_task(&conn, 1).unwrap().title, "Task");
     assert!(pt::audit(&conn).unwrap().is_empty());
@@ -449,6 +464,7 @@ fn altered_history_view_refuses_reads_until_repaired() {
     let db = path.to_str().unwrap();
     let conn = Connection::open(&path).unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     conn.execute_batch(
         "DROP VIEW canonical_events; CREATE VIEW canonical_events AS SELECT * FROM events WHERE 0",
     )
@@ -461,6 +477,7 @@ fn altered_history_view_refuses_reads_until_repaired() {
         assert!(error.contains("papertiger repair-guards --why"), "{error}");
     }
     let repair = pt::open_existing_for_guard_repair(db).unwrap();
+    support::author(&repair);
     let repaired = pt::repair_write_guards(&repair, "operator", "view replaced").unwrap();
     assert_eq!(repaired.len(), 1);
     assert_eq!(repaired[0].name, "canonical_events");
@@ -485,6 +502,7 @@ fn repair_requires_a_reason() {
     let path = database_path("reason");
     let conn = Connection::open(&path).unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     assert!(pt::repair_write_guards(&conn, "operator", " ").is_err());
     drop(conn);
     std::fs::remove_file(path).unwrap();

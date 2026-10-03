@@ -1,3 +1,4 @@
+mod support;
 use papertiger as pt;
 use rusqlite::Connection;
 
@@ -15,6 +16,7 @@ fn no_edit() -> pt::TaskEdit<'static> {
 fn fixture() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     let plan = pt::add_plan(&conn, "test", "work", "Work", "Preserve work").unwrap();
     pt::add_task(
         &conn,
@@ -49,7 +51,7 @@ fn text_priority_refuses_reads_and_explicit_edit_preserves_original_evidence() {
             .iter()
             .any(|finding| finding.kind == "invalid_task_priority")
     );
-    let recorder = pt::MutationRecorder::new(&conn, None).unwrap();
+    let recorder = pt::MutationRecorder::new(&conn).unwrap();
     let changed = pt::edit_task(
         &conn,
         "recovery",
@@ -89,6 +91,7 @@ fn text_priority_refuses_reads_and_explicit_edit_preserves_original_evidence() {
     let dump = pt::export(&conn, None).unwrap();
     let restored = Connection::open_in_memory().unwrap();
     pt::init(&restored).unwrap();
+    support::author(&restored);
     pt::import(&restored, "restore", &dump).unwrap();
     assert_eq!(pt::get_task(&restored, 1).unwrap().priority, 0);
     assert!(pt::audit(&restored).unwrap().is_empty());

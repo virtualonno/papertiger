@@ -1,6 +1,7 @@
+mod support;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "cli/schema_contracts.rs"]
@@ -12,7 +13,7 @@ mod task_outline;
 fn session_pickup_is_visible_advisory_and_requires_no_release() {
     let db = TestDatabase::new("session-pickup");
     let invoke = |session: &str, args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .arg("--db")
             .arg(&db.0)
             .args(args)
@@ -83,7 +84,7 @@ fn session_pickup_is_visible_advisory_and_requires_no_release() {
 #[test]
 fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     let project = TestDirectory::new("progressive-reads");
-    let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("setup-project")
         .arg(&project.0)
         .args(["--skill-target", "none"])
@@ -93,7 +94,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
         .unwrap();
     assert_success(&setup);
     let invoke = |args: &[&str]| {
-        Command::new(installed_papertiger(&project.0))
+        support::papertiger_command(installed_papertiger(&project.0))
             .args(args)
             .current_dir(&project.0)
             .env_remove("PAPERTIGER_DB")
@@ -508,6 +509,96 @@ fn tag_and_dependency_edits_take_an_optional_reason_and_transitions_keep_theirs(
 }
 
 #[test]
+fn every_write_records_a_reported_model_and_the_harness_supplies_the_rest() {
+    let db = TestDatabase::new("authorship");
+    let command = |args: &[&str], env: &[(&str, &str)]| {
+        let mut command = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"));
+        command
+            .env_remove("PAPERTIGER_MODEL")
+            .arg("--db")
+            .arg(&db.0)
+            .args(args);
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        command.output().expect("run papertiger")
+    };
+    let operator = [("PAPERTIGER_MODEL", "human")];
+    assert_success(&command(&["init"], &[]));
+    assert_success(&command(&["plan", "add", "work", "Work"], &operator));
+
+    let refused = command(&["add", "--kind", "feature", "Unattributed"], &[]);
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("pass --model <model-id>") && stderr.contains("PAPERTIGER_MODEL=human"),
+        "{stderr}"
+    );
+    assert_success(&command(&["status"], &[]));
+
+    let claude = [
+        ("CLAUDE_CODE_SESSION_ID", "abcdef1234-5678"),
+        ("CLAUDE_EFFORT", "high"),
+    ];
+    let human_in_harness = command(
+        &["add", "--kind", "feature", "Pretend operator"],
+        &[claude[0], claude[1], ("PAPERTIGER_MODEL", "human")],
+    );
+    assert!(!human_in_harness.status.success());
+    assert!(
+        String::from_utf8_lossy(&human_in_harness.stderr).contains("runs inside Claude Code"),
+        "{}",
+        String::from_utf8_lossy(&human_in_harness.stderr)
+    );
+    let runtime = command(
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "Pretend runtime",
+            "--model",
+            "runtime",
+        ],
+        &claude,
+    );
+    assert!(!runtime.status.success());
+
+    let added = command(
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "Attributed",
+            "--model",
+            "Claude-Opus-5-5",
+            "--json",
+        ],
+        &claude,
+    );
+    assert_success(&added);
+    let receipt: serde_json::Value = serde_json::from_slice(&added.stdout).unwrap();
+    let event = &receipt["events"][0]["event"];
+    assert_eq!(event["actor"], "claude-abcdef12");
+    assert_eq!(event["model"], "claude-opus-5-5");
+    assert_eq!(event["model_source"], "flag");
+    assert_eq!(event["harness"], "Claude Code");
+    assert_eq!(event["session"], "abcdef1234-5678");
+    assert_eq!(event["reasoning_effort"], "high");
+
+    let plan_event = command(&["log", "--json"], &[]);
+    let log: serde_json::Value = serde_json::from_slice(&plan_event.stdout).unwrap();
+    let plan_create = log["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["entity"] == "plan")
+        .unwrap();
+    assert_eq!(plan_create["actor"], "operator");
+    assert_eq!(plan_create["model"], "human");
+    assert_eq!(plan_create["model_source"], "environment");
+}
+
+#[test]
 fn breadcrumbs_place_each_task_and_a_goal_surfaces_for_closing() {
     let db = TestDatabase::new("breadcrumbs");
     let run = |args: &[&str]| {
@@ -834,7 +925,7 @@ fn a_reader_that_closes_the_pipe_ends_output_without_failure() {
         &outline.to_string(),
     ));
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let mut child = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("--db")
         .arg(&db.0)
         .arg("list")
@@ -930,7 +1021,7 @@ fn reasoning_effort_uses_environment_and_explicit_flags_without_inference() {
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
     let run = |args: &[&str], model: Option<&str>, effort: Option<&str>| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_papertiger"));
+        let mut command = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"));
         command
             .arg("--db")
             .arg(&db.0)
@@ -1952,7 +2043,7 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
 #[test]
 fn new_file_evidence_resolves_against_the_discovered_project_from_a_subdirectory() {
     let project = TestDirectory::new("file-evidence-discovered");
-    let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("setup-project")
         .arg(&project.0)
         .args(["--skill-target", "none"])
@@ -1964,7 +2055,7 @@ fn new_file_evidence_resolves_against_the_discovered_project_from_a_subdirectory
     std::fs::create_dir_all(project.0.join("docs")).unwrap();
     std::fs::write(project.0.join("docs/proof.txt"), b"proof\n").unwrap();
     let invoke = |args: &[&str]| {
-        Command::new(installed_papertiger(&project.0))
+        support::papertiger_command(installed_papertiger(&project.0))
             .args(args)
             .current_dir(project.0.join("docs"))
             .env_remove("PAPERTIGER_DB")
@@ -2047,7 +2138,7 @@ fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
     let db = TestDatabase(root.0.join("state/papertiger.sqlite"));
     let root_text = root.0.to_str().unwrap();
     let in_project = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .args(["--project-root", root_text])
             .args(args)
             .output()
@@ -2351,7 +2442,7 @@ fn evidence_verification_json_is_summary_first_filtered_and_pageable() {
     assert!(arguments.windows(2).any(|pair| pair[0] == "--after-cursor"));
     assert!(arguments.ends_with(&["--json".to_owned()]));
 
-    let second = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let second = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(&arguments)
         .output()
         .expect("run evidence continuation argv");
@@ -2414,7 +2505,7 @@ impl Drop for TestDatabase {
 }
 
 fn papertiger(db: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("--db")
         .arg(db)
         .args(args)
@@ -2423,7 +2514,7 @@ fn papertiger(db: &Path, args: &[&str]) -> Output {
 }
 
 fn papertiger_with_stdin(db: &Path, args: &[&str], input: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let mut child = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("--db")
         .arg(db)
         .args(args)
@@ -2451,7 +2542,7 @@ fn assert_success(output: &Output) {
 }
 
 fn command_help(args: &[&str]) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(args)
         .arg("--help")
         .output()
@@ -2495,7 +2586,7 @@ fn setup_project_refuses_planning_globals_before_writing() {
     std::fs::create_dir(&project).expect("create empty setup target");
     let ignored_db = project.join("ignored.sqlite");
 
-    let db = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let db = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("--db")
         .arg(&ignored_db)
         .arg("setup-project")
@@ -2518,7 +2609,7 @@ fn setup_project_refuses_planning_globals_before_writing() {
         "--db refusal must precede every setup write"
     );
 
-    let actor = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let actor = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("setup-project")
         .arg(&project)
         .arg("--actor")
@@ -2549,7 +2640,7 @@ fn setup_project_refuses_planning_globals_before_writing() {
             "records no planning events",
         ),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .arg(flag)
             .arg(value)
             .arg("uninstall-project")
@@ -2575,7 +2666,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
     std::fs::create_dir(&foreign).expect("create foreign project");
 
     for project in [&canonical, &foreign] {
-        let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .arg("setup-project")
             .arg(project)
             .args(["--skill-target", "none"])
@@ -2585,7 +2676,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
             .expect("install Papertiger consumer");
         assert_success(&setup);
 
-        let init = Command::new(installed_papertiger(project))
+        let init = support::papertiger_command(installed_papertiger(project))
             .arg("init")
             .current_dir(project)
             .env_remove("PAPERTIGER_DB")
@@ -2599,7 +2690,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
         } else {
             "foreign"
         };
-        let plan = Command::new(installed_papertiger(project))
+        let plan = support::papertiger_command(installed_papertiger(project))
             .args(["plan", "add", slug, "Consumer plan"])
             .current_dir(project)
             .env_remove("PAPERTIGER_DB")
@@ -2609,7 +2700,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
         assert_success(&plan);
     }
 
-    let foreign_before = Command::new(installed_papertiger(&foreign))
+    let foreign_before = support::papertiger_command(installed_papertiger(&foreign))
         .args(["status", "--json"])
         .current_dir(&foreign)
         .env_remove("PAPERTIGER_DB")
@@ -2620,7 +2711,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
     let foreign_before: serde_json::Value =
         serde_json::from_slice(&foreign_before.stdout).expect("parse foreign status");
 
-    let add = Command::new(installed_papertiger(&canonical))
+    let add = support::papertiger_command(installed_papertiger(&canonical))
         .arg("--project-root")
         .arg(&canonical)
         .args([
@@ -2645,7 +2736,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
         .expect("add canonical task from foreign project");
     assert_success(&add);
 
-    let canonical_task = Command::new(installed_papertiger(&canonical))
+    let canonical_task = support::papertiger_command(installed_papertiger(&canonical))
         .args(["show", "1", "--json"])
         .current_dir(&canonical)
         .env_remove("PAPERTIGER_DB")
@@ -2660,7 +2751,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
         "Canonical cross-project outcome"
     );
 
-    let foreign_after = Command::new(installed_papertiger(&foreign))
+    let foreign_after = support::papertiger_command(installed_papertiger(&foreign))
         .args(["status", "--json"])
         .current_dir(&foreign)
         .env_remove("PAPERTIGER_DB")
@@ -2682,7 +2773,7 @@ fn explicit_project_root_init_creates_only_the_receipt_selected_authority() {
     let sandbox = TestDirectory::new("explicit-project-root-init");
     let project = sandbox.0.join("installed");
     std::fs::create_dir(&project).expect("create installed project");
-    let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("setup-project")
         .arg(&project)
         .args([
@@ -2697,7 +2788,7 @@ fn explicit_project_root_init_creates_only_the_receipt_selected_authority() {
         .expect("install Papertiger consumer");
     assert_success(&setup);
 
-    let init = Command::new(installed_papertiger(&project))
+    let init = support::papertiger_command(installed_papertiger(&project))
         .arg("--project-root")
         .arg(&project)
         .arg("init")
@@ -2722,7 +2813,7 @@ fn explicit_project_root_selects_existing_default_authority_without_receipt() {
     std::fs::create_dir(&elsewhere).expect("create unrelated working directory");
     let authority = project.join("state/papertiger.sqlite");
     let invoke = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .args(args)
             .current_dir(&elsewhere)
             .env_remove("PAPERTIGER_DB")
@@ -2770,7 +2861,7 @@ fn explicit_project_root_refuses_missing_receipt_and_ambiguous_database_selectio
     let missing = sandbox.0.join("missing-receipt");
     std::fs::create_dir(&missing).expect("create uninstalled project");
 
-    let missing_receipt = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let missing_receipt = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("--project-root")
         .arg(&missing)
         .arg("status")
@@ -2788,7 +2879,7 @@ fn explicit_project_root_refuses_missing_receipt_and_ambiguous_database_selectio
         "{error}"
     );
     assert!(error.contains("setup-project"), "{error}");
-    let missing_init = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let missing_init = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("--project-root")
         .arg(&missing)
         .arg("init")
@@ -2807,7 +2898,7 @@ fn explicit_project_root_refuses_missing_receipt_and_ambiguous_database_selectio
 
     let installed = sandbox.0.join("installed");
     std::fs::create_dir(&installed).expect("create installed project");
-    let setup = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("setup-project")
         .arg(&installed)
         .args(["--skill-target", "none"])
@@ -2819,7 +2910,7 @@ fn explicit_project_root_refuses_missing_receipt_and_ambiguous_database_selectio
 
     let nested = installed.join("nested");
     std::fs::create_dir(&nested).expect("create nested project directory");
-    let nested_root = Command::new(installed_papertiger(&installed))
+    let nested_root = support::papertiger_command(installed_papertiger(&installed))
         .arg("--project-root")
         .arg(&nested)
         .arg("status")
@@ -2840,7 +2931,7 @@ fn explicit_project_root_refuses_missing_receipt_and_ambiguous_database_selectio
     assert!(!nested.join("state").exists());
 
     let override_db = sandbox.0.join("override.sqlite");
-    let explicit_override = Command::new(installed_papertiger(&installed))
+    let explicit_override = support::papertiger_command(installed_papertiger(&installed))
         .arg("--db")
         .arg(&override_db)
         .arg("--project-root")
@@ -2855,7 +2946,7 @@ fn explicit_project_root_refuses_missing_receipt_and_ambiguous_database_selectio
     assert!(error.contains("one canonical authority"), "{error}");
     assert!(!override_db.exists());
 
-    let environment_override = Command::new(installed_papertiger(&installed))
+    let environment_override = support::papertiger_command(installed_papertiger(&installed))
         .arg("--project-root")
         .arg(&installed)
         .arg("status")
@@ -3426,7 +3517,7 @@ fn long_text_sources_refuse_ambiguous_missing_and_blank_input() {
 
 #[test]
 fn long_text_help_names_utf8_files_and_stdin() {
-    let add = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let add = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["add", "--help"])
         .output()
         .unwrap();
@@ -3438,7 +3529,7 @@ fn long_text_help_names_utf8_files_and_stdin() {
         "{add}"
     );
 
-    let note = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let note = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["note", "--help"])
         .output()
         .unwrap();

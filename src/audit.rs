@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::{
     ASSIGNABLE_TASK_KINDS, LEGACY_TASK_KIND, MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES,
     TASK_STATUSES, TaskPickup, external_references, get_task, history_recovery,
-    meaning_source_requires_text, mise_projection, mutation, pickup, plan_move, priority_recovery,
+    meaning_source_requires_text, mise_projection, pickup, plan_move, priority_recovery,
     suggested_task_kind, task_graph, valid_task_definition_revision_payload, validate_commit_oid,
     validate_new_evidence_locator, validate_optional_sha256, write_guard,
 };
@@ -331,12 +331,10 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
             (_, "note") => Some("meaning_source"),
             _ => None,
         };
-        if let Err(error) = mutation::payload_model(parsed_payload.as_ref()) {
-            push("invalid_event_model", format!("event {event_id}: {error}"));
-        }
-        if let Err(error) = mutation::payload_reasoning_effort(parsed_payload.as_ref()) {
+        if let Err(error) = crate::authorship::validate_payload_authorship(parsed_payload.as_ref())
+        {
             push(
-                "invalid_event_reasoning_effort",
+                "invalid_event_authorship",
                 format!("event {event_id}: {error}"),
             );
         }

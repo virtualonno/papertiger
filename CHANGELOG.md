@@ -20,6 +20,20 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   `legacy_task_kind` with a title-based suggestion and the `edit --kind`
   command that retypes it.
 - Bug tasks, like probes and decisions, require `--result` before `done`.
+- Every planner write records its author, and a write without a model is
+  refused, at the CLI and in the library (`set_authorship` before mutating).
+  The model comes from `--model` or `PAPERTIGER_MODEL`, recorded as
+  `model_source` `flag` or `environment`, and is stored lowercased. `human`
+  records manual operator use and is refused inside a detected harness;
+  `runtime` is reserved for transitions the tool performs itself (setup's own
+  plan). Harness and session are derived from Claude Code, Codex, pi, OpenCode
+  and Cursor variables, Claude Code's effort from `CLAUDE_EFFORT`, and the
+  actor label defaults to harness plus short session (`claude-e2affada`), the
+  operator for `human`, or the model. Events, activity and receipts carry
+  `model_source`, `harness` and `session`. `MutationRecorder::new` now only
+  captures receipts. Audit reports malformed authorship as
+  `invalid_event_authorship`. A subagent inherits its parent's environment;
+  pass `--model` where a launch-time model could be wrong.
 - `show` and `focus` place each task by its ancestors: a `path: G-1 › F-2`
   line in `show`, an `[in G-1 › F-2]` suffix in `focus`, and an `ancestry`
   list of handles (root first) in both JSON documents. Hierarchy stays a

@@ -1,9 +1,9 @@
+mod support;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -41,7 +41,7 @@ impl Fixture {
     fn run(&self, args: &[&str]) -> std::process::Output {
         let cwd = self.0.join("nested/work");
         fs::create_dir_all(&cwd).unwrap();
-        Command::new(self.native())
+        support::papertiger_command(self.native())
             .args(args)
             .current_dir(cwd)
             .env_remove("PAPERTIGER_DB")
@@ -60,7 +60,7 @@ impl Fixture {
     }
     /// Run setup-project from the external release binary, as an upgrade does.
     fn setup(&self, args: &[&str]) -> std::process::Output {
-        Command::new(BINARY)
+        support::papertiger_command(BINARY)
             .arg("setup-project")
             .arg(&self.0)
             .args(args)

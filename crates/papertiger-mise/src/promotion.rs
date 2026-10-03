@@ -301,6 +301,8 @@ mod tests {
         let database = path.to_str().expect("UTF-8 temp path");
         let conn = papertiger::open_for_init(database).expect("open planner database");
         papertiger::init(&conn).expect("planner schema");
+        papertiger::set_authorship(&conn, &papertiger::Authorship::runtime("fixture"))
+            .expect("fixture authorship");
         let plan =
             papertiger::add_plan(&conn, "test", "fixture", "Fixture", "").expect("fixture plan");
         let task = papertiger::add_task(

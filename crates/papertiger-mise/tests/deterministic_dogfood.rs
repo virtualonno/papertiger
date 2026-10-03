@@ -1275,6 +1275,11 @@ impl DogfoodFixture {
         )
         .expect("open planner authority");
         papertiger::init(&planner).expect("planner schema");
+        papertiger::set_authorship(
+            &planner,
+            &papertiger::Authorship::runtime("independent-operator"),
+        )
+        .expect("planner authorship");
         let plan = papertiger::add_plan(
             &planner,
             "independent-operator",
@@ -1377,6 +1382,11 @@ impl DogfoodFixture {
                 .expect("portable test planner database path"),
         )
         .expect("reopen planner authority");
+        papertiger::set_authorship(
+            &planner,
+            &papertiger::Authorship::runtime("independent-operator"),
+        )
+        .expect("planner authorship");
         papertiger::reopen_gate(
             &planner,
             "independent-operator",
@@ -1457,6 +1467,11 @@ impl DogfoodFixture {
                 .expect("portable test planner database path"),
         )
         .expect("reopen planner for divergent replay");
+        papertiger::set_authorship(
+            &planner,
+            &papertiger::Authorship::runtime("independent-operator"),
+        )
+        .expect("planner authorship");
         papertiger::reopen_gate(
             &planner,
             "independent-operator",

@@ -1,3 +1,4 @@
+mod support;
 use papertiger as pt;
 use rusqlite::Connection;
 use std::sync::{Arc, Barrier};
@@ -6,6 +7,7 @@ use std::sync::{Arc, Barrier};
 fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
     let conn = Connection::open_in_memory().unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     let narrative = "long durable context ".repeat(3000);
     let plan = pt::add_plan(&conn, "test", "work", "Work", &narrative).unwrap();
     let add = |title| {
@@ -65,6 +67,7 @@ fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
 
 fn seed(conn: &Connection) -> (i64, i64, i64) {
     pt::init(conn).unwrap();
+    support::author(conn);
     pt::add_plan(conn, "test", "work", "Work", "").unwrap();
     let (plan, _) = pt::resolve_plan(conn, Some("work")).unwrap();
     let add =
@@ -144,6 +147,7 @@ fn pickup_survives_recovery_but_never_becomes_an_imported_lock() {
     let dump = serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap();
     let restored = Connection::open_in_memory().unwrap();
     pt::init(&restored).unwrap();
+    support::author(&restored);
     pt::import(
         &restored,
         "restore",
@@ -159,6 +163,7 @@ fn pickup_survives_recovery_but_never_becomes_an_imported_lock() {
     for (field, value) in [("at", "not-a-time"), ("session", "bad session")] {
         let empty = Connection::open_in_memory().unwrap();
         pt::init(&empty).unwrap();
+        support::author(&empty);
         let mut corrupt = dump.clone();
         corrupt["tasks"][0]["pickup"][field] = value.into();
         assert!(pt::import(&empty, "restore", &serde_json::from_value(corrupt).unwrap()).is_err());
@@ -184,6 +189,7 @@ fn concurrent_explicit_pickup_is_serialized_history_not_exclusive_execution() {
         let barrier = barrier.clone();
         std::thread::spawn(move || {
             let conn = pt::open_existing(path.to_str().unwrap()).unwrap();
+            support::author(&conn);
             barrier.wait();
             pt::start_task(&conn, "same-harness", first, None, Some(session)).unwrap();
         })

@@ -5,6 +5,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use papertiger as pt;
 use serde::{Deserialize, Serialize};
 
 const TOOL: &str = "papertiger";
@@ -426,16 +427,19 @@ fn provision_authority(home: &Path) -> Result<()> {
         .iter()
         .any(|plan| plan["slug"] == "personal")
     {
-        authority_command(
-            home,
-            &[
-                "plan",
-                "add",
-                "personal",
-                "Personal work",
-                "--intent",
-                "Private durable work across consuming projects; task intent records the owning project root.",
-            ],
+        // Setup provisions its own plan: a transition the tool performs itself.
+        let path = authority(home)?;
+        let conn = pt::open_existing(
+            path.to_str()
+                .context("personal authority path is not valid UTF-8")?,
+        )?;
+        pt::set_authorship(&conn, &pt::Authorship::runtime("setup-user"))?;
+        pt::add_plan(
+            &conn,
+            "setup-user",
+            "personal",
+            "Personal work",
+            "Private durable work across consuming projects; task intent records the owning project root.",
         )?;
     }
     Ok(())

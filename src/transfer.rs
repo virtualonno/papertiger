@@ -10,7 +10,7 @@ use crate::{
     Task, TaskBlocker, TaskPickup, add_dep_inner, begin_mutation, commit_associations,
     entry_blockers, external_reference, external_references, find_cycle, get_task,
     history_recovery, invalid_replacement_terminals, live_child_sequences,
-    meaning_source_requires_text, mise_projection, mutation, now, pickup, plan_move,
+    meaning_source_requires_text, mise_projection, now, pickup, plan_move,
     record_event_in_mutation, replacement_repair_instruction, require_nonblank, task_blockers,
     task_from_row, terminal_replacement_repair_instruction, validate_commit_oid,
     validate_meaning_source, validate_new_evidence_locator, validate_optional_sha256, validate_tag,
@@ -987,8 +987,7 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
         if event.kind == "quarantine_event" {
             history_recovery::validate_envelope(event.payload.as_ref())?;
         }
-        mutation::payload_model(event.payload.as_ref())?;
-        mutation::payload_reasoning_effort(event.payload.as_ref())?;
+        crate::authorship::validate_payload_authorship(event.payload.as_ref())?;
         let at = event.at.trim();
         if at.is_empty() || event.actor.trim().is_empty() || event.kind.trim().is_empty() {
             bail!("import event has a blank timestamp, actor, or kind");

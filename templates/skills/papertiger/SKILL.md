@@ -28,10 +28,10 @@ authorize removing guards or manufacturing admission; use the corrective command
 or preserve the blocker. Only for a genuinely new authority, read
 [first use](../../../tools/papertiger/agent_integration.md#first-use).
 
-Before mutating, set `PAPERTIGER_ACTOR` to a concise author label and
-`PAPERTIGER_SESSION` to one unique session ID, and reuse them (`--actor` and
-`--session` work when the shell drops environment). Set `PAPERTIGER_MODEL` and
-`PAPERTIGER_REASONING_EFFORT` only to known values.
+Every write records the model that authored it: pass `--model <your exact
+model id>` unless `PAPERTIGER_MODEL` was set at launch, and never use `human`
+or `runtime`. Harness, session and actor label come from the environment;
+outside a harness set `PAPERTIGER_SESSION` to one unique session ID.
 
 ## Enter, work, finish
 

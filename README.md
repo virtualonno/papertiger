@@ -160,12 +160,22 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   tasks. A replay is refused by its duplicate titles only while the earlier
   children are still proposed or in progress; once they are finished, the same
   outline creates new children, so check `show <parent>` before retrying.
-- `--model <model-id>` or `PAPERTIGER_MODEL` optionally records caller-reported
-  event authorship independently of actor and meaning source. Creation,
-  completion, and status history expose it; historical unknowns remain null.
-  `--reasoning-effort` or `PAPERTIGER_REASONING_EFFORT` records known configured
-  effort separately alongside the model, such as `gpt-6-astra` and `high`.
-  This is attribution, not authenticated identity or a model-quality score.
+- Every write records its author, and a write without a model is refused.
+  The model comes from `--model <model-id>` (the agent's own report) or
+  `PAPERTIGER_MODEL` (configured where the session is launched), and each
+  event records which as `model_source` (`flag` or `environment`). Model ids
+  are stored lowercased. `PAPERTIGER_MODEL=human` records manual operator use
+  and is refused inside a detected harness, so an agent that inherits the
+  operator's shell is never recorded as the operator; `runtime` is reserved
+  for transitions the tool performs itself. The harness (Claude Code, Codex,
+  pi, OpenCode, Cursor) and its session come from the environment, as does
+  Claude Code's reasoning effort; `--reasoning-effort` or
+  `PAPERTIGER_REASONING_EFFORT` overrides it. The actor label defaults to the
+  harness and a short session id (`claude-e2affada`), the operator for
+  `human`, or else the model; `--actor`/`PAPERTIGER_ACTOR` overrides it. A
+  subagent inherits its parent's environment, so a model set at launch can
+  misattribute a subagent running another model; pass `--model` there. This is
+  attribution, not authenticated identity or a model-quality score.
 - `move-plan <N>... --plan <slug> --why <reason>` moves an explicitly selected
   related set atomically. Dependencies, hierarchy, replacement links, gates,
   references, status, and task identity remain intact. A partial set refuses
@@ -197,8 +207,8 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
 - Every change records an actor and an event; idempotent identified pickup emits none. Actor labels are provenance,
   never assignees, leases, session handles, or liveness signals; unfinished
   work remains `in_progress` across agent replacement without reassignment.
-- `--session <id>` or `PAPERTIGER_SESSION` records advisory task pickup separately
-  from actor provenance. `focus` prefers your session's work and available
+- The session (harness-derived, or `--session <id>`/`PAPERTIGER_SESSION`)
+  records advisory task pickup separately from actor provenance. `focus` prefers your session's work and available
   alternatives over work last picked up elsewhere. Another session's pickup is
   never a blocker: `start` resumes unfinished work directly, with no release,
   expiry, heartbeat, or harness integration. It does not detect liveness or
@@ -399,8 +409,7 @@ that root by the initiative or outcome that owns the work, not by every
 repository containing edited files. Keep a cross-repository outcome in one
 authority and record external commits there with stable `--repo` labels.
 
-Set `PAPERTIGER_ACTOR` to a concise author label before mutations. It describes
-who wrote an event, not who owns the task now. The native binary defaults to
+Authorship describes who wrote an event, not who owns the task now. The native binary defaults to
 the receipt-selected database at the project root. `PAPERTIGER_DB`
 or an explicit global `--db` deliberately overrides that default for
 operational use. Ordinary commands refuse combining those raw database

@@ -2,20 +2,18 @@
 //! published schema. Runs inside the ordinary workspace suite without Python.
 use super::{TestDatabase, assert_success};
 use serde_json::{Value, json};
-use std::process::Command;
 
 #[test]
 fn emitted_contracts_match_schema_and_reject_malformed_records() {
     let db = TestDatabase::new("schema-contracts");
     let invoke = |args: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        let output = super::support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .arg("--db")
             .arg(&db.0)
             .args(args)
             .env("PAPERTIGER_ACTOR", "schema-fixture")
             .env("PAPERTIGER_SESSION", "schema-fixture")
             .env_remove("PAPERTIGER_DB")
-            .env_remove("PAPERTIGER_MODEL")
             .env_remove("PAPERTIGER_REASONING_EFFORT")
             .output()
             .unwrap();

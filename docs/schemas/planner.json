@@ -272,6 +272,29 @@
         "model": {
           "$ref": "#/$defs/model"
         },
+        "model_source": {
+          "description": "How the model was reported: flag (the author's own report), environment (configured at launch) or runtime (a transition the tool performed itself); null on events recorded before authorship was required.",
+          "enum": [
+            "flag",
+            "environment",
+            "runtime",
+            null
+          ]
+        },
+        "harness": {
+          "description": "Harness the writing session ran in, when one was detected.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "description": "Session that wrote the event, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "reasoning_effort": {
           "$ref": "#/$defs/reasoning_effort"
         },
@@ -287,6 +310,9 @@
         "at",
         "actor",
         "model",
+        "model_source",
+        "harness",
+        "session",
         "entity",
         "kind"
       ],
@@ -370,6 +396,29 @@
         "model": {
           "$ref": "#/$defs/model"
         },
+        "model_source": {
+          "description": "How the model was reported: flag (the author's own report), environment (configured at launch) or runtime (a transition the tool performed itself); null on events recorded before authorship was required.",
+          "enum": [
+            "flag",
+            "environment",
+            "runtime",
+            null
+          ]
+        },
+        "harness": {
+          "description": "Harness the writing session ran in, when one was detected.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "description": "Session that wrote the event, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "reasoning_effort": {
           "$ref": "#/$defs/reasoning_effort"
         },
@@ -433,6 +482,9 @@
         "at",
         "actor",
         "model",
+        "model_source",
+        "harness",
+        "session",
         "entity",
         "kind",
         "plan",

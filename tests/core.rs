@@ -1,6 +1,7 @@
+mod support;
 use papertiger as pt;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn unique_test_path(stem: &str) -> PathBuf {
@@ -16,6 +17,7 @@ fn db() -> rusqlite::Connection {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     conn.pragma_update(None, "foreign_keys", "ON").unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     conn
 }
 
@@ -153,7 +155,7 @@ fn schema_migration_is_explicit_and_preserves_v1_plan_state() {
     let path = unique_test_path("explicit-v1-migration");
     create_v1_database(&path);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "status"])
         .output()
         .unwrap();
@@ -181,7 +183,7 @@ fn schema_migration_is_explicit_and_preserves_v1_plan_state() {
     assert!(!has_kind);
     drop(old);
 
-    let init = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let init = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "init"])
         .output()
         .unwrap();
@@ -191,6 +193,7 @@ fn schema_migration_is_explicit_and_preserves_v1_plan_state() {
         String::from_utf8_lossy(&init.stderr)
     );
     let migrated = pt::open_existing(path.to_str().unwrap()).unwrap();
+    support::author(&migrated);
     let task = pt::get_task(&migrated, 1).unwrap();
     assert_eq!(task.kind, "work");
     assert_eq!(task.result, None);
@@ -357,6 +360,7 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
     let path = unique_test_path("v14-migration");
     let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
     let parent = pt::add_task(
         &conn,
@@ -383,6 +387,7 @@ fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
         pt::init(&conn).unwrap(),
         pt::InitOutcome::Migrated { from: 13, to: 14 }
     );
+    support::author(&conn);
     let foreign_keys: i64 = conn
         .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
         .unwrap();
@@ -491,6 +496,7 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
     let path = unique_test_path("v12-migration");
     let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
     let task = pt::add_task(
         &conn,
@@ -542,14 +548,14 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
     .unwrap();
     drop(raw);
 
-    let refused = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let refused = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "status"])
         .output()
         .unwrap();
     assert!(
         String::from_utf8_lossy(&refused.stderr).contains("init` explicitly to upgrade to v14")
     );
-    let init = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let init = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "init"])
         .output()
         .unwrap();
@@ -561,6 +567,8 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
     assert!(String::from_utf8_lossy(&init.stdout).contains("from schema v12 to v14"));
 
     let migrated = pt::open_existing(path.to_str().unwrap()).unwrap();
+
+    support::author(&migrated);
     let context = pt::task_context(&migrated, task).unwrap();
     assert_eq!(context.gates[0].status, "resolved");
     assert_eq!(context.gates[0].resolved_at.as_deref(), Some(&*resolved_at));
@@ -660,7 +668,7 @@ fn cli_status_refuses_missing_database_without_creating_it() {
     let path = unique_test_path("missing-cli-open");
     assert!(!path.exists());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "status"])
         .output()
         .unwrap();
@@ -677,12 +685,12 @@ fn cli_status_refuses_missing_database_without_creating_it() {
         !path.exists(),
         "failed command must not create the database"
     );
-    let initialized = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let initialized = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "init"])
         .output()
         .unwrap();
     assert!(initialized.status.success());
-    let status = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let status = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "status"])
         .output()
         .unwrap();
@@ -695,7 +703,7 @@ fn cli_status_refuses_uninitialized_existing_file_without_mutating_it() {
     let path = unique_test_path("uninitialized-cli-open");
     std::fs::write(&path, []).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "status"])
         .output()
         .unwrap();
@@ -716,20 +724,20 @@ fn cli_init_creates_database_that_operational_commands_can_reopen() {
     let path = unique_test_path("explicit-cli-init");
     assert!(!path.exists());
 
-    let init = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let init = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "init"])
         .output()
         .unwrap();
     assert!(init.status.success());
     assert!(path.exists());
 
-    let status = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let status = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "status"])
         .output()
         .unwrap();
     assert!(status.status.success());
 
-    let current = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let current = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "init"])
         .output()
         .unwrap();
@@ -750,7 +758,7 @@ fn cli_reads_and_init_refuse_non_sqlite_bytes_with_corrective_context() {
     let before = std::fs::read(&path).unwrap();
 
     for command in ["status", "init"] {
-        let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+        let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .args(["--db", path.to_str().unwrap(), command])
             .output()
             .unwrap();
@@ -786,7 +794,7 @@ fn cli_init_refuses_foreign_sqlite_without_mutating_bytes() {
     drop(foreign);
     let before = std::fs::read(&path).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "init"])
         .output()
         .unwrap();
@@ -833,7 +841,7 @@ fn cli_init_refuses_foreign_header_state_without_mutating_bytes() {
     let before = std::fs::read(&path).unwrap();
     assert!(!before.is_empty());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "init"])
         .output()
         .unwrap();
@@ -927,10 +935,11 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
     let path = unique_test_path("sqlite-lock-grace");
     let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     pt::add_plan(&conn, "test", "first", "First", "").unwrap();
     let held_mutation = pt::begin_mutation(&conn).unwrap();
 
-    let overlapping = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let overlapping = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args([
             "--db",
             path.to_str().unwrap(),
@@ -954,7 +963,7 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
 
     let held_mutation = pt::begin_mutation(&conn).unwrap();
     let started = Instant::now();
-    let refused = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let refused = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args([
             "--db",
             path.to_str().unwrap(),
@@ -982,7 +991,7 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
     assert_eq!(event_count, 2, "refused command must not append an event");
 
     drop(held_mutation);
-    let retried = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let retried = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args([
             "--db",
             path.to_str().unwrap(),
@@ -1009,7 +1018,7 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
         .query_row("SELECT COUNT(*) FROM plans", [], |row| row.get(0))
         .unwrap();
     let started = Instant::now();
-    let refused_commit = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let refused_commit = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args([
             "--db",
             path.to_str().unwrap(),
@@ -1037,7 +1046,7 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
 
     drop(read_transaction);
     drop(reader);
-    let retried_commit = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let retried_commit = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args([
             "--db",
             path.to_str().unwrap(),
@@ -1058,7 +1067,7 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
         rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Exclusive)
             .unwrap();
     let started = Instant::now();
-    let refused_validation = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let refused_validation = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "plan", "list"])
         .output()
         .unwrap();
@@ -1066,7 +1075,7 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
     assert_bounded_lock_refusal(&refused_validation, elapsed, "authority validation");
     drop(exclusive);
 
-    let retried_read = Command::new(env!("CARGO_BIN_EXE_papertiger"))
+    let retried_read = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "plan", "list"])
         .output()
         .unwrap();
@@ -4266,6 +4275,7 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.pragma_update(None, "foreign_keys", "ON").unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
     pt::add_task(
         &conn,
@@ -4295,6 +4305,7 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
 
     let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
     pt::init(&conn).unwrap();
+    support::author(&conn);
     assert_eq!(pt::get_task(&conn, 1).unwrap().title, "preserved");
     let has_replacement: bool = conn
         .query_row(
