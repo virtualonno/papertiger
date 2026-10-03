@@ -791,11 +791,13 @@ dependencies = [
  "chrono",
  "clap",
  "jsonschema",
+ "libc",
  "rusqlite",
  "semver",
  "serde",
  "serde_json",
  "sha2",
+ "windows-sys",
 ]
 
 [[package]]

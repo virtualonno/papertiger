@@ -233,9 +233,9 @@ impl MeasuredProcess {
     /// independently captured identity instead.
     pub fn current() -> Result<Self> {
         let pid = std::process::id();
-        let crate::process_identity::ProcessObservation::Active {
+        let papertiger::process_identity::ProcessObservation::Active {
             process_birth_identity,
-        } = crate::process_identity::observe_process(pid)?
+        } = papertiger::process_identity::observe_process(pid)?
         else {
             bail!(
                 "measurement collector is not active; capture the measured process identity while it is running"

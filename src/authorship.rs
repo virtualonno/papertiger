@@ -25,6 +25,9 @@ pub struct Harness {
     /// Actor label prefix, e.g. `claude` in `claude-e2affada`.
     pub prefix: &'static str,
     pub session_variable: &'static str,
+    /// The harness process id, where the harness exposes it; a pickup
+    /// records it so a later reader can prove the owner has ended.
+    pub pid_variable: Option<&'static str>,
     /// Configured reasoning effort, where the harness exposes it.
     pub effort_variable: Option<&'static str>,
 }
@@ -34,30 +37,35 @@ pub const HARNESSES: &[Harness] = &[
         name: "Claude Code",
         prefix: "claude",
         session_variable: "CLAUDE_CODE_SESSION_ID",
+        pid_variable: Some("CLAUDE_PID"),
         effort_variable: Some("CLAUDE_EFFORT"),
     },
     Harness {
         name: "Codex",
         prefix: "codex",
         session_variable: "CODEX_THREAD_ID",
+        pid_variable: None,
         effort_variable: None,
     },
     Harness {
         name: "pi",
         prefix: "pi",
         session_variable: "PI_SESSION_ID",
+        pid_variable: None,
         effort_variable: None,
     },
     Harness {
         name: "OpenCode",
         prefix: "opencode",
         session_variable: "OPENCODE_SESSION_ID",
+        pid_variable: Some("OPENCODE_PID"),
         effort_variable: None,
     },
     Harness {
         name: "Cursor",
         prefix: "cursor",
         session_variable: "CURSOR_CONVERSATION_ID",
+        pid_variable: None,
         effort_variable: None,
     },
 ];
@@ -102,6 +110,9 @@ pub struct Authorship {
     pub model: String,
     pub model_source: ModelSource,
     pub reasoning_effort: Option<String>,
+    /// The harness process, observed when its harness names it; pickups
+    /// record it as their owner.
+    pub owner: Option<crate::PickupOwner>,
 }
 
 impl Authorship {
@@ -116,6 +127,7 @@ impl Authorship {
             model: RUNTIME_MODEL.to_owned(),
             model_source: ModelSource::Runtime,
             reasoning_effort: None,
+            owner: None,
         }
     }
 }
@@ -234,6 +246,7 @@ pub fn resolve_authorship(
         model,
         model_source,
         reasoning_effort,
+        owner: None,
     })
 }
 
@@ -264,7 +277,16 @@ pub fn resolve_session_from_env(flag: Option<&str>) -> Result<Option<String>> {
 
 /// Resolve authorship from flags and the process environment.
 pub fn resolve_authorship_from_env(flags: AuthorshipFlags<'_>) -> Result<Authorship> {
-    resolve_authorship(flags, &|name| std::env::var(name).ok())
+    let mut authorship = resolve_authorship(flags, &|name| std::env::var(name).ok())?;
+    // The harness process outlives each command, so a pickup can name it.
+    authorship.owner = HARNESSES
+        .iter()
+        .filter(|harness| Some(harness.name) == authorship.harness.as_deref())
+        .find_map(|harness| harness.pid_variable)
+        .and_then(|variable| std::env::var(variable).ok())
+        .and_then(|pid| pid.trim().parse::<u32>().ok())
+        .and_then(crate::observe_owner);
+    Ok(authorship)
 }
 
 /// Attribute every subsequent event written on this connection.
@@ -272,20 +294,53 @@ pub fn set_authorship(conn: &Connection, authorship: &Authorship) -> Result<()> 
     conn.execute_batch(
         "CREATE TEMP TABLE IF NOT EXISTS papertiger_authorship(
            harness TEXT, session TEXT, model TEXT NOT NULL, model_source TEXT NOT NULL,
-           reasoning_effort TEXT);
+           reasoning_effort TEXT, owner_host TEXT, owner_pid INTEGER, owner_process TEXT);
          DELETE FROM temp.papertiger_authorship;",
     )?;
     conn.execute(
-        "INSERT INTO temp.papertiger_authorship VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO temp.papertiger_authorship VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             authorship.harness,
             authorship.session,
             authorship.model,
             authorship.model_source.as_str(),
-            authorship.reasoning_effort
+            authorship.reasoning_effort,
+            authorship.owner.as_ref().map(|owner| &owner.host),
+            authorship.owner.as_ref().map(|owner| owner.pid),
+            authorship.owner.as_ref().map(|owner| &owner.process),
         ],
     )?;
     Ok(())
+}
+
+/// The owner process of the connection's authorship, if it was observed.
+pub(crate) fn current_owner(conn: &Connection) -> Result<Option<crate::PickupOwner>> {
+    let installed = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_temp_master WHERE type='table' AND name='papertiger_authorship'",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !installed {
+        return Ok(None);
+    }
+    let owner = conn
+        .query_row(
+            "SELECT owner_host, owner_pid, owner_process FROM temp.papertiger_authorship",
+            [],
+            |row| {
+                Ok(match (row.get(0)?, row.get(1)?, row.get(2)?) {
+                    (Some(host), Some(pid), Some(process)) => {
+                        Some(crate::PickupOwner { host, pid, process })
+                    }
+                    _ => None,
+                })
+            },
+        )
+        .optional()?;
+    Ok(owner.flatten())
 }
 
 /// The authorship fields an event payload records.
@@ -455,6 +510,7 @@ mod tests {
                 model: "claude-opus-5-5".into(),
                 model_source: ModelSource::Flag,
                 reasoning_effort: Some("medium".into()),
+                owner: None,
             }
         );
     }

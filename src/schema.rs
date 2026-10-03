@@ -162,8 +162,14 @@ fn tasks_table(name: &str) -> String {
   updated_at TEXT NOT NULL,
   pickup_session TEXT,
   pickup_at TEXT
-    CHECK ((pickup_session IS NULL AND pickup_at IS NULL) OR
-           (pickup_at IS NOT NULL AND status = 'in_progress'))
+    CHECK (((pickup_session IS NULL AND pickup_at IS NULL) OR
+            (pickup_at IS NOT NULL AND status = 'in_progress'))
+           AND (pickup_at IS NOT NULL OR pickup_host IS NULL)),
+  pickup_host TEXT,
+  pickup_pid INTEGER,
+  pickup_process TEXT
+    CHECK ((pickup_host IS NULL AND pickup_pid IS NULL AND pickup_process IS NULL) OR
+           (pickup_host IS NOT NULL AND pickup_pid > 0 AND pickup_process IS NOT NULL))
 );"#
     )
 }

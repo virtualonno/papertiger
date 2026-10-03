@@ -34,6 +34,14 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   captures receipts. Audit reports malformed authorship as
   `invalid_event_authorship`. A subagent inherits its parent's environment;
   pass `--model` where a launch-time model could be wrong.
+- A pickup records its owner process (host, PID and birth identity) when
+  the harness names it (`CLAUDE_PID`, `OPENCODE_PID`), and `focus`,
+  `status` and `show` report `owner_state`: `ended` only when provable on
+  the owner's host (PID gone, exited, or reused by a newer process),
+  `running`, or `unknown`. Text marks `owner ended`/`owner running` on the
+  pickup. Advisory only: nothing is locked, reassigned or transitioned, and
+  age proves nothing. The process-identity helper moved from Mise into the
+  planner library, and Mise now uses it from there.
 - Priority is a level, `now`, `next` (default) or `later`, ranked after
   readiness in `focus`, `status` and the ready list; sequence between tasks
   belongs in dependencies. `--priority`, outline `priority`, JSON and dumps

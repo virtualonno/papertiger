@@ -52,13 +52,26 @@ pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
             r.get::<_, Option<String>>(12)?,
         ) {
             (None, None) => None,
-            (session, Some(at)) => Some(TaskPickup { session, at }),
+            (session, Some(at)) => Some(TaskPickup {
+                session,
+                at,
+                owner: match (
+                    r.get::<_, Option<String>>(13)?,
+                    r.get::<_, Option<u32>>(14)?,
+                    r.get::<_, Option<String>>(15)?,
+                ) {
+                    (Some(host), Some(pid), Some(process)) => {
+                        Some(crate::PickupOwner { host, pid, process })
+                    }
+                    _ => None,
+                },
+            }),
             _ => return Err(rusqlite::Error::InvalidQuery),
         },
     })
 }
 
-pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, kind, result, status, priority, pickup_session, pickup_at";
+pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, kind, result, status, priority, pickup_session, pickup_at, pickup_host, pickup_pid, pickup_process";
 
 /// When a task should run relative to other ready work: `now` before `next`
 /// (the default) before `later`. Sequence between tasks belongs in

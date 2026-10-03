@@ -148,6 +148,8 @@ pub struct TaskCounts {
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusTask {
     pub pickup: Option<crate::TaskPickup>,
+    /// Whether the pickup's owner process still runs, observed now.
+    pub owner_state: Option<crate::OwnerState>,
     pub task: TaskSummary,
     pub activity: TaskActivity,
 }
@@ -676,6 +678,7 @@ pub fn status_response(conn: &Connection, requested_path: &str) -> Result<Status
         let mut in_progress_leaves = Vec::new();
         for task in list_tasks(conn, plan_id, Some("in_progress"), None, None)? {
             let entry = StatusTask {
+                owner_state: task.pickup.as_ref().map(crate::owner_state),
                 pickup: task.pickup.clone(),
                 activity: task_activity(conn, task.seq)?,
                 task: TaskSummary::from(&task),

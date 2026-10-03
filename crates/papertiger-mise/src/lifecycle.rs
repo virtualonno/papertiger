@@ -29,10 +29,10 @@ pub(crate) use crate::object::{
     indexed_object as artifact_object, record_indexed_object as record_artifact_in,
 };
 use crate::path_identity::{canonical_or_pending_absolute, portable_absolute, trial_path_identity};
-use crate::process_identity::{ProcessObservation, observe_process};
 use crate::state::{BudgetReservationStatus, EvidenceGrade, TrialStatus};
 use crate::store::{begin_mutation, now, record_event_in_mutation, require_campaign};
 use crate::validation::validate_nonblank;
+use papertiger::process_identity::{ProcessObservation, observe_process};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CandidateRecord {

@@ -215,8 +215,14 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   records advisory task pickup separately from actor provenance. `focus` prefers your session's work and available
   alternatives over work last picked up elsewhere. Another session's pickup is
   never a blocker: `start` resumes unfinished work directly, with no release,
-  expiry, heartbeat, or harness integration. It does not detect liveness or
-  guarantee exclusive execution; concurrent explicit starts can both succeed.
+  expiry, heartbeat, or takeover permission, and it guarantees no exclusive
+  execution; concurrent explicit starts can both succeed. Where the harness
+  names its process (`CLAUDE_PID`, `OPENCODE_PID`), a pickup records that
+  owner by host, PID and birth time, and `focus`, `status` and `show` report
+  `owner_state`: `ended` only when provable on the owner's host (the PID is
+  gone, exited, or names a newer process), `running`, or `unknown` (another
+  host, no recorded owner, or an uninspectable process). Age is never proof,
+  and an ended owner changes nothing by itself.
 - Review state is derived per claim: a task's filing and, once done, its
   result. Text output marks claims that need a check with the model that made
   them, e.g. `[unreviewed · deepseek-v4.1-flash]`; `show` and the JSON of

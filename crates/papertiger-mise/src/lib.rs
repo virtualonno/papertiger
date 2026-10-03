@@ -25,7 +25,6 @@ pub mod paired_evidence;
 pub mod paired_runtime;
 mod path_identity;
 pub mod planner_projection;
-mod process_identity;
 pub mod promotion;
 mod schema_ids;
 pub mod state;

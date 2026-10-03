@@ -618,8 +618,9 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
         let t = now();
         tx.execute(
             "INSERT INTO tasks
-             (seq, plan_id, title, intent, kind, result, status, priority, created_at, updated_at, pickup_session, pickup_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10, ?11)",
+             (seq, plan_id, title, intent, kind, result, status, priority, created_at, updated_at, pickup_session, pickup_at,
+              pickup_host, pickup_pid, pickup_process)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 seq,
                 plan_id,
@@ -632,6 +633,9 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
                 t,
                 td.pickup.as_ref().and_then(|p| p.session.as_deref()),
                 td.pickup.as_ref().map(|p| &p.at),
+                td.pickup.as_ref().and_then(|p| p.owner.as_ref()).map(|o| &o.host),
+                td.pickup.as_ref().and_then(|p| p.owner.as_ref()).map(|o| o.pid),
+                td.pickup.as_ref().and_then(|p| p.owner.as_ref()).map(|o| &o.process),
             ],
         )
         .with_context(|| format!("import task seq {seq} '{}'", td.title))?;

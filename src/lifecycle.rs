@@ -72,6 +72,7 @@ pub(crate) fn start_task_in_mutation(
     let pickup = TaskPickup {
         session: session.map(str::to_owned),
         at: now(),
+        owner: crate::authorship::current_owner(tx)?,
     };
     transition_task(
         tx,
@@ -370,7 +371,8 @@ fn transition_task(
     } = transition;
     tx.execute(
         "UPDATE tasks
-            SET status=?1, result=?2, replacement_task_id=?3, updated_at=?4, pickup_session=?6, pickup_at=?7
+            SET status=?1, result=?2, replacement_task_id=?3, updated_at=?4, pickup_session=?6, pickup_at=?7,
+                pickup_host=?8, pickup_pid=?9, pickup_process=?10
           WHERE task_id=?5",
         params![
             status,
@@ -380,6 +382,9 @@ fn transition_task(
             task.task_id,
             pickup.and_then(|p| p.session.as_deref()),
             pickup.map(|p| &p.at),
+            pickup.and_then(|p| p.owner.as_ref()).map(|owner| &owner.host),
+            pickup.and_then(|p| p.owner.as_ref()).map(|owner| owner.pid),
+            pickup.and_then(|p| p.owner.as_ref()).map(|owner| &owner.process),
         ],
     )?;
     let mut payload = serde_json::json!({

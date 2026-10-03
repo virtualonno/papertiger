@@ -23,7 +23,6 @@ use crate::object::{
     PreservedObject, indexed_object, preserve_object, read_object, read_verified_json,
     record_indexed_object,
 };
-use crate::process_identity::{ProcessObservation, observe_process};
 use crate::state::{
     EvidenceGrade, PairedCohortReasonCode, PairedCohortStatus, PairedExecutionStatus,
 };
@@ -34,6 +33,7 @@ use crate::statistics::{
 };
 use crate::store::{begin_mutation, campaign, now, record_event_in_mutation};
 use crate::validation::validate_bounded_token as validate_token;
+use papertiger::process_identity::{ProcessObservation, observe_process};
 
 pub const PAIRED_EXECUTION_RECEIPT_SCHEMA_V2: &str = "papertiger-mise.paired_execution_receipt.v2";
 pub const PAIRED_COHORT_RECEIPT_SCHEMA_V2: &str = "papertiger-mise.paired_cohort_receipt.v2";

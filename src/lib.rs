@@ -1,5 +1,6 @@
 pub mod authorship;
 mod digest;
+pub mod process_identity;
 pub use authorship::{
     Authorship, AuthorshipFlags, HUMAN_MODEL, ModelSource, RUNTIME_MODEL, resolve_authorship,
     resolve_authorship_from_env, set_authorship, validate_model, validate_reasoning_effort,
@@ -34,7 +35,9 @@ mod read_model;
 mod write_guard;
 pub use inventory::{plan_inventory, task_inventory};
 pub use mutation::{MutationEvent, MutationReceipt, MutationRecorder};
-pub use pickup::{TaskPickup, validate_session};
+pub use pickup::{
+    OwnerState, PickupOwner, TaskPickup, host_name, observe_owner, owner_state, validate_session,
+};
 pub use write_guard::{GuardDrift, GuardDriftState};
 mod plan_move;
 pub use plan_move::move_tasks_to_plan;

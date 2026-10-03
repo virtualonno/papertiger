@@ -76,6 +76,8 @@ pub struct ReadyEntry {
 pub struct FocusEntry {
     pub task: TaskSummary,
     pub pickup: Option<TaskPickup>,
+    /// Whether the pickup's owner process still runs, observed now.
+    pub owner_state: Option<crate::OwnerState>,
     pub readiness: String,
     pub blockers: Vec<String>,
     pub open_gate_count: usize,
@@ -166,6 +168,7 @@ pub fn focus(
                 review: crate::task_review(conn, &task)?.filing,
                 unreviewed_dependencies: unreviewed_dependencies(conn, &task)?,
                 task: TaskSummary::from(&task),
+                owner_state: task.pickup.as_ref().map(crate::owner_state),
                 pickup: task.pickup,
                 readiness: readiness.to_string(),
                 blockers,

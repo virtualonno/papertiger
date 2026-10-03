@@ -1,17 +1,19 @@
+//! Process identity by PID and birth time: whether a process is still the
+//! one observed earlier, or has exited, or its PID was reused.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use anyhow::Context;
 use anyhow::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub(crate) enum ProcessObservation {
+pub enum ProcessObservation {
     Active { process_birth_identity: String },
     Exited { process_birth_identity: String },
     Absent,
 }
 
 #[cfg(windows)]
-pub(crate) fn observe_process(pid: u32) -> Result<ProcessObservation> {
+pub fn observe_process(pid: u32) -> Result<ProcessObservation> {
     use windows_sys::Win32::Foundation::{
         CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, FILETIME, GetLastError,
     };
@@ -74,7 +76,7 @@ pub(crate) fn observe_process(pid: u32) -> Result<ProcessObservation> {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn observe_process(pid: u32) -> Result<ProcessObservation> {
+pub fn observe_process(pid: u32) -> Result<ProcessObservation> {
     let stat_path = std::path::PathBuf::from(format!("/proc/{pid}/stat"));
     let stat = match std::fs::read_to_string(&stat_path) {
         Ok(stat) => stat,
@@ -107,7 +109,7 @@ pub(crate) fn observe_process(pid: u32) -> Result<ProcessObservation> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn observe_process(pid: u32) -> Result<ProcessObservation> {
+pub fn observe_process(pid: u32) -> Result<ProcessObservation> {
     use std::ffi::c_void;
     use std::mem::size_of;
 
@@ -184,7 +186,7 @@ pub(crate) fn observe_process(pid: u32) -> Result<ProcessObservation> {
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-pub(crate) fn observe_process(pid: u32) -> Result<ProcessObservation> {
+pub fn observe_process(pid: u32) -> Result<ProcessObservation> {
     anyhow::bail!(
         "OS-backed process birth observation is unsupported on {} for PID {pid}",
         std::env::consts::OS

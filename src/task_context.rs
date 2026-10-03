@@ -33,6 +33,8 @@ pub struct TaskContext {
     pub ancestry: Vec<String>,
     /// Review state of the task's filing and, once done, its result.
     pub review: crate::TaskReview,
+    /// Whether the pickup's owner process still runs, observed now.
+    pub owner_state: Option<crate::OwnerState>,
     pub parent: Option<TaskSummary>,
     pub replacement: Option<TaskSummary>,
     pub dependencies: Vec<TaskSummary>,
@@ -186,12 +188,14 @@ fn task_context_with_history(
 
     let ancestry = task_ancestry(conn, &task)?;
     let review = crate::task_review(conn, &task)?;
+    let owner_state = task.pickup.as_ref().map(crate::owner_state);
     Ok(TaskContext {
         schema: "papertiger.task_context.v8".into(),
         plan,
         tags,
         ancestry,
         review,
+        owner_state,
         parent: parent.as_ref().map(TaskSummary::from),
         replacement: replacement.as_ref().map(TaskSummary::from),
         dependencies: dependencies.iter().map(TaskSummary::from).collect(),

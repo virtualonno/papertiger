@@ -853,9 +853,14 @@ fn claim_review_line(claim: &pt::ClaimReview) -> String {
 fn pickup_label(pickup: Option<&pt::TaskPickup>) -> String {
     match pickup {
         Some(p) => format!(
-            " [last pickup {} at {}]",
+            " [last pickup {} at {}{}]",
             p.session.as_deref().unwrap_or("unattributed"),
-            p.at
+            p.at,
+            match pt::owner_state(p) {
+                pt::OwnerState::Ended => "; owner ended",
+                pt::OwnerState::Running => "; owner running",
+                pt::OwnerState::Unknown => "",
+            }
         ),
         None => String::new(),
     }

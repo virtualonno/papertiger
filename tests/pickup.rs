@@ -238,6 +238,9 @@ fn migration_preserves_history_without_inventing_session_identity() {
     conn.execute_batch(
         "DROP VIEW canonical_events; DROP TABLE event_quarantines; ALTER TABLE tasks DROP COLUMN pickup_at;
         ALTER TABLE tasks DROP COLUMN pickup_session;
+ALTER TABLE tasks DROP COLUMN pickup_process;
+ALTER TABLE tasks DROP COLUMN pickup_host;
+ALTER TABLE tasks DROP COLUMN pickup_pid;
         CREATE TABLE task_blockers (
   blocker_id INTEGER PRIMARY KEY,
   task_id INTEGER NOT NULL REFERENCES tasks(task_id),
@@ -264,4 +267,99 @@ fn migration_preserves_history_without_inventing_session_identity() {
     assert_eq!(pt::export(&conn, None).unwrap().events.len(), before);
     pt::start_task(&conn, "fresh", first, None, Some("new-session")).unwrap();
     assert!(pt::audit(&conn).unwrap().is_empty());
+}
+
+/// A child process that stays alive until killed.
+fn long_lived_child() -> std::process::Child {
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "ping -n 60 127.0.0.1 > NUL"]);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = std::process::Command::new("sleep");
+        command.arg("60");
+        command
+    };
+    command
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn a long-lived child")
+}
+
+#[test]
+fn owner_state_is_proven_only_on_the_owner_host_and_never_by_age() {
+    let me = pt::observe_owner(std::process::id()).expect("observe this process");
+    let pickup = |owner: Option<pt::PickupOwner>| pt::TaskPickup {
+        session: Some("s".into()),
+        at: "2026-10-03T00:00:00Z".into(),
+        owner,
+    };
+    assert_eq!(
+        pt::owner_state(&pickup(Some(me.clone()))),
+        pt::OwnerState::Running
+    );
+    assert_eq!(pt::owner_state(&pickup(None)), pt::OwnerState::Unknown);
+    let elsewhere = pt::PickupOwner {
+        host: format!("{}-other", me.host),
+        ..me.clone()
+    };
+    assert_eq!(
+        pt::owner_state(&pickup(Some(elsewhere))),
+        pt::OwnerState::Unknown
+    );
+    let reused = pt::PickupOwner {
+        process: format!("{}-earlier", me.process),
+        ..me.clone()
+    };
+    assert_eq!(
+        pt::owner_state(&pickup(Some(reused))),
+        pt::OwnerState::Ended,
+        "a PID now naming a different process proves the owner ended"
+    );
+    let mut child = long_lived_child();
+    let owner = pt::observe_owner(child.id()).expect("observe the child");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert_eq!(pt::owner_state(&pickup(Some(owner))), pt::OwnerState::Ended);
+}
+
+#[test]
+fn a_pickup_records_the_owner_of_the_connection_authorship() {
+    let conn = Connection::open_in_memory().unwrap();
+    pt::init(&conn).unwrap();
+    let mut authorship = pt::resolve_authorship(
+        pt::AuthorshipFlags {
+            model: Some("claude-opus-5-5"),
+            session: Some("owner-1"),
+            ..Default::default()
+        },
+        &|_| None,
+    )
+    .unwrap();
+    authorship.owner = pt::observe_owner(std::process::id());
+    pt::set_authorship(&conn, &authorship).unwrap();
+    let plan = pt::add_plan(&conn, "test", "work", "Work", "").unwrap();
+    let seq = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Owned", "feature"),
+    )
+    .unwrap();
+    pt::start_task(&conn, "test", seq, Some("go"), Some("owner-1")).unwrap();
+    let pickup = pt::get_task(&conn, seq).unwrap().pickup.unwrap();
+    assert_eq!(pickup.owner, authorship.owner);
+    assert_eq!(pt::owner_state(&pickup), pt::OwnerState::Running);
+    let dump = pt::export(&conn, None).unwrap();
+    let restored = Connection::open_in_memory().unwrap();
+    pt::init(&restored).unwrap();
+    support::author(&restored);
+    pt::import(&restored, "restore", &dump).unwrap();
+    assert_eq!(
+        pt::get_task(&restored, seq).unwrap().pickup.unwrap().owner,
+        authorship.owner
+    );
 }

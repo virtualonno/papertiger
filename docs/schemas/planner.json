@@ -742,6 +742,9 @@
         "review": {
           "$ref": "#/$defs/task_review"
         },
+        "owner_state": {
+          "$ref": "#/$defs/owner_state"
+        },
         "parent": {
           "anyOf": [
             {
@@ -840,6 +843,7 @@
         "tags",
         "ancestry",
         "review",
+        "owner_state",
         "parent",
         "replacement",
         "dependencies",
@@ -1070,12 +1074,16 @@
                       },
                       "pickup": {
                         "$ref": "#/$defs/pickup"
+                      },
+                      "owner_state": {
+                        "$ref": "#/$defs/owner_state"
                       }
                     },
                     "required": [
                       "task",
                       "activity",
-                      "pickup"
+                      "pickup",
+                      "owner_state"
                     ],
                     "additionalProperties": false
                   }
@@ -1137,12 +1145,16 @@
                       },
                       "pickup": {
                         "$ref": "#/$defs/pickup"
+                      },
+                      "owner_state": {
+                        "$ref": "#/$defs/owner_state"
                       }
                     },
                     "required": [
                       "task",
                       "activity",
-                      "pickup"
+                      "pickup",
+                      "owner_state"
                     ],
                     "additionalProperties": false
                   }
@@ -2092,7 +2104,7 @@
       "additionalProperties": false
     },
     "pickup": {
-      "description": "Advisory last pickup, never an exclusive claim or liveness signal. Null means no current pickup context.",
+      "description": "Advisory last pickup, never an exclusive claim. Its owner process, when recorded, only lets a reader on the same host prove the owner ended. Null means no current pickup context.",
       "anyOf": [
         {
           "type": "null"
@@ -2112,6 +2124,28 @@
             "at": {
               "type": "string",
               "format": "date-time"
+            },
+            "owner": {
+              "description": "The harness process that picked the task up, identified by host, PID and birth time; absent when the harness names no process.",
+              "type": "object",
+              "properties": {
+                "host": {
+                  "type": "string"
+                },
+                "pid": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "process": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "host",
+                "pid",
+                "process"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -2232,11 +2266,15 @@
               },
               "pickup": {
                 "$ref": "#/$defs/pickup"
+              },
+              "owner_state": {
+                "$ref": "#/$defs/owner_state"
               }
             },
             "required": [
               "task",
               "pickup",
+              "owner_state",
               "readiness",
               "blockers",
               "open_gate_count",
@@ -2755,6 +2793,21 @@
         "models"
       ],
       "additionalProperties": false
+    },
+    "owner_state": {
+      "description": "Whether a pickup's owner still runs, observed now: running, ended (provably, on its host), or unknown; null without a pickup. Age is never proof.",
+      "anyOf": [
+        {
+          "enum": [
+            "running",
+            "ended",
+            "unknown"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   }
 }

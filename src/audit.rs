@@ -112,7 +112,14 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     for row in rows {
         let (seq, status, session, at) = row?;
         let validation = match at {
-            Some(at) => pickup::validate_pickup(&status, Some(&TaskPickup { session, at })),
+            Some(at) => pickup::validate_pickup(
+                &status,
+                Some(&TaskPickup {
+                    session,
+                    at,
+                    owner: None,
+                }),
+            ),
             None => Err(anyhow!("pickup session requires a timestamp")),
         };
         if let Err(error) = validation {

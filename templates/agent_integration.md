@@ -248,8 +248,12 @@ Initial `start` and `add --start` bind pickup in their status event and transact
 Terminal transitions clear current pickup while preserving its history. Notes,
 reads, and edits do not refresh pickup or pretend to be a heartbeat.
 
-`task.pickup` is null or `{session, at}` in full task context. `focus` v7
-returns compact task summaries with `pickup`, `readiness`, and `blockers` as
+`task.pickup` is null or `{session, at}` in full task context, with an
+`owner` (host, PID, birth identity) when the harness names its process.
+`owner_state` reports `ended` only when that is provable on the owner's host,
+`running`, or `unknown`; an ended owner is a reason to resume the work, never
+an automatic transition. `focus` returns compact task summaries with
+`pickup`, `owner_state`, `readiness`, and `blockers` as
 sibling fields on each entry; `status` likewise keeps pickup beside its summary.
 Read `focus` directly without an additional projection. It omits task intent,
 result, history, and plan narrative; use `show <N> --json` for the chosen task.
@@ -258,8 +262,7 @@ view, retain readiness, pickup, and blockers together with task identity.
 Whole-authority inventory uses `tasks[].{plan,task}`, so identifiers and titles
 are `tasks[].task.seq` and `tasks[].task.title`, not fields directly on each row.
 `at` is the last pickup time, not last-seen or last-active time. These are advisory
-coordination hints, not exclusive claims, authorization, liveness detection, or
-file locks. Concurrent explicit starts can both succeed; SQLite serializes their
+coordination hints, not exclusive claims, authorization, or file locks. Concurrent explicit starts can both succeed; SQLite serializes their
 history, not their subsequent execution. Domain-owned work continues to use its
 domain's own coordination mechanism.
 

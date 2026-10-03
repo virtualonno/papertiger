@@ -1,7 +1,7 @@
 mod support;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "cli/schema_contracts.rs"]
@@ -646,6 +646,56 @@ fn claims_show_their_review_state_and_a_disputed_result_holds_its_dependents() {
     assert!(
         show.contains("result review: confirmed (by claude-opus-5-5); last checked by claude-opus-5.5, the same model"),
         "{show}"
+    );
+}
+
+#[test]
+fn focus_reports_a_pickup_owner_that_provably_ended() {
+    let db = TestDatabase::new("owner-liveness");
+    #[cfg(windows)]
+    let mut harness = Command::new("cmd")
+        .args(["/C", "ping -n 60 127.0.0.1 > NUL"])
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    #[cfg(not(windows))]
+    let mut harness = Command::new("sleep").arg("60").spawn().unwrap();
+    let pid = harness.id().to_string();
+    let run = |args: &[&str]| {
+        let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+            .arg("--db")
+            .arg(&db.0)
+            .args(args)
+            .env_remove("PAPERTIGER_MODEL")
+            .env("CLAUDE_CODE_SESSION_ID", "liveness-session-1")
+            .env("CLAUDE_PID", &pid)
+            .output()
+            .expect("run papertiger");
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "work", "Work", "--model", "claude-opus-5-5"]);
+    run(&[
+        "add",
+        "--kind",
+        "feature",
+        "Owned work",
+        "--model",
+        "claude-opus-5-5",
+    ]);
+    run(&["start", "1", "--why", "begin", "--model", "claude-opus-5-5"]);
+    let focus = run(&["focus"]);
+    assert!(focus.contains("owner running"), "{focus}");
+    harness.kill().unwrap();
+    harness.wait().unwrap();
+    let focus = run(&["focus"]);
+    assert!(focus.contains("owner ended"), "{focus}");
+    let show: serde_json::Value = serde_json::from_str(&run(&["show", "1", "--json"])).unwrap();
+    assert_eq!(show["owner_state"], "ended");
+    assert_eq!(
+        show["task"]["pickup"]["owner"]["pid"],
+        pid.parse::<u32>().unwrap()
     );
 }
 
@@ -1317,6 +1367,9 @@ fn backup_preserves_legacy_schema_and_committed_wal_without_importing_evidence()
         DROP VIEW canonical_events; DROP TABLE event_quarantines; DROP TABLE external_references;
         ALTER TABLE tasks DROP COLUMN pickup_at;
 ALTER TABLE tasks DROP COLUMN pickup_session;
+ALTER TABLE tasks DROP COLUMN pickup_process;
+ALTER TABLE tasks DROP COLUMN pickup_host;
+ALTER TABLE tasks DROP COLUMN pickup_pid;
 CREATE TABLE task_blockers (
   blocker_id INTEGER PRIMARY KEY,
   task_id INTEGER NOT NULL REFERENCES tasks(task_id),

@@ -1114,7 +1114,14 @@ fn typed_authority_identity_is_migrated_and_refuses_mise_databases() {
     legacy
         .execute("DELETE FROM meta WHERE key='authority'", [])
         .unwrap();
-    legacy.execute_batch("ALTER TABLE tasks DROP COLUMN pickup_at; ALTER TABLE tasks DROP COLUMN pickup_session;").unwrap();
+    legacy
+        .execute_batch(
+            "ALTER TABLE tasks DROP COLUMN pickup_at; ALTER TABLE tasks DROP COLUMN pickup_session;
+ALTER TABLE tasks DROP COLUMN pickup_process;
+ALTER TABLE tasks DROP COLUMN pickup_host;
+ALTER TABLE tasks DROP COLUMN pickup_pid;",
+        )
+        .unwrap();
     legacy
         .execute_batch(
             "CREATE TABLE task_blockers (
@@ -4476,6 +4483,9 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
     conn.execute_batch(
         "ALTER TABLE tasks DROP COLUMN pickup_at;
          ALTER TABLE tasks DROP COLUMN pickup_session;
+ALTER TABLE tasks DROP COLUMN pickup_process;
+ALTER TABLE tasks DROP COLUMN pickup_host;
+ALTER TABLE tasks DROP COLUMN pickup_pid;
          ALTER TABLE tasks DROP COLUMN replacement_task_id;
          DROP VIEW canonical_events;
          DROP TABLE event_quarantines;

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::process_identity::{ProcessObservation, observe_process};
+use papertiger::process_identity::{ProcessObservation, observe_process};
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExecutionOutput {
