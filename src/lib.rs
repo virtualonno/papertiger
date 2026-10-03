@@ -170,6 +170,8 @@ pub use gates::{
 pub(crate) use gates::{
     validate_evidence_locator, validate_new_evidence_locator, validate_optional_sha256,
 };
+pub mod brief;
+pub use brief::{Brief, brief};
 pub mod model_report;
 pub use model_report::{ModelOutcomes, ModelReport, model_report};
 pub mod review;

@@ -790,6 +790,130 @@ fn every_write_records_a_reported_model_and_the_harness_supplies_the_rest() {
 }
 
 #[test]
+fn brief_resumes_a_goal_with_its_whole_subtree_in_bounded_sections() {
+    let db = TestDatabase::new("brief");
+    let run = |args: &[&str]| {
+        let output = papertiger(&db.0, args);
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "work", "Work"]);
+    run(&[
+        "add",
+        "--kind",
+        "goal",
+        "Ship templates",
+        "--intent",
+        "Consumers start from templates",
+    ]);
+    run(&[
+        "add",
+        "--kind",
+        "decision",
+        "--parent",
+        "G-1",
+        "Choose the format",
+    ]);
+    run(&[
+        "add",
+        "--kind",
+        "feature",
+        "--parent",
+        "G-1",
+        "--dep",
+        "D-2",
+        "Render templates",
+    ]);
+    run(&[
+        "add",
+        "--kind",
+        "change",
+        "--parent",
+        "F-3",
+        "Split the renderer",
+    ]);
+    run(&["add", "--kind", "feature", "Unrelated work"]);
+    run(&[
+        "gate",
+        "add",
+        "F-3",
+        "vendor",
+        "--kind",
+        "external",
+        "--requirement",
+        "parser 2.0 released",
+    ]);
+    run(&[
+        "note",
+        "--task",
+        "F-3",
+        "--text",
+        "Renderer waits on the parser",
+    ]);
+    run(&["done", "D-2", "--result", "Markdown with front matter"]);
+    for index in 0..12 {
+        run(&[
+            "note",
+            "--task",
+            "C-4",
+            "--text",
+            &format!("progress {index}"),
+        ]);
+    }
+
+    let brief: serde_json::Value = serde_json::from_str(&run(&["brief", "G-1", "--json"])).unwrap();
+    assert_eq!(brief["progress"]["tasks"], 4);
+    assert_eq!(brief["progress"]["done"], 1);
+    assert_eq!(brief["progress"]["open"], 3);
+    let handles = |section: &str| -> Vec<String> {
+        brief[section]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                entry.get("task").unwrap_or(entry)["handle"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
+    };
+    assert_eq!(
+        handles("open"),
+        ["F-3", "C-4"],
+        "the root and unrelated work are not open entries"
+    );
+    assert_eq!(handles("next"), ["C-4"], "F-3 waits on its external gate");
+    assert_eq!(brief["obligations"]["entries"][0]["gate"], "vendor");
+    assert_eq!(
+        brief["outcomes"]["entries"][0]["result"],
+        "Markdown with front matter"
+    );
+    assert_eq!(brief["notes"]["entries"].as_array().unwrap().len(), 10);
+    assert_eq!(brief["notes"]["omitted"], 3);
+    assert_eq!(
+        brief["open"]["entries"][1]["ancestry"],
+        serde_json::json!(["G-1", "F-3"])
+    );
+
+    let text = run(&["brief", "G-1"]);
+    assert!(
+        text.contains("subtree: 4 task(s): 1 done, 0 retired, 0 rejected, 3 open"),
+        "{text}"
+    );
+    assert!(
+        text.contains("F-3 vendor (external): parser 2.0 released"),
+        "{text}"
+    );
+    assert!(
+        text.contains("D-2 Choose the format: Markdown with front matter"),
+        "{text}"
+    );
+    assert!(text.contains("  ... 3 more"), "{text}");
+}
+
+#[test]
 fn breadcrumbs_place_each_task_and_a_goal_surfaces_for_closing() {
     let db = TestDatabase::new("breadcrumbs");
     let run = |args: &[&str]| {

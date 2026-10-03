@@ -34,6 +34,11 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   captures receipts. Audit reports malformed authorship as
   `invalid_event_authorship`. A subagent inherits its parent's environment;
   pass `--model` where a launch-time model could be wrong.
+- `brief <N>` (`papertiger.brief.v1`) resumes a task and its whole subtree:
+  intent, ancestry, filing review, progress, the next ready leaves in focus
+  order, open descendants with pickup and owner state, open gates, results
+  of done descendants and the latest notes, each section bounded to 10 with
+  an omitted count.
 - A pickup records its owner process (host, PID and birth identity) when
   the harness names it (`CLAUDE_PID`, `OPENCODE_PID`), and `focus`,
   `status` and `show` report `owner_state`: `ended` only when provable on

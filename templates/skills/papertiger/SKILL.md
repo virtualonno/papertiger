@@ -36,7 +36,8 @@ outside a harness set `PAPERTIGER_SESSION` to one unique session ID.
 ## Enter, work, finish
 
 Orient to an unfamiliar authority with `status` once. For a known task, read
-`show <N> --json` and resume it; `--no-history` rechecks current state.
+`show <N> --json` and resume it; for a goal or parent, `brief <N>` shows its
+whole subtree (next work, open work, obligations, outcomes, notes); `--no-history` rechecks current state.
 Otherwise select work with `focus --plan <slug> --json`, and before adding,
 search with `search "<terms>" --plan <slug> --compact`; follow continuations
 when relevant. Another session's pickup is advisory: not a lock, and no reason

@@ -201,6 +201,14 @@ prose must stand alone. When a shared issue or artifact is relevant, record its
 stable URL or evidence locator in Papertiger; local planning identity never
 flows outward.
 
+## Resuming a goal
+
+`brief <task.seq>` reads a task and its whole subtree in bounded sections: what
+it is for, progress, the next ready leaves, open work with pickup and owner
+state, open gates, results of done descendants and the latest notes. Use it
+instead of writing handoff documents; anything worth keeping belongs in a
+result, gate or note, where `brief` shows it.
+
 ## Review state of claims
 
 A task carries two claims: its filing (title and intent) and, once done, its

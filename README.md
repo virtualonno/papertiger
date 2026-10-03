@@ -239,6 +239,12 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   `next`), ranked after readiness; sequence between tasks belongs in
   dependencies. The v14 migration and `papertiger.dump.v10` conversion map
   integer priorities: positive to `now`, zero to `next`, negative to `later`.
+- `brief <N> [--json]` resumes a task and its whole subtree in bounded
+  sections: intent, ancestry and filing review; progress over every
+  descendant; the next ready leaves in focus order; open descendants with
+  pickup and owner state; open gates (external conditions included); results
+  of done descendants, latest first; and the latest notes. Each section
+  reports what it omitted. It replaces hand-written handoff documents.
 - `models [--plan <slug>] [--since <RFC3339>] [--json]` reports claim
   outcomes per authoring model, grouping ids that differ only by `.` or `-`
   between digits: filings (done, retired, rejected, open, engaged) and results

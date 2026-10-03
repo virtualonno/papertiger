@@ -250,6 +250,11 @@ enum Cmd {
         #[command(flatten)]
         why: WhyArgs,
     },
+    /// Resume a task and its whole subtree: intent, progress, next work, open work, obligations, outcomes and notes
+    Brief {
+        /// Task: N, #N or its handle (e.g. G-N)
+        task: String,
+    },
     /// Claim outcomes per authoring model: filings, results, reviews and reopens
     Models {
         /// Restrict to one plan slug; every plan by default
@@ -724,6 +729,7 @@ impl Cmd {
                 | Self::Search { .. }
                 | Self::Focus { .. }
                 | Self::Models { .. }
+                | Self::Brief { .. }
                 | Self::Tree { .. }
                 | Self::Log { .. }
                 | Self::Audit
@@ -821,6 +827,120 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
         t.title,
         extra
     );
+    Ok(())
+}
+
+fn print_brief(brief: &pt::Brief) -> Result<()> {
+    let task = &brief.task;
+    pt::outln!(
+        "{} {} {}{}",
+        status_glyph(&task.status),
+        task.handle,
+        task.title,
+        if brief.review.state.needs_review() {
+            claim_marker("", &brief.review)
+        } else {
+            String::new()
+        }
+    );
+    if !brief.ancestry.is_empty() {
+        pt::outln!("  path: {}", brief.ancestry.join(" › "));
+    }
+    if !brief.intent.is_empty() {
+        const INTENT_LINES: usize = 6;
+        let lines = brief.intent.lines().collect::<Vec<_>>();
+        pt::outln!(
+            "  intent: {}",
+            lines[..lines.len().min(INTENT_LINES)].join("\n  ")
+        );
+        if lines.len() > INTENT_LINES {
+            pt::outln!(
+                "  ... {} more intent line(s); run `papertiger show {}`",
+                lines.len() - INTENT_LINES,
+                task.handle
+            );
+        }
+    }
+    let progress = &brief.progress;
+    pt::outln!(
+        "  subtree: {} task(s): {} done, {} retired, {} rejected, {} open",
+        progress.tasks,
+        progress.done,
+        progress.retired,
+        progress.rejected,
+        progress.open
+    );
+    let omitted = |count: usize| {
+        if count > 0 {
+            pt::outln!("  ... {count} more");
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+    if !brief.next.entries.is_empty() {
+        pt::outln!("next:");
+        for task in &brief.next.entries {
+            pt::outln!("  {} {} [{}]", task.handle, task.title, task.priority);
+        }
+        omitted(brief.next.omitted)?;
+    }
+    if !brief.open.entries.is_empty() {
+        pt::outln!("open:");
+        for open in &brief.open.entries {
+            let review = if open.review.state.needs_review() {
+                claim_marker("", &open.review)
+            } else {
+                String::new()
+            };
+            pt::outln!(
+                "  {} {} {}{}{}",
+                status_glyph(&open.task.status),
+                open.task.handle,
+                open.task.title,
+                review,
+                pickup_label(open.pickup.as_ref())
+            );
+        }
+        omitted(brief.open.omitted)?;
+    }
+    if !brief.obligations.entries.is_empty() {
+        pt::outln!("obligations:");
+        for obligation in &brief.obligations.entries {
+            pt::outln!(
+                "  {} {} ({}): {}",
+                obligation.task,
+                obligation.gate,
+                obligation.kind,
+                obligation.requirement
+            );
+        }
+        omitted(brief.obligations.omitted)?;
+    }
+    if !brief.outcomes.entries.is_empty() {
+        pt::outln!("outcomes:");
+        for outcome in &brief.outcomes.entries {
+            let first_line = outcome.result.lines().next().unwrap_or_default();
+            pt::outln!(
+                "  {} {}: {}",
+                outcome.task.handle,
+                outcome.task.title,
+                first_line
+            );
+        }
+        omitted(brief.outcomes.omitted)?;
+    }
+    if !brief.notes.entries.is_empty() {
+        pt::outln!("notes:");
+        for note in &brief.notes.entries {
+            pt::outln!(
+                "  @{} {} {}: {}",
+                note.event_id,
+                &note.at[..note.at.len().min(16)],
+                note.actor,
+                note.why.as_deref().unwrap_or_default().replace('\n', " ")
+            );
+        }
+        omitted(brief.notes.omitted)?;
+    }
     Ok(())
 }
 
@@ -1920,6 +2040,15 @@ fn run_planner(cli: Cli) -> Result<()> {
             } else {
                 mutation_output!("#{seq} retired");
             }
+        }
+        Cmd::Brief { task } => {
+            let seq = pt::resolve_task_ref(&conn, &task)?;
+            let brief = pt::brief(&conn, seq)?;
+            if json {
+                pt::outln!("{}", serde_json::to_string_pretty(&brief)?);
+                return Ok(());
+            }
+            print_brief(&brief)?;
         }
         Cmd::Models { plan, since } => {
             let report = pt::model_report(&conn, plan.as_deref(), since.as_deref())?;

@@ -200,6 +200,7 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
     ]);
     let completed = run(&["show", "1", "--json"]);
     run(&["models", "--json"]);
+    run(&["brief", "1", "--json"]);
     assert_eq!(
         completed["activity"]["completed_event"]["reasoning_effort"],
         "medium"

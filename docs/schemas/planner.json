@@ -50,6 +50,9 @@
     },
     {
       "$ref": "#/$defs/model_report"
+    },
+    {
+      "$ref": "#/$defs/brief"
     }
   ],
   "$defs": {
@@ -2808,6 +2811,242 @@
           "type": "null"
         }
       ]
+    },
+    "brief": {
+      "description": "One task and its whole subtree for resuming work: bounded sections, each with an omitted count.",
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.brief.v1"
+        },
+        "task": {
+          "$ref": "#/$defs/task_summary"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "ancestry": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[GFCBPDRW]-[1-9][0-9]*$"
+          }
+        },
+        "review": {
+          "$ref": "#/$defs/claim_review"
+        },
+        "progress": {
+          "type": "object",
+          "properties": {
+            "tasks": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "done": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "retired": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rejected": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "open": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "tasks",
+            "done",
+            "retired",
+            "rejected",
+            "open"
+          ],
+          "additionalProperties": false
+        },
+        "next": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/task_summary"
+              }
+            },
+            "omitted": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "entries",
+            "omitted"
+          ],
+          "additionalProperties": false
+        },
+        "open": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "$ref": "#/$defs/task_summary"
+                  },
+                  "ancestry": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[GFCBPDRW]-[1-9][0-9]*$"
+                    }
+                  },
+                  "pickup": {
+                    "$ref": "#/$defs/pickup"
+                  },
+                  "owner_state": {
+                    "$ref": "#/$defs/owner_state"
+                  },
+                  "review": {
+                    "$ref": "#/$defs/claim_review"
+                  }
+                },
+                "required": [
+                  "task",
+                  "ancestry",
+                  "pickup",
+                  "owner_state",
+                  "review"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "omitted": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "entries",
+            "omitted"
+          ],
+          "additionalProperties": false
+        },
+        "obligations": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "type": "string",
+                    "pattern": "^[GFCBPDRW]-[1-9][0-9]*$"
+                  },
+                  "gate": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "requirement": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "task",
+                  "gate",
+                  "kind",
+                  "requirement"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "omitted": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "entries",
+            "omitted"
+          ],
+          "additionalProperties": false
+        },
+        "outcomes": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "$ref": "#/$defs/task_summary"
+                  },
+                  "result": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "task",
+                  "result"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "omitted": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "entries",
+            "omitted"
+          ],
+          "additionalProperties": false
+        },
+        "notes": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/event"
+              }
+            },
+            "omitted": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "entries",
+            "omitted"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "task",
+        "intent",
+        "ancestry",
+        "review",
+        "progress",
+        "next",
+        "open",
+        "obligations",
+        "outcomes",
+        "notes"
+      ],
+      "additionalProperties": false
     }
   }
 }
