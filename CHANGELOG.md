@@ -6,6 +6,8 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+Local dogfood candidate `1.0.0-rc.1`; not published.
+
 Planner schema v14 and dump format `papertiger.dump.v11`. Run `init`
 deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
 
