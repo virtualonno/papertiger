@@ -5,10 +5,8 @@ use rusqlite::{Connection, params};
 use std::io::Read;
 
 mod guide_contract;
-mod project_bundle;
-mod project_setup;
+mod project_authority;
 mod text_input;
-mod user_setup;
 
 use text_input::{IntentArgs, NoteTextArgs, ResultArgs, WhyArgs, reject_multiple_stdin};
 
@@ -19,10 +17,10 @@ use text_input::{IntentArgs, NoteTextArgs, ResultArgs, WhyArgs, reject_multiple_
     about = "Local task planning for cross-session engineering work"
 )]
 struct Cli {
-    /// Planning database path (default: PAPERTIGER_DB, project receipt, or installed personal store)
+    /// Planning database path (default: PAPERTIGER_DB, else the nearest state/papertiger.sqlite above the working directory)
     #[arg(long, global = true)]
     db: Option<String>,
-    /// Project root whose receipt, release bundle, or existing state/papertiger.sqlite selects the authority; evidence verify also resolves file: locators beneath it
+    /// Project root whose state/papertiger.sqlite is the authority; evidence verify and gate resolve also resolve file: locators beneath it
     #[arg(long = "project-root", global = true, value_name = "DIR")]
     authority_project_root: Option<std::path::PathBuf>,
     /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator')
@@ -34,10 +32,10 @@ struct Cli {
     /// Emit JSON: versioned reads or committed mutation receipts
     #[arg(long, global = true)]
     json: bool,
-    /// Caller-reported event author model; unknown attribution remains absent.
+    /// Model that authored this write (default: PAPERTIGER_MODEL); every write requires one, commands that record no event refuse it
     #[arg(long, global = true)]
     model: Option<String>,
-    /// Caller-reported configured reasoning effort; requires a known model.
+    /// Configured reasoning effort of the authoring model (default: PAPERTIGER_REASONING_EFFORT or the harness)
     #[arg(long, global = true)]
     reasoning_effort: Option<String>,
     #[command(subcommand)]
@@ -46,34 +44,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    #[command(flatten)]
-    Personal(user_setup::Command),
     /// Print the bundled JSON Schema; its top-level oneOf lists every covered document. Never opens authority
     Schema,
-    /// Install a project-local native binary, receipt, ignore policy, and agent contract
-    #[command(after_help = "JSON schema: papertiger.project_install_result.v7")]
-    SetupProject {
-        /// Existing consuming project directory
-        project_root: std::path::PathBuf,
-        /// Report the complete action plan without writing
-        #[arg(long)]
-        dry_run: bool,
-        /// Project-relative canonical authority path (preserved by later upgrades)
-        #[arg(long, value_name = "PATH")]
-        authority_path: Option<std::path::PathBuf>,
-        /// Skill target selection; omitted upgrades preserve the receipt selection
-        #[arg(long, value_enum, value_name = "auto|agents|claude|both|none")]
-        skill_target: Option<project_setup::SkillTargetRequest>,
-    },
-    /// Remove every path the project integration owns, edited or not; preserves authority and repository policy
-    #[command(after_help = "JSON schema: papertiger.project_uninstall.v3")]
-    UninstallProject {
-        /// Existing consuming project directory
-        project_root: std::path::PathBuf,
-        /// Report the complete removal plan without writing
-        #[arg(long)]
-        dry_run: bool,
-    },
     /// Create or upgrade a Papertiger database and report it in plain text; refuses nonempty foreign databases
     Init,
     /// One-screen orientation: authority, active plans, current work, ready work, recent notes
@@ -1227,55 +1199,11 @@ fn main() -> Result<()> {
 }
 
 fn cli_main() -> Result<()> {
-    user_setup::verify_runtime()?;
     let cli = Cli::parse();
-    match run(cli) {
+    match run_planner(cli) {
         Err(error) if pt::is_output_closed(&error) => Ok(()),
         result => result.map_err(pt::normalize_sqlite_lock_error),
     }
-}
-
-fn run(cli: Cli) -> Result<()> {
-    match &cli.cmd {
-        Cmd::Personal(user_setup::Command::Setup { home, dry_run }) => {
-            if cli.db.is_some()
-                || cli.authority_project_root.is_some()
-                || cli.actor.is_some()
-                || cli.model.is_some()
-                || cli.reasoning_effort.is_some()
-                || cli.session.is_some()
-            {
-                bail!(
-                    "setup-user selects its own installation and personal authority; omit planning selectors and use --home <directory>"
-                );
-            }
-            pt::outln!(
-                "{}",
-                serde_json::to_string_pretty(&user_setup::run(home.as_deref(), *dry_run, false)?)?
-            );
-            return Ok(());
-        }
-        Cmd::Personal(user_setup::Command::Uninstall { home, dry_run }) => {
-            if cli.db.is_some()
-                || cli.authority_project_root.is_some()
-                || cli.actor.is_some()
-                || cli.model.is_some()
-                || cli.reasoning_effort.is_some()
-                || cli.session.is_some()
-            {
-                bail!(
-                    "uninstall-user preserves planning data; omit planning selectors and use --home <directory>"
-                );
-            }
-            pt::outln!(
-                "{}",
-                serde_json::to_string_pretty(&user_setup::run(home.as_deref(), *dry_run, true)?)?
-            );
-            return Ok(());
-        }
-        _ => {}
-    }
-    run_planner(cli)
 }
 
 fn run_planner(cli: Cli) -> Result<()> {
@@ -1290,11 +1218,7 @@ fn run_planner(cli: Cli) -> Result<()> {
     let mutation = !cli.cmd.opens_authority_read_only()
         && !matches!(
             cli.cmd,
-            Cmd::SetupProject { .. }
-                | Cmd::UninstallProject { .. }
-                | Cmd::Init
-                | Cmd::Backup { .. }
-                | Cmd::RepairGuards { dry_run: true, .. }
+            Cmd::Init | Cmd::Backup { .. } | Cmd::RepairGuards { dry_run: true, .. }
         );
     if cli.model.is_some() && !mutation {
         bail!(
@@ -1345,104 +1269,6 @@ fn run_planner(cli: Cli) -> Result<()> {
         ($($args:tt)*) => { if !json { pt::outln!($($args)*); } };
     }
 
-    if let Cmd::SetupProject {
-        project_root,
-        dry_run,
-        authority_path,
-        skill_target,
-    } = &cli.cmd
-    {
-        if cli.db.is_some() {
-            bail!(
-                "setup-project does not accept --db; omit --db and select a nondefault project authority with --authority-path <project-relative-path>"
-            );
-        }
-        if cli.actor.is_some() {
-            bail!(
-                "setup-project does not accept --actor because installation records no planning events; omit --actor"
-            );
-        }
-        if cli.authority_project_root.is_some() {
-            bail!(
-                "setup-project does not accept global --project-root; pass the consuming project root as its positional <PROJECT_ROOT> argument"
-            );
-        }
-        let result = project_setup::setup_project(project_setup::SetupProjectRequest {
-            project_root,
-            source_binary: None,
-            dry_run: *dry_run,
-            authority_path: authority_path.as_deref(),
-            skill_target: *skill_target,
-        })?;
-        if json {
-            pt::outln!("{}", serde_json::to_string_pretty(&result)?);
-        } else {
-            let mode = if result.dry_run { "planned" } else { "applied" };
-            pt::outln!(
-                "papertiger {} project setup at {}",
-                mode,
-                result.project_root
-            );
-            for action in &result.actions {
-                pt::outln!("  {:?} {}", action.action, action.path);
-            }
-            pt::outln!("next:");
-            for action in &result.next_actions {
-                pt::outln!("  - {action}");
-            }
-        }
-        return Ok(());
-    }
-
-    if let Cmd::UninstallProject {
-        project_root,
-        dry_run,
-    } = &cli.cmd
-    {
-        if cli.db.is_some() {
-            bail!(
-                "uninstall-project does not accept --db; the project-install receipt selects the preserved authority"
-            );
-        }
-        if cli.actor.is_some() {
-            bail!(
-                "uninstall-project does not accept --actor because removal records no planning events; omit --actor"
-            );
-        }
-        if cli.authority_project_root.is_some() {
-            bail!(
-                "uninstall-project does not accept global --project-root; pass the installed project root as its positional <PROJECT_ROOT> argument"
-            );
-        }
-        let result = project_setup::uninstall_project(project_setup::UninstallProjectRequest {
-            project_root,
-            source_binary: None,
-            dry_run: *dry_run,
-        })?;
-        if json {
-            pt::outln!("{}", serde_json::to_string_pretty(&result)?);
-        } else {
-            let mode = if result.dry_run { "planned" } else { "applied" };
-            pt::outln!(
-                "papertiger {} project uninstall at {}",
-                mode,
-                result.project_root
-            );
-            for action in &result.actions {
-                pt::outln!("  {:?} {}", action.action, action.path);
-            }
-            pt::outln!("retained:");
-            for retained in &result.retained {
-                pt::outln!("  - {retained}");
-            }
-            pt::outln!("next:");
-            for action in &result.next_actions {
-                pt::outln!("  - {action}");
-            }
-        }
-        return Ok(());
-    }
-
     let project_root = cli.authority_project_root.clone();
     let db_override = cli.db.or_else(|| std::env::var("PAPERTIGER_DB").ok());
     let evidence_db_override = db_override.clone();
@@ -1463,17 +1289,30 @@ fn run_planner(cli: Cli) -> Result<()> {
             "ordinary planner commands do not accept --project-root together with --db or PAPERTIGER_DB; remove the database override so --project-root selects one canonical authority. `evidence verify` and `gate resolve` alone retain this combination so an explicitly selected database can verify or bind file: locators beneath a supplied project root"
         );
     }
+    // The project root of an authority `init` may create, for its ignore rules.
+    let mut init_root = None;
     let db_path = match (db_override, project_root.as_deref()) {
         (Some(path), _) => path,
         // Selected paths are shown in refusals; render them as a user would
         // type them, without Windows verbatim prefixes.
-        (None, Some(root)) => pt::portable_absolute(&project_setup::project_authority(root)?)?,
-        (None, None) => match project_setup::discover_project_authority(&std::env::current_dir()?)?
-            .or(user_setup::fallback_authority()?)
-        {
-            Some(path) => pt::portable_absolute(&path)?,
-            None => "state/papertiger.sqlite".into(),
-        },
+        (None, Some(root)) => {
+            let selected = project_authority::at_root(root)?;
+            init_root = Some(selected.root);
+            pt::portable_absolute(&selected.authority)?
+        }
+        (None, None) => {
+            let cwd = std::env::current_dir()?;
+            match project_authority::discover(&cwd)? {
+                Some(found) => pt::portable_absolute(&found.authority)?,
+                // Like `git init`, a new authority starts in the working directory.
+                None if matches!(cli.cmd, Cmd::Init) => {
+                    let selected = project_authority::at_root(&cwd)?;
+                    init_root = Some(selected.root);
+                    pt::portable_absolute(&selected.authority)?
+                }
+                None => return Err(project_authority::not_found(&cwd)),
+            }
+        }
     };
     let actor = authorship
         .as_ref()
@@ -1489,7 +1328,12 @@ fn run_planner(cli: Cli) -> Result<()> {
         let conn = pt::open_for_init(&db_path)?;
         match pt::init_at(&conn, &db_path)? {
             pt::InitOutcome::Created => {
-                pt::outln!("initialized {db_path} (schema v{})", pt::SCHEMA_VERSION)
+                pt::outln!("initialized {db_path} (schema v{})", pt::SCHEMA_VERSION);
+                if let Some(root) = &init_root
+                    && project_authority::write_ignore_block(root)?
+                {
+                    pt::outln!("added Papertiger's ignore rules to .gitignore");
+                }
             }
             pt::InitOutcome::Migrated { from, to } => {
                 pt::outln!("migrated {db_path} from schema v{from} to v{to}")
@@ -1591,10 +1435,6 @@ fn run_planner(cli: Cli) -> Result<()> {
         None
     };
     match cli.cmd {
-        Cmd::SetupProject { .. } | Cmd::Personal(_) => {
-            unreachable!()
-        }
-        Cmd::UninstallProject { .. } => unreachable!(),
         Cmd::Init => unreachable!(),
         Cmd::Schema => unreachable!(),
         Cmd::Backup { .. } => unreachable!(),
@@ -2615,9 +2455,10 @@ fn run_planner(cli: Cli) -> Result<()> {
                 .transpose()?;
             let project_root = match project_root {
                 Some(root) => root,
-                None => project_setup::discover_project_root(&std::env::current_dir()?)?
+                None => project_authority::discover(&std::env::current_dir()?)?
+                    .map(|found| found.root)
                     .context(
-                        "no project-install receipt was found; pass `papertiger evidence verify --project-root <project-root>`",
+                        "no project with state/papertiger.sqlite was found above the working directory; pass `papertiger evidence verify --project-root <project-root>`",
                     )?,
             };
             let options = pt::EvidenceVerificationOptions {
@@ -2834,7 +2675,7 @@ fn validate_new_evidence(
     let project_root = match project_root {
         Some(root) => Some(root.to_path_buf()),
         None if database_override => None,
-        None => project_setup::discover_project_root(&std::env::current_dir()?)?,
+        None => project_authority::discover(&std::env::current_dir()?)?.map(|found| found.root),
     };
     let authority = std::fs::canonicalize(db_path)
         .ok()

@@ -84,17 +84,8 @@ fn session_pickup_is_visible_advisory_and_requires_no_release() {
 #[test]
 fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     let project = TestDirectory::new("progressive-reads");
-    let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-        .arg("setup-project")
-        .arg(&project.0)
-        .args(["--skill-target", "none"])
-        .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
-        .output()
-        .unwrap();
-    assert_success(&setup);
     let invoke = |args: &[&str]| {
-        support::papertiger_command(installed_papertiger(&project.0))
+        support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .args(args)
             .current_dir(&project.0)
             .env_remove("PAPERTIGER_DB")
@@ -1823,14 +1814,6 @@ impl Drop for TestDirectory {
     }
 }
 
-fn installed_papertiger(project: &Path) -> PathBuf {
-    project.join("tools/papertiger/bin").join(if cfg!(windows) {
-        "papertiger.exe"
-    } else {
-        "papertiger"
-    })
-}
-
 #[test]
 fn add_start_is_atomic_and_rolls_back_every_refusal() {
     let db = TestDatabase::new("atomic-add-start");
@@ -2256,19 +2239,10 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
 #[test]
 fn new_file_evidence_resolves_against_the_discovered_project_from_a_subdirectory() {
     let project = TestDirectory::new("file-evidence-discovered");
-    let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-        .arg("setup-project")
-        .arg(&project.0)
-        .args(["--skill-target", "none"])
-        .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
-        .output()
-        .unwrap();
-    assert_success(&setup);
     std::fs::create_dir_all(project.0.join("docs")).unwrap();
     std::fs::write(project.0.join("docs/proof.txt"), b"proof\n").unwrap();
     let invoke = |args: &[&str]| {
-        support::papertiger_command(installed_papertiger(&project.0))
+        support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .args(args)
             .current_dir(project.0.join("docs"))
             .env_remove("PAPERTIGER_DB")
@@ -2276,7 +2250,8 @@ fn new_file_evidence_resolves_against_the_discovered_project_from_a_subdirectory
             .output()
             .unwrap()
     };
-    assert_success(&invoke(&["init"]));
+    let root = project.0.to_str().unwrap();
+    assert_success(&invoke(&["--project-root", root, "init"]));
     assert_success(&invoke(&["plan", "add", "work", "Work"]));
     assert_success(&invoke(&[
         "add", "--kind", "feature", "bound", "--plan", "work",
@@ -2789,91 +2764,28 @@ fn assert_no_internal_identity_keys(value: &serde_json::Value) {
 }
 
 #[test]
-fn setup_project_refuses_planning_globals_before_writing() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before Unix epoch")
-        .as_nanos();
-    let project = std::env::temp_dir().join(format!(
-        "papertiger-setup-global-refusal-{}-{nonce}",
-        std::process::id()
-    ));
-    std::fs::create_dir(&project).expect("create empty setup target");
-    let ignored_db = project.join("ignored.sqlite");
-
-    let db = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-        .arg("--db")
-        .arg(&ignored_db)
-        .arg("setup-project")
-        .arg(&project)
-        .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
-        .output()
-        .expect("run setup-project with --db");
-    assert!(!db.status.success());
-    let error = String::from_utf8_lossy(&db.stderr);
-    assert!(
-        error.contains("omit --db") && error.contains("--authority-path"),
-        "{error}"
-    );
-    assert!(
-        std::fs::read_dir(&project)
-            .expect("inspect setup target")
-            .next()
-            .is_none(),
-        "--db refusal must precede every setup write"
-    );
-
-    let actor = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-        .arg("setup-project")
-        .arg(&project)
-        .arg("--actor")
-        .arg("test-agent")
-        .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
-        .output()
-        .expect("run setup-project with --actor");
-    assert!(!actor.status.success());
-    let error = String::from_utf8_lossy(&actor.stderr);
-    assert!(
-        error.contains("records no planning events") && error.contains("omit --actor"),
-        "{error}"
-    );
-    assert!(
-        std::fs::read_dir(&project)
-            .expect("inspect setup target")
-            .next()
-            .is_none(),
-        "--actor refusal must precede every setup write"
-    );
-
-    for (flag, value, expected) in [
-        ("--db", ignored_db.as_os_str(), "does not accept --db"),
-        (
-            "--actor",
-            std::ffi::OsStr::new("test-agent"),
-            "records no planning events",
-        ),
+fn installer_commands_are_gone() {
+    for command in [
+        "setup-project",
+        "uninstall-project",
+        "setup-user",
+        "uninstall-user",
     ] {
         let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-            .arg(flag)
-            .arg(value)
-            .arg("uninstall-project")
-            .arg(&project)
-            .env_remove("PAPERTIGER_DB")
-            .env_remove("PAPERTIGER_ACTOR")
+            .arg(command)
             .output()
-            .expect("run uninstall-project with planning global");
-        assert!(!output.status.success());
-        let error = String::from_utf8_lossy(&output.stderr);
-        assert!(error.contains(expected), "{error}");
+            .unwrap();
+        assert!(!output.status.success(), "{command} must not exist");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
-
-    std::fs::remove_dir(&project).expect("remove empty setup target");
 }
 
 #[test]
-fn explicit_project_root_preserves_one_authority_across_installed_projects() {
+fn explicit_project_root_selects_one_authority_from_another_project() {
     let sandbox = TestDirectory::new("explicit-project-root");
     let canonical = sandbox.0.join("canonical");
     let foreign = sandbox.0.join("foreign");
@@ -2881,17 +2793,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
     std::fs::create_dir(&foreign).expect("create foreign project");
 
     for project in [&canonical, &foreign] {
-        let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-            .arg("setup-project")
-            .arg(project)
-            .args(["--skill-target", "none"])
-            .env_remove("PAPERTIGER_DB")
-            .env_remove("PAPERTIGER_ACTOR")
-            .output()
-            .expect("install Papertiger consumer");
-        assert_success(&setup);
-
-        let init = support::papertiger_command(installed_papertiger(project))
+        let init = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .arg("init")
             .current_dir(project)
             .env_remove("PAPERTIGER_DB")
@@ -2905,7 +2807,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
         } else {
             "foreign"
         };
-        let plan = support::papertiger_command(installed_papertiger(project))
+        let plan = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
             .args(["plan", "add", slug, "Consumer plan"])
             .current_dir(project)
             .env_remove("PAPERTIGER_DB")
@@ -2915,7 +2817,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
         assert_success(&plan);
     }
 
-    let foreign_before = support::papertiger_command(installed_papertiger(&foreign))
+    let foreign_before = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["status", "--json"])
         .current_dir(&foreign)
         .env_remove("PAPERTIGER_DB")
@@ -2926,7 +2828,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
     let foreign_before: serde_json::Value =
         serde_json::from_slice(&foreign_before.stdout).expect("parse foreign status");
 
-    let add = support::papertiger_command(installed_papertiger(&canonical))
+    let add = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("--project-root")
         .arg(&canonical)
         .args([
@@ -2940,7 +2842,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
             "--intent",
             "One outcome remains in its initiating authority while implementation enters another repository.",
             "--why",
-            "Exercise explicit receipt-bound authority selection from a foreign installed project.",
+            "Exercise explicit authority selection from inside another project.",
         ])
         .current_dir(&foreign)
         .env_remove("PAPERTIGER_DB")
@@ -2949,7 +2851,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
         .expect("add canonical task from foreign project");
     assert_success(&add);
 
-    let canonical_task = support::papertiger_command(installed_papertiger(&canonical))
+    let canonical_task = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["show", "1", "--json"])
         .current_dir(&canonical)
         .env_remove("PAPERTIGER_DB")
@@ -2964,7 +2866,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
         "Canonical cross-project outcome"
     );
 
-    let foreign_after = support::papertiger_command(installed_papertiger(&foreign))
+    let foreign_after = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args(["status", "--json"])
         .current_dir(&foreign)
         .env_remove("PAPERTIGER_DB")
@@ -2982,43 +2884,56 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
 }
 
 #[test]
-fn explicit_project_root_init_creates_only_the_receipt_selected_authority() {
+fn explicit_project_root_init_creates_the_project_authority_and_its_ignore_rules() {
     let sandbox = TestDirectory::new("explicit-project-root-init");
-    let project = sandbox.0.join("installed");
-    std::fs::create_dir(&project).expect("create installed project");
-    let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-        .arg("setup-project")
-        .arg(&project)
-        .args([
-            "--skill-target",
-            "none",
-            "--authority-path",
-            "planning/work.sqlite",
-        ])
-        .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
-        .output()
-        .expect("install Papertiger consumer");
-    assert_success(&setup);
-
-    let init = support::papertiger_command(installed_papertiger(&project))
-        .arg("--project-root")
-        .arg(&project)
-        .arg("init")
-        .current_dir(&sandbox.0)
-        .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
-        .output()
-        .expect("initialize through the explicit project root");
-    assert_success(&init);
-
-    assert!(project.join("planning/work.sqlite").is_file());
-    assert!(!project.join("state").exists());
+    let repository = sandbox.0.join("repository");
+    let plain = sandbox.0.join("plain");
+    std::fs::create_dir_all(repository.join(".git")).expect("create repository");
+    std::fs::write(repository.join(".gitignore"), "target/\n").expect("write ignore rules");
+    std::fs::create_dir(&plain).expect("create plain directory");
+    let init = |project: &std::path::Path| {
+        support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+            .arg("--project-root")
+            .arg(project)
+            .arg("init")
+            .current_dir(&sandbox.0)
+            .env_remove("PAPERTIGER_DB")
+            .output()
+            .expect("initialize through the explicit project root")
+    };
+    let created = init(&repository);
+    assert_success(&created);
+    assert!(
+        String::from_utf8_lossy(&created.stdout).contains("added Papertiger's ignore rules"),
+        "{}",
+        String::from_utf8_lossy(&created.stdout)
+    );
+    assert!(repository.join("state/papertiger.sqlite").is_file());
     assert!(!sandbox.0.join("state").exists());
+    let ignore = std::fs::read_to_string(repository.join(".gitignore")).unwrap();
+    assert!(
+        ignore.starts_with("target/\n\n# Papertiger")
+            && ignore.contains("/state/papertiger.sqlite-wal"),
+        "{ignore}"
+    );
+    let again = init(&repository);
+    assert_success(&again);
+    assert!(String::from_utf8_lossy(&again.stdout).contains("nothing changed"));
+    assert_eq!(
+        std::fs::read_to_string(repository.join(".gitignore")).unwrap(),
+        ignore
+    );
+
+    assert_success(&init(&plain));
+    assert!(plain.join("state/papertiger.sqlite").is_file());
+    assert!(
+        !plain.join(".gitignore").exists(),
+        "only a Git root gets ignore rules"
+    );
 }
 
 #[test]
-fn explicit_project_root_selects_existing_default_authority_without_receipt() {
+fn explicit_project_root_selects_the_existing_project_authority() {
     let sandbox = TestDirectory::new("project-root-default-authority");
     let project = sandbox.0.join("uninstalled");
     let elsewhere = sandbox.0.join("elsewhere");
@@ -3069,102 +2984,87 @@ fn explicit_project_root_selects_existing_default_authority_without_receipt() {
 }
 
 #[test]
-fn explicit_project_root_refuses_missing_receipt_and_ambiguous_database_selection() {
-    let sandbox = TestDirectory::new("project-root-refusals");
-    let missing = sandbox.0.join("missing-receipt");
-    std::fs::create_dir(&missing).expect("create uninstalled project");
+fn authority_selection_walks_up_and_refuses_missing_or_ambiguous_selection() {
+    let sandbox = TestDirectory::new("authority-selection");
+    let project = sandbox.0.join("project");
+    let nested = project.join("src/deep");
+    let outside = sandbox.0.join("outside");
+    std::fs::create_dir_all(&nested).expect("create nested project directory");
+    std::fs::create_dir(&outside).expect("create unrelated directory");
+    let run = |cwd: &std::path::Path, args: &[&str]| {
+        support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+            .args(args)
+            .current_dir(cwd)
+            .env_remove("PAPERTIGER_DB")
+            .output()
+            .expect("run papertiger")
+    };
 
-    let missing_receipt = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-        .arg("--project-root")
-        .arg(&missing)
-        .arg("status")
-        .current_dir(&sandbox.0)
-        .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
-        .output()
-        .expect("run with missing project receipt");
-    assert!(!missing_receipt.status.success());
-    let error = String::from_utf8_lossy(&missing_receipt.stderr);
+    let missing = run(&outside, &["status"]);
+    assert!(!missing.status.success());
+    let error = String::from_utf8_lossy(&missing.stderr);
     assert!(
-        error.contains(
-            "no project-install receipt, release bundle, or existing state/papertiger.sqlite was found"
-        ),
+        error.contains("no Papertiger authority (state/papertiger.sqlite) was found")
+            && error.contains("--project-root <project-root> init"),
         "{error}"
     );
-    assert!(error.contains("setup-project"), "{error}");
-    let missing_init = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-        .arg("--project-root")
-        .arg(&missing)
-        .arg("init")
-        .current_dir(&sandbox.0)
-        .env_remove("PAPERTIGER_DB")
-        .env("PAPERTIGER_ACTOR", "project-root-test")
-        .output()
-        .expect("run init with missing project authority");
-    assert!(!missing_init.status.success());
+    assert!(!outside.join("state").exists());
+
+    assert_success(&run(&project, &["init"]));
+    assert_success(&run(&nested, &["plan", "add", "work", "Work"]));
+    let status = run(&nested, &["status", "--json"]);
+    assert_success(&status);
+    let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["active_plans"][0]["plan"]["slug"], "work");
     assert!(
-        String::from_utf8_lossy(&missing_init.stderr).contains("state/papertiger.sqlite"),
+        !nested.join("state").exists(),
+        "a subdirectory finds the project authority"
+    );
+    let current = run(&nested, &["init"]);
+    assert_success(&current);
+    assert!(String::from_utf8_lossy(&current.stdout).contains("nothing changed"));
+
+    let exact = run(
+        &outside,
+        &["--project-root", nested.to_str().unwrap(), "status"],
+    );
+    assert!(
+        !exact.status.success(),
+        "--project-root names one exact root"
+    );
+    assert!(
+        String::from_utf8_lossy(&exact.stderr).contains("no Papertiger authority exists"),
         "{}",
-        String::from_utf8_lossy(&missing_init.stderr)
+        String::from_utf8_lossy(&exact.stderr)
     );
-    assert!(!missing.join("state").exists());
 
-    let installed = sandbox.0.join("installed");
-    std::fs::create_dir(&installed).expect("create installed project");
-    let setup = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-        .arg("setup-project")
-        .arg(&installed)
-        .args(["--skill-target", "none"])
-        .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
-        .output()
-        .expect("install Papertiger consumer");
-    assert_success(&setup);
-
-    let nested = installed.join("nested");
-    std::fs::create_dir(&nested).expect("create nested project directory");
-    let nested_root = support::papertiger_command(installed_papertiger(&installed))
-        .arg("--project-root")
-        .arg(&nested)
-        .arg("status")
-        .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
-        .output()
-        .expect("run exact selector against nested directory");
-    assert!(!nested_root.status.success());
-    let error = String::from_utf8_lossy(&nested_root.stderr);
+    std::fs::create_dir_all(outside.join("state/papertiger.sqlite")).unwrap();
+    let occupied = run(&outside, &["status"]);
+    assert!(!occupied.status.success());
     assert!(
-        error.contains("no project-install receipt, release bundle, or existing"),
-        "{error}"
+        String::from_utf8_lossy(&occupied.stderr).contains("is not a regular file"),
+        "{}",
+        String::from_utf8_lossy(&occupied.stderr)
     );
-    assert!(
-        error.contains("pass the exact installed project root"),
-        "{error}"
-    );
-    assert!(!nested.join("state").exists());
 
     let override_db = sandbox.0.join("override.sqlite");
-    let explicit_override = support::papertiger_command(installed_papertiger(&installed))
+    let explicit_override = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("--db")
         .arg(&override_db)
         .arg("--project-root")
-        .arg(&installed)
+        .arg(&project)
         .arg("status")
         .env_remove("PAPERTIGER_DB")
-        .env_remove("PAPERTIGER_ACTOR")
         .output()
         .expect("run ambiguous explicit database selection");
     assert!(!explicit_override.status.success());
     let error = String::from_utf8_lossy(&explicit_override.stderr);
     assert!(error.contains("one canonical authority"), "{error}");
-    assert!(!override_db.exists());
-
-    let environment_override = support::papertiger_command(installed_papertiger(&installed))
+    let environment_override = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .arg("--project-root")
-        .arg(&installed)
+        .arg(&project)
         .arg("status")
         .env("PAPERTIGER_DB", &override_db)
-        .env_remove("PAPERTIGER_ACTOR")
         .output()
         .expect("run ambiguous environment database selection");
     assert!(!environment_override.status.success());
@@ -3178,29 +3078,11 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     let root = command_help(&[]);
     assert!(root.contains("--project-root <DIR>"), "{root}");
     assert!(
-        root.contains("Project root whose receipt, release bundle, or existing"),
+        root.contains("Project root whose state/papertiger.sqlite is the authority")
+            && root.contains("every write requires one"),
         "{root}"
     );
     assert!(!root.contains("invalid with"), "{root}");
-
-    let setup = command_help(&["setup-project"]);
-    assert!(!setup.contains("invalid with"), "{setup}");
-    assert!(setup.contains("--skill-target"), "{setup}");
-    assert!(setup.contains("auto|agents|claude|both|none"), "{setup}");
-    assert!(
-        setup.contains("papertiger.project_install_result.v7"),
-        "{setup}"
-    );
-
-    let uninstall = command_help(&["uninstall-project"]);
-    assert!(
-        uninstall.contains("preserves authority and repository policy"),
-        "{uninstall}"
-    );
-    assert!(
-        uninstall.contains("papertiger.project_uninstall.v3"),
-        "{uninstall}"
-    );
 
     let plan = command_help(&["plan"]);
     for description in [
@@ -3303,15 +3185,6 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     );
     let inspect = command_help(&["history", "inspect"]);
     assert!(inspect.contains("Stored event id"), "{inspect}");
-    for command in ["setup-user", "uninstall-user"] {
-        let help = command_help(&[command]);
-        assert!(
-            help.contains("Home directory") && help.contains("without writing"),
-            "{help}"
-        );
-    }
-    assert!(!command_help(&["setup-user"]).contains("--replace-managed"));
-    assert!(!command_help(&["setup-project"]).contains("--replace-managed"));
     let evidence = command_help(&["evidence", "verify"]);
     assert!(evidence.contains("--classification"), "{evidence}");
 }
