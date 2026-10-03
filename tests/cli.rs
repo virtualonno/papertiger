@@ -809,6 +809,57 @@ fn every_write_records_a_reported_model_and_the_harness_supplies_the_rest() {
 }
 
 #[test]
+fn brief_bounds_a_long_intent_and_points_at_show() {
+    let db = TestDatabase::new("brief-long-intent");
+    let run = |args: &[&str]| {
+        let output = papertiger(&db.0, args);
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "work", "Work"]);
+    let paragraph =
+        "Re-review after an engine change re-authors work whose facts did not change. ".repeat(12);
+    run(&[
+        "add",
+        "--kind",
+        "goal",
+        "Long intent",
+        "--intent",
+        &paragraph,
+    ]);
+    run(&[
+        "add",
+        "--kind",
+        "goal",
+        "Short intent",
+        "--intent",
+        "One line",
+    ]);
+    let text = run(&["brief", "G-1"]);
+    let intent = text
+        .lines()
+        .find(|line| line.starts_with("  intent: "))
+        .unwrap_or_else(|| panic!("{text}"));
+    assert!(
+        intent.ends_with('…') && intent.chars().count() < 640,
+        "{intent}"
+    );
+    assert!(
+        text.contains("  ... intent continues; run `papertiger show G-1`"),
+        "{text}"
+    );
+    let short = run(&["brief", "G-2"]);
+    assert!(
+        short.contains(
+            "  intent: One line
+"
+        ) && !short.contains("intent continues"),
+        "{short}"
+    );
+}
+
+#[test]
 fn brief_resumes_a_goal_with_its_whole_subtree_in_bounded_sections() {
     let db = TestDatabase::new("brief");
     let run = |args: &[&str]| {

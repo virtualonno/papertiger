@@ -810,16 +810,21 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
         pt::outln!("  path: {}", brief.ancestry.join(" › "));
     }
     if !brief.intent.is_empty() {
+        // Intents are often a few paragraph-long lines, so bound both.
         const INTENT_LINES: usize = 6;
+        const INTENT_CHARS: usize = 600;
         let lines = brief.intent.lines().collect::<Vec<_>>();
-        pt::outln!(
-            "  intent: {}",
-            lines[..lines.len().min(INTENT_LINES)].join("\n  ")
-        );
-        if lines.len() > INTENT_LINES {
+        let mut excerpt = lines[..lines.len().min(INTENT_LINES)].join("\n  ");
+        let mut truncated = lines.len() > INTENT_LINES;
+        if let Some((cut, _)) = excerpt.char_indices().nth(INTENT_CHARS) {
+            excerpt.truncate(cut);
+            excerpt.push('…');
+            truncated = true;
+        }
+        pt::outln!("  intent: {excerpt}");
+        if truncated {
             pt::outln!(
-                "  ... {} more intent line(s); run `papertiger show {}`",
-                lines.len() - INTENT_LINES,
+                "  ... intent continues; run `papertiger show {}`",
                 task.handle
             );
         }

@@ -74,8 +74,9 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   intent, ancestry, filing review, progress, the next ready leaves in focus
   order, open descendants with pickup and owner state, open gates, results
   of done descendants and the latest notes, each section bounded to 10 with
-  an omitted count. Text output shows each result and note as one line of
-  at most 160 characters; JSON carries the full text.
+  an omitted count. Text output bounds the intent to 6 lines and 600
+  characters and shows each result and note as one line of at most 160
+  characters, pointing at `show` for the rest; JSON carries the full text.
 - `add --parent <task>` without `--plan` places the task in its parent's
   plan instead of requiring a single active plan.
 - A pickup records its owner process (host, PID and birth identity) when
