@@ -685,10 +685,31 @@ fn focus_reports_a_pickup_owner_that_provably_ended() {
     run(&["start", "1", "--why", "begin", "--model", "claude-opus-5-5"]);
     let focus = run(&["focus"]);
     assert!(focus.contains("owner running"), "{focus}");
+    let show = run(&["show", "1"]);
+    assert!(
+        show.contains("pickup: last by liveness-session-1 at ")
+            && show.contains("; owner running; advisory, never a lock")
+            && !show.contains("liveness unknown"),
+        "{show}"
+    );
     harness.kill().unwrap();
     harness.wait().unwrap();
     let focus = run(&["focus"]);
     assert!(focus.contains("owner ended"), "{focus}");
+    assert!(run(&["show", "1"]).contains("; owner ended; advisory, never a lock"));
+    // Outside a harness no owner is recorded, so its state is unknown.
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Unowned work"],
+    ));
+    assert_success(&papertiger(&db.0, &["start", "2"]));
+    let unowned = papertiger(&db.0, &["show", "2"]);
+    assert_success(&unowned);
+    let unowned = String::from_utf8(unowned.stdout).unwrap();
+    assert!(
+        unowned.contains("; owner state unknown; advisory, never a lock"),
+        "{unowned}"
+    );
     let show: serde_json::Value = serde_json::from_str(&run(&["show", "1", "--json"])).unwrap();
     assert_eq!(show["owner_state"], "ended");
     assert_eq!(

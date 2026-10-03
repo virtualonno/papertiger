@@ -967,9 +967,16 @@ fn pickup_label(pickup: Option<&pt::TaskPickup>) -> String {
 fn print_task_context(context: &pt::TaskContext) -> Result<()> {
     let task = &context.task;
     if let Some(pickup) = &task.pickup {
+        // Name the owner state in every case so the line never contradicts it.
+        let owner = match pt::owner_state(pickup) {
+            pt::OwnerState::Ended => "owner ended",
+            pt::OwnerState::Running => "owner running",
+            pt::OwnerState::Unknown => "owner state unknown",
+        };
         pt::outln!(
-            "pickup:{}; advisory, liveness unknown",
-            pickup_label(Some(pickup))
+            "pickup: last by {} at {}; {owner}; advisory, never a lock",
+            pickup.session.as_deref().unwrap_or("unattributed"),
+            pickup.at
         );
     }
     let open_dependencies = context

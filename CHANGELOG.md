@@ -190,6 +190,9 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   the command quietly with success instead of a panic (exit 101), in both
   `papertiger` and `papertiger-mise`. A mutation whose receipt could not be
   printed has still committed; do not replay it.
+- `show` names the pickup owner's state (`owner running`, `owner ended` or
+  `owner state unknown`) instead of always adding "liveness unknown", which
+  contradicted a running or ended owner on the same line.
 - Text `list --status <unknown>` (for example `all`) refuses with the valid
   statuses instead of printing nothing, matching `--json` and `--all-plans`.
 
