@@ -472,6 +472,42 @@ fn init_refuses_json_and_names_its_plain_text_report() {
 struct TestDatabase(PathBuf);
 
 #[test]
+fn tag_and_dependency_edits_take_an_optional_reason_and_transitions_keep_theirs() {
+    let db = TestDatabase::new("optional-reasons");
+    let run = |args: &[&str]| papertiger(&db.0, args);
+    assert_success(&run(&["init"]));
+    assert_success(&run(&["plan", "add", "work", "Work"]));
+    assert_success(&run(&["add", "--kind", "feature", "First"]));
+    assert_success(&run(&["add", "--kind", "feature", "Second"]));
+    assert_success(&run(&["tag", "add", "1", "ui"]));
+    assert_success(&run(&["dep", "add", "2", "1"]));
+    assert_success(&run(&["dep", "remove", "2", "1"]));
+    assert_success(&run(&["tag", "remove", "1", "ui"]));
+    let log = run(&["log", "--task", "1", "--json"]);
+    assert_success(&log);
+    let log: serde_json::Value = serde_json::from_slice(&log.stdout).unwrap();
+    let tag_events: Vec<_> = log["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"] == "tag_add" || event["kind"] == "tag_remove")
+        .collect();
+    assert_eq!(tag_events.len(), 2, "{log}");
+    assert!(
+        tag_events.iter().all(|event| event["why"].is_null()),
+        "{log}"
+    );
+
+    let blank = run(&["tag", "add", "1", "ui", "--why", "  "]);
+    assert!(!blank.status.success());
+    let retire = run(&["retire", "2"]);
+    assert!(
+        !retire.status.success(),
+        "lifecycle transitions still require a reason"
+    );
+}
+
+#[test]
 fn kind_filters_select_one_kind_and_status_counts_open_work_by_kind() {
     let db = TestDatabase::new("kind-filters");
     let run = |args: &[&str]| {

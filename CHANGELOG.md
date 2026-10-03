@@ -20,6 +20,11 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   `legacy_task_kind` with a title-based suggestion and the `edit --kind`
   command that retypes it.
 - Bug tasks, like probes and decisions, require `--result` before `done`.
+- `tag add/remove` and `dep add/remove` no longer require `--why`; a reason
+  that is given must be nonblank and is recorded as before. Lifecycle
+  transitions (retire, reject, reopen, waive, plan status) still require one.
+  Library: `add_tag`, `remove_tag`, `add_dep` and `remove_dep` take
+  `why: Option<&str>`.
 - `list`, `focus`, `search` and `tree` take `--kind`; `tree --kind` keeps the
   ancestors of each match. `status` reports open tasks per kind
   (`open_by_kind`). Schema versions: status v4, task_list v2, task_inventory

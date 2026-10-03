@@ -27,7 +27,7 @@ fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
     pt::start_task(&conn, "same-harness", mine, None, Some("me")).unwrap();
     pt::start_task(&conn, "same-harness", other, None, Some("other")).unwrap();
     pt::add_blocker(&conn, "test", other, "input", "waiting for input").unwrap();
-    pt::add_dep(&conn, "test", blocked, ready, "prerequisite").unwrap();
+    pt::add_dep(&conn, "test", blocked, ready, Some("prerequisite")).unwrap();
     let before = serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap();
 
     let selection = pt::focus(&conn, plan, 10, true, None, Some("me")).unwrap();
@@ -109,7 +109,7 @@ fn independent_sessions_prefer_other_work_without_stranding_abandoned_pickups() 
 fn identified_retries_are_eventless_and_real_blockers_remain_enforced() {
     let conn = Connection::open_in_memory().unwrap();
     let (plan, first, second) = seed(&conn);
-    pt::add_dep(&conn, "test", second, first, "prerequisite").unwrap();
+    pt::add_dep(&conn, "test", second, first, Some("prerequisite")).unwrap();
     assert!(pt::start_task(&conn, "test", second, None, Some("b")).is_err());
     pt::start_task(&conn, "test", first, None, Some("a")).unwrap();
     let before = serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap();

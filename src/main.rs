@@ -737,18 +737,18 @@ enum TagCmd {
 enum DepCmd {
     /// Make one task depend on another task
     Add {
-        /// Dependent task number
+        /// Dependent task: N, #N or its handle
         task: String,
-        /// Prerequisite task number
+        /// Prerequisite task: N, #N or its handle
         on: String,
         #[command(flatten)]
         why: WhyArgs,
     },
     /// Remove a dependency edge
     Remove {
-        /// Dependent task number
+        /// Dependent task: N, #N or its handle
         task: String,
-        /// Prerequisite task number
+        /// Prerequisite task: N, #N or its handle
         on: String,
         #[command(flatten)]
         why: WhyArgs,
@@ -2254,21 +2254,21 @@ fn run_planner(cli: Cli) -> Result<()> {
         },
         Cmd::Dep { cmd } => match cmd {
             DepCmd::Add { task, on, why } => {
-                let why = why.required()?;
+                let why = why.optional()?;
                 let (a, b) = (
                     pt::resolve_task_ref(&conn, &task)?,
                     pt::resolve_task_ref(&conn, &on)?,
                 );
-                pt::add_dep(&conn, &actor, a, b, &why)?;
+                pt::add_dep(&conn, &actor, a, b, why.as_deref())?;
                 mutation_output!("#{a} now depends on #{b}");
             }
             DepCmd::Remove { task, on, why } => {
-                let why = why.required()?;
+                let why = why.optional()?;
                 let (a, b) = (
                     pt::resolve_task_ref(&conn, &task)?,
                     pt::resolve_task_ref(&conn, &on)?,
                 );
-                pt::remove_dep(&conn, &actor, a, b, &why)?;
+                pt::remove_dep(&conn, &actor, a, b, why.as_deref())?;
                 mutation_output!("#{a} no longer depends on #{b}");
             }
         },
@@ -2345,15 +2345,15 @@ fn run_planner(cli: Cli) -> Result<()> {
         }
         Cmd::Tag { cmd } => match cmd {
             TagCmd::Add { task, tag, why } => {
-                let why = why.required()?;
+                let why = why.optional()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
-                pt::add_tag(&conn, &actor, seq, &tag, &why)?;
+                pt::add_tag(&conn, &actor, seq, &tag, why.as_deref())?;
                 mutation_output!("tag '{tag}' added to #{seq}");
             }
             TagCmd::Remove { task, tag, why } => {
-                let why = why.required()?;
+                let why = why.optional()?;
                 let seq = pt::resolve_task_ref(&conn, &task)?;
-                pt::remove_tag(&conn, &actor, seq, &tag, &why)?;
+                pt::remove_tag(&conn, &actor, seq, &tag, why.as_deref())?;
                 mutation_output!("tag '{tag}' removed from #{seq}");
             }
         },

@@ -1155,7 +1155,7 @@ fn audit_reports_stored_dependency_deadlocks_with_their_removals() {
         },
     )
     .unwrap();
-    assert!(pt::add_dep(&conn, "test", child, downstream, "deadlock probe").is_err());
+    assert!(pt::add_dep(&conn, "test", child, downstream, Some("deadlock probe")).is_err());
     assert!(
         !pt::audit(&conn)
             .unwrap()
@@ -1212,8 +1212,8 @@ fn dependency_cycles_rejected_and_readiness_derived() {
     )
     .unwrap();
     // a <- b <- c; closing the loop is refused
-    assert!(pt::add_dep(&conn, "test", a, c, "cycle probe").is_err());
-    assert!(pt::add_dep(&conn, "test", a, a, "self-cycle probe").is_err());
+    assert!(pt::add_dep(&conn, "test", a, c, Some("cycle probe")).is_err());
+    assert!(pt::add_dep(&conn, "test", a, a, Some("self-cycle probe")).is_err());
     // only a is ready
     let ready = pt::ready_tasks(&conn, plan, 10, false).unwrap();
     assert_eq!(ready.len(), 1);
@@ -1266,23 +1266,23 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
     .unwrap();
 
     assert_exact_error(
-        pt::add_dep(&conn, "test", a, a, "self dependency"),
+        pt::add_dep(&conn, "test", a, a, Some("self dependency")),
         &format!("#{a} cannot depend on itself"),
     );
     assert_exact_error(
-        pt::add_dep(&conn, "test", a, other, "cross-plan dependency"),
+        pt::add_dep(&conn, "test", a, other, Some("cross-plan dependency")),
         &format!("#{a} and dependency #{other} belong to different plans"),
     );
     assert_exact_error(
-        pt::add_dep(&conn, "test", a, c, "cycle"),
+        pt::add_dep(&conn, "test", a, c, Some("cycle")),
         &format!("dependency #{a} -> #{c} would create a cycle"),
     );
     assert_exact_error(
-        pt::add_dep(&conn, "test", c, b, "duplicate"),
+        pt::add_dep(&conn, "test", c, b, Some("duplicate")),
         &format!("#{c} already depends on #{b}"),
     );
     assert_exact_error(
-        pt::remove_dep(&conn, "test", a, b, "not present"),
+        pt::remove_dep(&conn, "test", a, b, Some("not present")),
         &format!("#{a} does not depend on #{b}"),
     );
     assert_exact_error(
@@ -2431,12 +2431,28 @@ fn tags_and_mistaken_open_gates_are_correctable_with_evented_reasons() {
         "test",
         task,
         "calibration",
-        "route measured residual",
+        Some("route measured residual"),
     )
     .unwrap();
-    assert!(pt::add_tag(&conn, "test", task, "calibration", "duplicate").is_err());
-    pt::remove_tag(&conn, "test", task, "calibration", "classification changed").unwrap();
-    assert!(pt::remove_tag(&conn, "test", task, "calibration", "duplicate removal").is_err());
+    assert!(pt::add_tag(&conn, "test", task, "calibration", Some("duplicate")).is_err());
+    pt::remove_tag(
+        &conn,
+        "test",
+        task,
+        "calibration",
+        Some("classification changed"),
+    )
+    .unwrap();
+    assert!(
+        pt::remove_tag(
+            &conn,
+            "test",
+            task,
+            "calibration",
+            Some("duplicate removal")
+        )
+        .is_err()
+    );
 
     pt::add_gate(&conn, "test", task, "wrong gate", "test", "obsolete").unwrap();
     assert!(pt::remove_gate(&conn, "test", task, "wrong gate", "").is_err());

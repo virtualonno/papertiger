@@ -502,11 +502,26 @@ pub fn edit_task(
     Ok(changed)
 }
 
-pub fn add_tag(conn: &Connection, actor: &str, seq: i64, tag: &str, why: &str) -> Result<()> {
-    let tag = validate_tag(tag).context("adding a tag requires a valid tag")?;
-    if why.trim().is_empty() {
-        bail!("adding a tag requires a nonblank reason");
+/// Tag and dependency edits record a reason only when one is given; a reason
+/// that is given must be nonblank.
+fn optional_reason<'a>(why: Option<&'a str>, action: &str) -> Result<Option<&'a str>> {
+    match why {
+        Some(why) if why.trim().is_empty() => {
+            bail!("{action}: --why was given without text; pass a reason or omit --why")
+        }
+        why => Ok(why),
     }
+}
+
+pub fn add_tag(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    tag: &str,
+    why: Option<&str>,
+) -> Result<()> {
+    let tag = validate_tag(tag).context("adding a tag requires a valid tag")?;
+    let why = optional_reason(why, "adding a tag")?;
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     let changed = tx.execute(
@@ -522,18 +537,22 @@ pub fn add_tag(conn: &Connection, actor: &str, seq: i64, tag: &str, why: &str) -
         "task",
         Some(task.task_id),
         "tag_add",
-        Some(why),
+        why,
         Some(&serde_json::json!({"seq": seq, "tag": tag})),
     )?;
     tx.commit()?;
     Ok(())
 }
 
-pub fn remove_tag(conn: &Connection, actor: &str, seq: i64, tag: &str, why: &str) -> Result<()> {
+pub fn remove_tag(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    tag: &str,
+    why: Option<&str>,
+) -> Result<()> {
     let tag = validate_tag(tag).context("removing a tag requires a valid tag")?;
-    if why.trim().is_empty() {
-        bail!("removing a tag requires a nonblank reason");
-    }
+    let why = optional_reason(why, "removing a tag")?;
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     let changed = tx.execute(
@@ -549,19 +568,23 @@ pub fn remove_tag(conn: &Connection, actor: &str, seq: i64, tag: &str, why: &str
         "task",
         Some(task.task_id),
         "tag_remove",
-        Some(why),
+        why,
         Some(&serde_json::json!({"seq": seq, "tag": tag})),
     )?;
     tx.commit()?;
     Ok(())
 }
 
-pub fn add_dep(conn: &Connection, actor: &str, seq: i64, on_seq: i64, why: &str) -> Result<()> {
-    if why.trim().is_empty() {
-        bail!("adding a dependency requires a nonblank reason");
-    }
+pub fn add_dep(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    on_seq: i64,
+    why: Option<&str>,
+) -> Result<()> {
+    let why = optional_reason(why, "adding a dependency")?;
     let tx = begin_mutation(conn)?;
-    add_dep_inner(&tx, actor, seq, on_seq, true, Some(why))?;
+    add_dep_inner(&tx, actor, seq, on_seq, true, why)?;
     tx.commit()?;
     Ok(())
 }
@@ -644,10 +667,14 @@ pub(crate) fn add_dep_inner(
     Ok(())
 }
 
-pub fn remove_dep(conn: &Connection, actor: &str, seq: i64, on_seq: i64, why: &str) -> Result<()> {
-    if why.trim().is_empty() {
-        bail!("removing a dependency requires a nonblank reason");
-    }
+pub fn remove_dep(
+    conn: &Connection,
+    actor: &str,
+    seq: i64,
+    on_seq: i64,
+    why: Option<&str>,
+) -> Result<()> {
+    let why = optional_reason(why, "removing a dependency")?;
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
     let on = get_task(&tx, on_seq)?;
@@ -664,7 +691,7 @@ pub fn remove_dep(conn: &Connection, actor: &str, seq: i64, on_seq: i64, why: &s
         "dep",
         Some(task.task_id),
         "remove",
-        Some(why),
+        why,
         Some(&serde_json::json!({"on": on_seq})),
     )?;
     tx.commit()?;
