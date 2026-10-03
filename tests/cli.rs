@@ -188,7 +188,7 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
     let other_filters = invoke(&["list", "--all-plans", "--after-cursor", &cursor]);
     assert!(
         String::from_utf8_lossy(&other_filters.stderr)
-            .contains("different --status/--tag/--kind filters")
+            .contains("different --status/--tag/--kind/--unreviewed filters")
     );
     assert_eq!(next["tasks"].as_array().unwrap().len(), 2);
     assert!(
@@ -1070,6 +1070,91 @@ fn text_reads_cover_every_active_plan_when_none_is_named() {
     let json = papertiger(&db.0, &["focus", "--json"]);
     assert!(!json.status.success(), "JSON stays one plan per document");
     assert!(String::from_utf8_lossy(&json.stderr).contains("pass --plan"));
+}
+
+#[test]
+fn unreviewed_triage_spans_every_plan_with_honest_paging() {
+    let db = TestDatabase::new("triage-all-plans");
+    let as_session = |session: &str, model: &str, args: &[&str]| {
+        let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+            .arg("--db")
+            .arg(&db.0)
+            .args(args)
+            .env("PAPERTIGER_SESSION", session)
+            .env("PAPERTIGER_MODEL", model)
+            .output()
+            .expect("run papertiger");
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let fleet = |args: &[&str]| as_session("fleet-1", "deepseek-v4.1-flash", args);
+    let strong = |args: &[&str]| as_session("strong-1", "claude-opus-5-5", args);
+    strong(&["init"]);
+    strong(&["plan", "add", "alpha", "Alpha"]);
+    strong(&["plan", "add", "beta", "Beta"]);
+    fleet(&["add", "--kind", "bug", "Crash in alpha", "--plan", "alpha"]);
+    fleet(&["add", "--kind", "feature", "Beta export", "--plan", "beta"]);
+    fleet(&["add", "--kind", "feature", "Alpha cache", "--plan", "alpha"]);
+    strong(&[
+        "review",
+        "F-3",
+        "--verdict",
+        "confirmed",
+        "--why",
+        "Cache misses measured",
+    ]);
+    strong(&["plan", "set", "beta", "paused"]);
+
+    let text = strong(&["list", "--all-plans", "--unreviewed"]);
+    assert!(
+        text.contains("B-1 [alpha; active] Crash in alpha [unreviewed · deepseek-v4.1-flash]")
+            && text.contains("F-2 [beta; paused] Beta export [unreviewed · deepseek-v4.1-flash]")
+            && !text.contains("F-3"),
+        "triage reaches paused plans and skips confirmed claims: {text}"
+    );
+    let first: serde_json::Value = serde_json::from_str(&strong(&[
+        "list",
+        "--all-plans",
+        "--unreviewed",
+        "--limit",
+        "1",
+        "--json",
+    ]))
+    .unwrap();
+    assert_eq!(first["unreviewed"], true);
+    assert_eq!(
+        (first["total"].as_u64(), first["remaining"].as_u64()),
+        (Some(2), Some(1))
+    );
+    let cursor = first["next_cursor"].as_str().unwrap().to_owned();
+    assert!(
+        first["continuation_command"]
+            .as_str()
+            .unwrap()
+            .contains("--unreviewed --limit 1 --after-cursor"),
+        "{first}"
+    );
+    let second: serde_json::Value = serde_json::from_str(&strong(&[
+        "list",
+        "--all-plans",
+        "--unreviewed",
+        "--limit",
+        "1",
+        "--after-cursor",
+        &cursor,
+        "--json",
+    ]))
+    .unwrap();
+    assert_eq!(second["tasks"][0]["task"]["handle"], "F-2");
+    assert_eq!(second["remaining"], 0);
+    let crossed = papertiger(
+        &db.0,
+        &["list", "--all-plans", "--after-cursor", &cursor, "--json"],
+    );
+    assert!(
+        !crossed.status.success(),
+        "a triage cursor cannot page an unfiltered listing"
+    );
 }
 
 #[test]

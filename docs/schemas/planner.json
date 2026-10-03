@@ -1941,6 +1941,10 @@
             }
           ]
         },
+        "unreviewed": {
+          "description": "Only tasks whose filing or result still needs someone else's review.",
+          "type": "boolean"
+        },
         "total": {
           "type": "integer",
           "minimum": 0
@@ -1986,6 +1990,7 @@
         "status",
         "tag",
         "kind",
+        "unreviewed",
         "total",
         "remaining",
         "next_cursor",

@@ -18,6 +18,8 @@ pub struct InventoryResponse {
     pub status: Option<String>,
     pub tag: Option<String>,
     pub kind: Option<String>,
+    /// Only tasks whose filing or result still needs someone else's review.
+    pub unreviewed: bool,
     pub total: usize,
     pub remaining: usize,
     /// Opaque continuation bound to the filters and authority snapshot.
@@ -28,8 +30,18 @@ pub struct InventoryResponse {
 
 const INVENTORY_CURSOR_PREFIX: &str = "inventory-v1";
 
-fn filter_digest(status: Option<&str>, tag: Option<&str>, kind: Option<&str>) -> String {
-    let scope = serde_json::json!([status, tag, kind]).to_string();
+fn filter_digest(
+    status: Option<&str>,
+    tag: Option<&str>,
+    kind: Option<&str>,
+    unreviewed: bool,
+) -> String {
+    // The pre-review digest is kept for unfiltered cursors so they stay valid.
+    let scope = if unreviewed {
+        serde_json::json!([status, tag, kind, "unreviewed"]).to_string()
+    } else {
+        serde_json::json!([status, tag, kind]).to_string()
+    };
     crate::sha256(scope.as_bytes())[..16].to_owned()
 }
 
@@ -37,6 +49,7 @@ fn restart_command(
     status: Option<&str>,
     tag: Option<&str>,
     kind: Option<&str>,
+    unreviewed: bool,
     limit: usize,
 ) -> String {
     let mut command = String::from("papertiger list --all-plans");
@@ -49,6 +62,9 @@ fn restart_command(
     if let Some(kind) = kind {
         command.push_str(&format!(" --kind {kind}"));
     }
+    if unreviewed {
+        command.push_str(" --unreviewed");
+    }
     command.push_str(&format!(" --limit {limit} --json"));
     command
 }
@@ -59,6 +75,7 @@ fn cursor_position(
     status: Option<&str>,
     tag: Option<&str>,
     kind: Option<&str>,
+    unreviewed: bool,
     snapshot: &str,
     restart: &str,
 ) -> Result<i64> {
@@ -73,9 +90,9 @@ fn cursor_position(
         .ok()
         .filter(|seq| *seq > 0)
         .ok_or_else(|| anyhow::anyhow!("--after-cursor is malformed; restart with `{restart}`"))?;
-    if filters != filter_digest(status, tag, kind) {
+    if filters != filter_digest(status, tag, kind, unreviewed) {
         bail!(
-            "--after-cursor belongs to different --status/--tag/--kind filters; repeat the filters that produced it or restart with `{restart}`"
+            "--after-cursor belongs to different --status/--tag/--kind/--unreviewed filters; repeat the filters that produced it or restart with `{restart}`"
         );
     }
     if cursor_snapshot != snapshot {
@@ -100,6 +117,7 @@ pub fn task_inventory(
     status: Option<&str>,
     tag: Option<&str>,
     kind: Option<&str>,
+    unreviewed: bool,
     limit: usize,
     after_cursor: Option<&str>,
 ) -> Result<InventoryResponse> {
@@ -119,33 +137,43 @@ pub fn task_inventory(
     let current = event_head(conn)?
         .map(|head| head.token)
         .unwrap_or_else(|| "empty".into());
-    let restart = restart_command(status, tag, kind, limit);
+    let restart = restart_command(status, tag, kind, unreviewed, limit);
     let after_seq = after_cursor
-        .map(|cursor| cursor_position(cursor, status, tag, kind, &current, &restart))
+        .map(|cursor| cursor_position(cursor, status, tag, kind, unreviewed, &current, &restart))
         .transpose()?;
-    // Fetch only compact fields; task bodies and historical payloads never enter this projection.
     let predicate = "(?1 IS NULL OR t.status=?1 OR (?1='unfinished' AND t.status IN ('proposed','in_progress'))) AND (?2 IS NULL OR EXISTS (SELECT 1 FROM task_tags g WHERE g.task_id=t.task_id AND g.tag=?2)) AND (?3 IS NULL OR t.kind=?3)";
-    let total: i64 = conn.query_row(
-        &format!("SELECT count(*) FROM tasks t WHERE {predicate}"),
-        params![status, tag, kind],
-        |row| row.get(0),
+    // Review state is derived from history, so a review filter selects the
+    // matching tasks first and pages over that selection.
+    let mut statement = conn.prepare(&format!(
+        "SELECT t.seq FROM tasks t WHERE {predicate} ORDER BY t.seq"
+    ))?;
+    let mut selected = statement
+        .query_map(params![status, tag, kind], |row| row.get::<_, i64>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if unreviewed {
+        let mut kept = Vec::with_capacity(selected.len());
+        for seq in selected {
+            if crate::review::needs_review(conn, &crate::get_task(conn, seq)?)? {
+                kept.push(seq);
+            }
+        }
+        selected = kept;
+    }
+    let total = selected.len();
+    let after = after_seq.unwrap_or(0);
+    let following = selected
+        .into_iter()
+        .filter(|seq| *seq > after)
+        .collect::<Vec<_>>();
+    let page = &following[..following.len().min(limit)];
+    // Fetch only compact fields; task bodies and historical payloads never enter this projection.
+    let mut statement = conn.prepare(
+        "SELECT p.slug,p.status,t.seq,t.title,t.status,t.kind,t.priority FROM tasks t JOIN plans p ON p.plan_id=t.plan_id WHERE t.seq=?1",
     )?;
-    let remaining_before: i64 = conn.query_row(
-        &format!("SELECT count(*) FROM tasks t WHERE {predicate} AND t.seq>?4"),
-        params![status, tag, kind, after_seq.unwrap_or(0)],
-        |row| row.get(0),
-    )?;
-    let mut statement = conn.prepare(&format!("SELECT p.slug,p.status,t.seq,t.title,t.status,t.kind,t.priority FROM tasks t JOIN plans p ON p.plan_id=t.plan_id WHERE {predicate} AND t.seq>?4 ORDER BY t.seq LIMIT ?5"))?;
-    let tasks = statement
-        .query_map(
-            params![
-                status,
-                tag,
-                kind,
-                after_seq.unwrap_or(0),
-                i64::try_from(limit)?
-            ],
-            |row| {
+    let tasks = page
+        .iter()
+        .map(|seq| {
+            statement.query_row(params![seq], |row| {
                 Ok(InventoryItem {
                     plan: PlanIdentity {
                         slug: row.get(0)?,
@@ -160,15 +188,15 @@ pub fn task_inventory(
                         priority: row.get(6)?,
                     },
                 })
-            },
-        )?
+            })
+        })
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let remaining = usize::try_from(remaining_before)? - tasks.len();
+    let remaining = following.len() - tasks.len();
     let next_cursor = tasks.last().filter(|_| remaining > 0).map(|item| {
         format!(
             "{INVENTORY_CURSOR_PREFIX}:{}:{}:{current}",
             item.task.seq,
-            filter_digest(status, tag, kind)
+            filter_digest(status, tag, kind, unreviewed)
         )
     });
     let continuation_command = next_cursor
@@ -179,7 +207,8 @@ pub fn task_inventory(
         status: status.map(str::to_owned),
         tag: tag.map(str::to_owned),
         kind: kind.map(str::to_owned),
-        total: usize::try_from(total)?,
+        unreviewed,
+        total,
         remaining,
         next_cursor,
         continuation_command,

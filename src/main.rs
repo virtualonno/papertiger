@@ -131,7 +131,7 @@ enum Cmd {
         #[arg(long)]
         kind: Option<String>,
         /// Only tasks whose filing or result still needs someone else's review
-        #[arg(long, conflicts_with = "all_plans")]
+        #[arg(long)]
         unreviewed: bool,
         /// Ordering: seq or activity
         #[arg(long, default_value = "seq")]
@@ -1802,6 +1802,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     status.as_deref(),
                     tag.as_deref(),
                     kind.as_deref(),
+                    unreviewed,
                     limit.unwrap_or(100),
                     after_cursor.as_deref(),
                 )?;
@@ -1809,13 +1810,25 @@ fn run_planner(cli: Cli) -> Result<()> {
                     pt::outln!("{}", serde_json::to_string_pretty(&response)?);
                 } else {
                     for item in &response.tasks {
+                        // A triage listing labels the claims it selected.
+                        let review = if unreviewed {
+                            let task = pt::get_task(&conn, item.task.seq)?;
+                            let review = pt::task_review(&conn, &task)?;
+                            match (task.status.as_str(), &review.result) {
+                                ("done", Some(result)) => review_marker("result ", result, true),
+                                _ => review_marker("", &review.filing, true),
+                            }
+                        } else {
+                            String::new()
+                        };
                         pt::outln!(
-                            "{} {} [{}; {}] {}",
+                            "{} {} [{}; {}] {}{}",
                             status_glyph(&item.task.status),
                             item.task.handle,
                             item.plan.slug,
                             item.plan.status,
-                            item.task.title
+                            item.task.title,
+                            review
                         );
                     }
                     pt::outln!("{} total; {} remaining", response.total, response.remaining);
