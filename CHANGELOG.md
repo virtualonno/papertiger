@@ -6,13 +6,39 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
-Local dogfood candidate `1.0.0-rc.2`; not published.
+Local dogfood candidate `1.0.0-rc.3`; not published.
 
 Planner schema v14 and dump format `papertiger.dump.v11`. Run `init`
 deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
 
+Papertiger now ships as one agent skill directory (`papertiger/` with
+`SKILL.md`, `references/`, and `bin/papertiger` and `bin/papertiger-mise`).
+Extract it into your agent skills directory; to upgrade, replace that
+directory. Nothing is installed in projects any more: delete a project's
+`tools/papertiger/` and its `.agents/skills/papertiger` and
+`.claude/skills/papertiger` copies after installing the skill. A project whose
+authority is not at `state/papertiger.sqlite` must move it there (take a
+`backup --output state/papertiger.sqlite`), or be addressed with `--db`.
+
+### Removed
+
+- `setup-project`, `uninstall-project`, `setup-user` and `uninstall-user`,
+  with their install receipts, the release manifest and the per-project
+  version pin. The schema version check already keeps a binary away from an
+  authority it cannot read; the pin only forced every project to upgrade in
+  lockstep. The private fallback store that `setup-user` created is no longer
+  selected implicitly.
+- The project-overlay release layout.
+
 ### Changed
 
+- Authority selection: `--db` or `PAPERTIGER_DB`; else `--project-root <root>`,
+  which names `<root>/state/papertiger.sqlite`; else the nearest
+  `state/papertiger.sqlite` above the working directory, the way Git finds a
+  repository. With none, commands refuse and name `--project-root` and `init`.
+  `init` with no selector creates the authority in the working directory, and
+  when it creates one in a Git working tree it adds Papertiger's ignore rules to
+  `.gitignore`. A non-regular file at the authority path is refused.
 - JSON documents whose shape changed move one version: task_context v9,
   task_current v4, event_log v2, mutation v2, status v4, focus v8, task_list
   v2, task_inventory v3, search v3, search_compact v3, dump v11; new

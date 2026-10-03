@@ -13,20 +13,17 @@ existing team or domain lifecycle.
 
 ## Select the authority once
 
-<!-- installed-command -->
-
-Use `<project-root>/tools/papertiger/bin/papertiger[.exe]` in the native
-shell. Keep work in the canonical project that owns the outcome, including
-cross-repository work; from elsewhere pass `--project-root <canonical-root>` to
-that root's own launcher, since releases can differ during rollouts.
-The runtime selects the existing authority; do not guess `--db`, use PATH, or
-create a second store in a worktree. Without a project runtime, use the
-executable named by your personal Papertiger skill and put the consuming
-project's absolute root in each task intent. Below, `papertiger` means the
-selected executable. Write through it, never raw SQLite. A refusal does not
-authorize removing guards or manufacturing admission; use the corrective command
-or preserve the blocker. Only for a genuinely new authority, read
-[first use](../../../tools/papertiger/agent_integration.md#first-use).
+Run `bin/papertiger[.exe]` from this skill's directory in the native shell;
+below, `papertiger` means that executable. From inside a project it uses the
+nearest `state/papertiger.sqlite` above the working directory. Keep work in
+the canonical project that owns the outcome, including cross-repository work;
+from elsewhere pass `--project-root <canonical-root>`. Do not guess `--db` or
+create a second store in a worktree. When no project owns the work, use the
+authority your operator named and put the consuming project's absolute root in
+each task intent. Write through `papertiger`, never raw SQLite. A refusal does
+not authorize removing guards or manufacturing admission; use the corrective
+command or preserve the blocker. Only for a genuinely new project, read
+[first use](references/agent_integration.md#first-use).
 
 Every write records the model that authored it: pass `--model <your exact
 model id>` unless `PAPERTIGER_MODEL` was set at launch, and never use `human`
@@ -75,7 +72,7 @@ Before completion, record any commit that represents the outcome with
 repository). `done` refuses open obligations; resolve them with evidence,
 never route around a refusal. Run `audit` after planning changes.
 
-Use live `--help` for operations. Read [the reference](../../../tools/papertiger/agent_integration.md)
+Use live `--help` for operations. Read [the reference](references/agent_integration.md)
 for authority changes, migration or recovery; its relevant section
 covers gates, transfers, external references and optional Mise. Only `init`
 initializes or migrates a database; never use it to replace missing history.

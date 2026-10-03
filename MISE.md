@@ -747,12 +747,11 @@ reopen the specific relied-upon bytes. Filesystem inspection errors refuse
 instead of reporting absence, and missing-database guidance retains the exact
 selected database.
 
-This is intentionally asymmetric with the durable planner: `papertiger
-setup-project` installs the planner binary, its harness-neutral operating
-contract, a receipt, and only the selected thin skill envelopes. A project does
-not install or later uninstall Mise merely because it wants one campaign. The
-release binary remains outside the consumer and is frozen by absolute path and
-hash as the outer judge; its project-owned SQLite/CAS evidence remains after
+Nothing is installed in a project for Mise, as for the planner: a project does
+not install or later uninstall anything merely because it wants one campaign.
+The binary in the Papertiger skill directory remains outside the consumer and
+is frozen by absolute path and hash as the outer judge, so replacing the skill
+directory invalidates an open campaign; its project-owned SQLite/CAS evidence remains after
 active RSI work ends so later review can rederive claims.
 
 Campaign admission verifies the manifest from

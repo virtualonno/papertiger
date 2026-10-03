@@ -47,7 +47,7 @@ each under 32 KiB.
 
 ## Planning Use in This Repository
 
-- Invoke the installed `tools/papertiger/bin/papertiger[.exe]`; a build in
+- Invoke the installed Papertiger skill's `bin/papertiger[.exe]`; a build in
   `target/` is a development artifact, never this repository's planner.
 - Roadmap prose, handoff notes, and memories are orientation only: when they
   disagree with the DB, the DB wins and the prose gets corrected. Markdown
@@ -101,4 +101,4 @@ each under 32 KiB.
     cargo clippy --workspace --all-targets
     cargo test --workspace
     cargo test -p papertiger-mise --test deterministic_dogfood -- --ignored --test-threads=1
-    tools/papertiger/bin/papertiger audit
+    <installed skill>/bin/papertiger audit

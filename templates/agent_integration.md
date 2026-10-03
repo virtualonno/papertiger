@@ -6,15 +6,16 @@ kinds, review, pickup, gates, commits, references and Mise.
 
 ## First use
 
-The release archive is laid out for a project root: unpacked there, its skills
-and `tools/papertiger/bin/papertiger[.exe]` work as they are. Installation,
-upgrade and removal are covered by `--help` and the README.
+Papertiger is this skill directory: the skill, this reference and the
+executables in `bin/`. Installing, upgrading and removing it are covered by
+the README; nothing is installed in projects.
 
 Start from the authority the project already has. Only a genuinely new project
-with no planning history gets one: add the database and its `-journal`, `-wal`
-and `-shm` sidecars to Git's ignore rules, run `init`, then
-`plan add <slug> "Title" --intent "Purpose"`. When history is unexpectedly
-missing, stop and restore it; never run `init` to replace it.
+with no planning history gets one: `papertiger --project-root <project-root>
+init` creates `state/papertiger.sqlite` there and, in a Git working tree, adds
+it and its sidecars to `.gitignore`; then `plan add <slug> "Title" --intent
+"Purpose"`. When history is unexpectedly missing, stop and restore it; never
+run `init` to replace it.
 
 Use Papertiger when work has independently reviewable outcomes, separate
 commits, dependencies, external conditions, decisions, probes or proof
@@ -32,11 +33,10 @@ whose commits carry stable `--repo` labels. Use a second authority only for a
 genuinely independent outcome; authorities never share dependencies or
 replacements and are never merged.
 
-Run the project's own launcher, `<project-root>/tools/papertiger/bin/papertiger[.exe]`,
-not a copy on `PATH`. It finds the project receipt or release manifest above
-the working directory and opens `state/papertiger.sqlite` there. From another
-repository pass the global `--project-root <canonical-project-root>` to that
-root's launcher, since projects can pin different releases during a rollout.
+A project's authority is `<project-root>/state/papertiger.sqlite`. From inside
+the project, `papertiger` uses the nearest one above the working directory;
+from anywhere else pass the global `--project-root <canonical-project-root>`,
+which names that exact root. With neither, commands refuse and name both.
 `--db` and `PAPERTIGER_DB` are deliberate overrides for recovery, never for
 ordinary selection.
 
@@ -46,8 +46,9 @@ ordinary selection.
   `repair-guards --why <reason>` restores them.
 - `init` is the only command that creates or migrates an authority. Read
   commands never migrate; follow their exact corrective command deliberately.
-  The current schema is v14 and the dump format `papertiger.dump.v11`; before
-  migrating, take `backup --output <new-path>` with the new release.
+  The current schema is v14 and the dump format `papertiger.dump.v11`. After
+  upgrading the skill, a read that refuses an older authority names the
+  `init` that migrates it; take `backup --output <new-path>` first.
 - `export --output <path>` writes a recovery file; `import` reads v11 and
   converts `papertiger.dump.v10`. An export is transfer and recovery, never a
   second live authority.
@@ -209,10 +210,9 @@ satisfy proof.
 
 ## Mise is an episodic external driver
 
-`papertiger-mise` ships in every release but is not installed by
-`setup-project`. When a bounded improvement campaign is warranted, invoke the
-release's binary against the consumer; read `MISE.md` from the same release
-before admission. The consumer owns its Mise database, object store and
+`papertiger-mise` ships beside `papertiger` in this skill's `bin/`. When a
+bounded improvement campaign is warranted, invoke it with `--project-root
+<consumer>`; read `MISE.md` from this skill directory before admission. The consumer owns its Mise database, object store and
 campaign workspaces, and the binary must not change during a campaign. Mise
 nominations are evidence, never completion, promotion or deployment
 authority; attach a derived projection with `papertiger mise record`, which
