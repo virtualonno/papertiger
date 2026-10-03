@@ -131,9 +131,9 @@ text_args!(
     text_file,
     "text",
     false,
-    "Note text",
+    "Note text (or give it positionally)",
     "Read the note as UTF-8 from PATH, or stdin with '-'",
-    required
+    optional
 );
 
 impl IntentArgs {

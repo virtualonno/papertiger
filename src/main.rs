@@ -311,6 +311,9 @@ enum Cmd {
     },
     /// Record a free-standing evented note (course changes, decisions)
     Note {
+        /// The note text, or a task and then its text: `note "text"`, `note F-3 "text"`
+        #[arg(value_name = "TASK] [TEXT", num_args = 0..=2)]
+        words: Vec<String>,
         #[command(flatten)]
         text: NoteTextArgs,
         /// Attach the note to this task number
@@ -2536,8 +2539,29 @@ fn run_planner(cli: Cli) -> Result<()> {
                 print_tree(&conn, plan_id, None, 1, visible.as_ref())?;
             }
         }
-        Cmd::Note { text, task } => {
-            let text = text.required()?;
+        Cmd::Note { words, text, task } => {
+            // Positional words read by count: one is the text, two are a
+            // task and its text; flags say the same thing explicitly.
+            let (positional_task, positional_text) = match words.as_slice() {
+                [text] => (None, Some(text.clone())),
+                [task, text] => (Some(task.clone()), Some(text.clone())),
+                _ => (None, None),
+            };
+            let text = match (positional_text, text.optional()?) {
+                (Some(_), Some(_)) => bail!(
+                    "give the note text once, positionally or with --text/--text-file, not both"
+                ),
+                (Some(text), None) | (None, Some(text)) => text,
+                (None, None) => bail!(
+                    "note needs its text: `papertiger note [<task>] \"<text>\"`, or --text/--text-file"
+                ),
+            };
+            let task = match (positional_task, task) {
+                (Some(_), Some(_)) => {
+                    bail!("name the note's task once, positionally or with --task, not both")
+                }
+                (positional, flag) => positional.or(flag),
+            };
             let task_seq = task
                 .map(|task| pt::resolve_task_ref(&conn, &task))
                 .transpose()?;

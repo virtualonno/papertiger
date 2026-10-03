@@ -32,6 +32,9 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Changed
 
+- `note` takes its text positionally, alone or after a task:
+  `note "text"`, `note F-3 "text"`; `--text`, `--text-file` and `--task` still
+  work.
 - Task, gate and reference kinds read in any letter case (`--kind Feature`,
   outline `"kind": "Bug"`), and usage lines name the kinds, so a missing
   `--kind` shows the choices.

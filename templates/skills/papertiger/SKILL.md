@@ -62,7 +62,7 @@ when you do check a claim, record
 done task's result). Read rejected history before reviving an approach. An
 intent stands alone: fold a source plan's substance in (`--intent-file`)
 instead of citing a scratch file. Write `--why` for choices a cold reader
-could question, and record decisions with `note --text "..." --task <N>`;
+could question, and record decisions with `note <N> "..."`;
 `--intent-file`, `--why-file`, `--result-file` and `note --text-file` read
 UTF-8 text when shell quoting becomes awkward.
 

@@ -1002,6 +1002,17 @@ fn starting_and_reading_ask_for_nothing_extra() {
         "{}",
         String::from_utf8_lossy(&missing.stderr)
     );
+    // A note reads its text, or a task and then its text, positionally.
+    assert_success(&papertiger(&db.0, &["note", "F-1", "Found the cause"]));
+    assert_success(&papertiger(&db.0, &["note", "Plan-level thought"]));
+    let log = String::from_utf8(papertiger(&db.0, &["log", "--limit", "2"]).stdout).unwrap();
+    assert!(
+        log.contains("plan/note - Plan-level thought")
+            && log.contains("F-1 task/note - Found the cause"),
+        "{log}"
+    );
+    let twice = papertiger(&db.0, &["note", "F-1", "text", "--text", "again"]);
+    assert!(String::from_utf8_lossy(&twice.stderr).contains("give the note text once"));
     // A read has nothing to attribute, so authorship flags are ignored.
     for read in [&["status"][..], &["show", "F-1"], &["init"]] {
         let mut args = read.to_vec();
@@ -3883,19 +3894,10 @@ fn long_text_files_and_stdin_round_trip_without_losing_intent_clear() {
         &["done", "1", "--result-file", &result_path],
     ));
     assert_success(&papertiger(&db.0, &["note", "--text", "inline note"]));
-    let positional = papertiger(&db.0, &["note", "positional note"]);
-    assert!(!positional.status.success());
-    assert!(
-        String::from_utf8_lossy(&positional.stderr).contains("unexpected argument"),
-        "{}",
-        String::from_utf8_lossy(&positional.stderr)
-    );
+    assert_success(&papertiger(&db.0, &["note", "positional note"]));
     let missing_text = papertiger(&db.0, &["note", "--task", "1"]);
     assert!(!missing_text.status.success());
-    assert!(
-        String::from_utf8_lossy(&missing_text.stderr)
-            .contains("pass --text or --text-file with nonblank text")
-    );
+    assert!(String::from_utf8_lossy(&missing_text.stderr).contains("note needs its text"));
     let both = papertiger(
         &db.0,
         &["note", "--text", "inline", "--text-file", &note_path],

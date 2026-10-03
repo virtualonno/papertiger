@@ -144,9 +144,9 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
   cannot be assigned; `audit` reports open `work` tasks with a suggested kind.
   Probe, decision and bug tasks require `--result` or `--result-file` before
   they can complete.
-- `note --text <text>` or `note --text-file <path|->` records a free-standing
-  evented note, optionally on one task with `--task <N>`; the two text forms
-  are mutually exclusive and one is required.
+- `note "<text>"`, `note <N> "<text>"`, or `note --text-file <path|->
+  [--task <N>]` records an evented note, free-standing or on one task; give
+  the text exactly once.
 - Open dependencies, gates, and child tasks prevent completion. An `external`
   gate (`gate add <N> <name> --kind external --requirement <condition>`) names
   a condition outside the task, such as a vendor fix, and also keeps the task
