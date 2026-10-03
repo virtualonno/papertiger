@@ -151,7 +151,9 @@ pub(crate) use tasks::{
 };
 mod plans;
 pub(crate) use plans::plan_status;
-pub use plans::{Plan, active_plan, add_plan, edit_plan, get_plan, resolve_plan, set_plan_status};
+pub use plans::{
+    Plan, active_plan, active_plans, add_plan, edit_plan, get_plan, resolve_plan, set_plan_status,
+};
 mod task_definition;
 pub use task_definition::{
     PlanSelector, TaskCreation, TaskEdit, add_dep, add_tag, add_task, edit_task, remove_dep,

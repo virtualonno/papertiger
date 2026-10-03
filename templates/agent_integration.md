@@ -68,7 +68,8 @@ papertiger list --all-plans --status unfinished
 papertiger audit
 ```
 
-Pass `--plan <slug>` when more than one plan is active. Text output is meant
+Text `focus` ranks each active plan in turn; most other reads, and JSON focus,
+take `--plan <slug>` when more than one plan is active. Text output is meant
 for reading and is the cheapest; `--json` emits versioned documents for
 scripts (`search --compact` is the bounded JSON search). Bounded reads report
 what they omitted; follow their continuation instead of treating the visible

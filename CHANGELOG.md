@@ -32,6 +32,10 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Changed
 
+- Text `focus` without `--plan` ranks each active plan in turn (5 tasks per
+  plan by default, 20 for a single plan) instead of refusing when several are
+  active; JSON focus still takes one plan. Text continuations are text
+  commands without the environment-derived session.
 - Commands that record no event (reads, `init`, `backup`) ignore `--model`
   and `--reasoning-effort` instead of refusing them, so an agent can pass its
   model on every command.

@@ -998,6 +998,58 @@ fn starting_and_reading_ask_for_nothing_extra() {
 }
 
 #[test]
+fn text_focus_ranks_every_active_plan_when_none_is_named() {
+    let db = TestDatabase::new("focus-all-plans");
+    let run = |args: &[&str]| {
+        let output = papertiger(&db.0, args);
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "alpha", "Alpha"]);
+    run(&["plan", "add", "beta", "Beta"]);
+    for index in 0..7 {
+        run(&[
+            "add",
+            "--kind",
+            "feature",
+            &format!("Alpha {index}"),
+            "--plan",
+            "alpha",
+        ]);
+    }
+    run(&["add", "--kind", "bug", "Beta crash", "--plan", "beta"]);
+
+    let text = run(&["focus"]);
+    assert!(
+        text.contains(
+            "focus alpha
+"
+        ) && text.contains(
+            "focus beta
+"
+        ),
+        "{text}"
+    );
+    assert_eq!(
+        text.matches("  F-").count(),
+        5,
+        "five per plan by default: {text}"
+    );
+    assert!(
+        text.contains(
+            "... 2 actionable task(s) omitted; run `papertiger focus --plan alpha --limit 7`"
+        ),
+        "a text continuation stays text: {text}"
+    );
+    assert!(run(&["focus", "--limit", "7"]).matches("  F-").count() == 7);
+
+    let json = papertiger(&db.0, &["focus", "--json"]);
+    assert!(!json.status.success(), "JSON stays one plan per document");
+    assert!(String::from_utf8_lossy(&json.stderr).contains("pass --plan"));
+}
+
+#[test]
 fn brief_bounds_a_long_intent_and_points_at_show() {
     let db = TestDatabase::new("brief-long-intent");
     let run = |args: &[&str]| {

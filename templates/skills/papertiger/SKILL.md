@@ -35,10 +35,11 @@ outside a harness set `PAPERTIGER_SESSION` to one unique session ID.
 
 Orient to an unfamiliar authority with `status` once. For a known task, read
 `show <N>` and resume it; for a goal or parent, `brief <N>` shows its whole
-subtree. Otherwise select work with `focus --plan <slug>`, and before adding,
-search with `search "<terms>" --plan <slug>`. Text output is written for you
-to read and is the cheapest; add `--json` only when a script parses the
-output or you need a field the text omits.
+subtree. Otherwise select work with `focus`, and before adding, look for it
+with `search "<terms>"`; both cover every plan unless `--plan <slug>` narrows
+them. Text output is written for you to read and is the cheapest; add
+`--json` only when a script parses the output or you need a field the text
+omits.
 Another session's pickup is advisory: not a lock, and no reason to ask
 permission for requested work.
 

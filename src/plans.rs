@@ -44,12 +44,17 @@ pub(crate) fn plan_status(conn: &Connection, plan_id: i64) -> Result<String> {
     .ok_or_else(|| anyhow!("no plan id {plan_id}"))
 }
 
-pub fn active_plan(conn: &Connection) -> Result<Option<(i64, String)>> {
+/// Every active plan, oldest first.
+pub fn active_plans(conn: &Connection) -> Result<Vec<(i64, String)>> {
     let mut statement =
         conn.prepare("SELECT plan_id, slug FROM plans WHERE status='active' ORDER BY plan_id")?;
-    let rows: Vec<(i64, String)> = statement
+    Ok(statement
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .collect::<rusqlite::Result<_>>()?;
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn active_plan(conn: &Connection) -> Result<Option<(i64, String)>> {
+    let rows = active_plans(conn)?;
     match rows.len() {
         0 => Ok(None),
         1 => Ok(rows.into_iter().next()),

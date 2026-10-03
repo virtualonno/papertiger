@@ -279,12 +279,12 @@ enum Cmd {
     },
     /// Actionable leaf work and parents ready to close, ranked by readiness and dependency unlock impact
     Focus {
-        /// Plan slug; optional when exactly one plan is active
+        /// Plan slug; without it, text focus ranks each active plan in turn and JSON needs exactly one active plan
         #[arg(long)]
         plan: Option<String>,
-        /// Maximum tasks to return
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
+        /// Maximum tasks per plan (default 20, or 5 each when ranking several active plans)
+        #[arg(long)]
+        limit: Option<usize>,
         /// Include proposed work that is currently blocked
         #[arg(long)]
         include_blocked: bool,
@@ -1263,6 +1263,7 @@ fn run_planner(cli: Cli) -> Result<()> {
     } else {
         None
     };
+    let explicit_session = cli.session.is_some();
     let session = match &authorship {
         Some(authorship) => authorship.session.clone(),
         None => pt::authorship::resolve_session_from_env(cli.session.as_deref())?,
@@ -2255,100 +2256,122 @@ fn run_planner(cli: Cli) -> Result<()> {
             kind,
             unreviewed,
         } => {
-            let selected_plan = match plan.as_deref() {
-                Some(slug) => Some(pt::resolve_plan(&conn, Some(slug))?),
-                None if json => pt::active_plan(&conn)?,
-                None => Some(pt::resolve_plan(&conn, None)?),
-            };
-            let Some((plan_id, slug)) = selected_plan else {
-                pt::outln!(
-                    "{}",
-                    serde_json::to_string_pretty(&pt::FocusResponse::no_active_plan())?
-                );
-                return Ok(());
-            };
-            let response = pt::focus(
-                &conn,
-                plan_id,
-                limit,
-                include_blocked,
-                kind.as_deref(),
-                unreviewed,
-                session.as_deref(),
-            )?;
-            if json {
-                pt::outln!("{}", serde_json::to_string_pretty(&response)?);
-            } else if response.projection.entries.is_empty() {
-                // Say when the only open work is blocked rather than absent.
-                let hidden = if include_blocked {
-                    0
-                } else {
-                    pt::focus(
-                        &conn,
-                        plan_id,
-                        usize::MAX,
-                        true,
-                        kind.as_deref(),
-                        unreviewed,
-                        session.as_deref(),
-                    )?
-                    .projection
-                    .entries
-                    .len()
-                };
-                if hidden == 0 {
-                    pt::outln!("nothing actionable");
-                } else {
-                    pt::outln!(
-                        "nothing actionable; {hidden} blocked task(s) hidden: run `papertiger focus --plan {slug} --include-blocked`"
-                    );
-                }
-            } else {
-                pt::outln!("focus {slug}");
-                let mut current = None::<String>;
-                for entry in response.projection.entries {
-                    if current.as_deref() != Some(entry.readiness.as_str()) {
-                        pt::outln!("{}:", entry.readiness);
-                        current = Some(entry.readiness.clone());
+            // Text focus without --plan ranks every active plan in turn; JSON
+            // stays one plan per document, so it still asks for --plan.
+            let targets = match plan.as_deref() {
+                Some(slug) => vec![pt::resolve_plan(&conn, Some(slug))?],
+                None if json => match pt::active_plan(&conn)? {
+                    Some(selected) => vec![selected],
+                    None => {
+                        pt::outln!(
+                            "{}",
+                            serde_json::to_string_pretty(&pt::FocusResponse::no_active_plan())?
+                        );
+                        return Ok(());
                     }
-                    let blockers = if entry.blockers.is_empty() {
-                        String::new()
+                },
+                None => match pt::active_plans(&conn)? {
+                    all if all.is_empty() => vec![pt::resolve_plan(&conn, None)?],
+                    all => all,
+                },
+            };
+            let several = targets.len() > 1;
+            let limit = limit.unwrap_or(if several { 5 } else { 20 });
+            for (plan_id, slug) in targets {
+                let heading = if several {
+                    format!("focus {slug}: ")
+                } else {
+                    String::new()
+                };
+                let response = pt::focus(
+                    &conn,
+                    plan_id,
+                    limit,
+                    include_blocked,
+                    kind.as_deref(),
+                    unreviewed,
+                    session.as_deref(),
+                )?;
+                if json {
+                    pt::outln!("{}", serde_json::to_string_pretty(&response)?);
+                } else if response.projection.entries.is_empty() {
+                    // Say when the only open work is blocked rather than absent.
+                    let hidden = if include_blocked {
+                        0
                     } else {
-                        format!(" [blocked by {}]", entry.blockers.join(" "))
+                        pt::focus(
+                            &conn,
+                            plan_id,
+                            usize::MAX,
+                            true,
+                            kind.as_deref(),
+                            unreviewed,
+                            session.as_deref(),
+                        )?
+                        .projection
+                        .entries
+                        .len()
                     };
-                    let path = if entry.ancestry.is_empty() {
-                        String::new()
+                    if hidden == 0 {
+                        pt::outln!("{heading}nothing actionable");
                     } else {
-                        format!(" [in {}]", entry.ancestry.join(" › "))
-                    };
-                    let review = review_marker("", &entry.review, unreviewed);
-                    let closing = if entry.closed_child_count > 0 {
-                        format!(" [close: all {} children closed]", entry.closed_child_count)
-                    } else {
-                        String::new()
-                    };
-                    pt::outln!(
-                        "  {} {}{} [priority {} unlocks {} downstream {} gates {}]{}{}{}{}",
-                        entry.task.handle,
-                        entry.task.title,
-                        path,
-                        entry.task.priority,
-                        entry.immediate_unlock_count,
-                        entry.unfinished_downstream_count,
-                        entry.open_gate_count,
-                        review,
-                        closing,
-                        blockers,
-                        pickup_label(entry.pickup.as_ref()),
-                    );
-                }
-                if response.projection.omitted_count > 0
-                    && let Some(command) = response.projection.continuation_command
-                {
-                    pt::outln!(
-                        "  ... {} actionable task(s) omitted; run `{command}`",
-                        response.projection.omitted_count
-                    );
+                        pt::outln!(
+                            "{heading}nothing actionable; {hidden} blocked task(s) hidden: run `papertiger focus --plan {slug} --include-blocked`"
+                        );
+                    }
+                } else {
+                    pt::outln!("focus {slug}");
+                    let mut current = None::<String>;
+                    for entry in response.projection.entries {
+                        if current.as_deref() != Some(entry.readiness.as_str()) {
+                            pt::outln!("{}:", entry.readiness);
+                            current = Some(entry.readiness.clone());
+                        }
+                        let blockers = if entry.blockers.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [blocked by {}]", entry.blockers.join(" "))
+                        };
+                        let path = if entry.ancestry.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [in {}]", entry.ancestry.join(" › "))
+                        };
+                        let review = review_marker("", &entry.review, unreviewed);
+                        let closing = if entry.closed_child_count > 0 {
+                            format!(" [close: all {} children closed]", entry.closed_child_count)
+                        } else {
+                            String::new()
+                        };
+                        pt::outln!(
+                            "  {} {}{} [priority {} unlocks {} downstream {} gates {}]{}{}{}{}",
+                            entry.task.handle,
+                            entry.task.title,
+                            path,
+                            entry.task.priority,
+                            entry.immediate_unlock_count,
+                            entry.unfinished_downstream_count,
+                            entry.open_gate_count,
+                            review,
+                            closing,
+                            blockers,
+                            pickup_label(entry.pickup.as_ref()),
+                        );
+                    }
+                    if response.projection.omitted_count > 0
+                        && let Some(command) = response.projection.continuation_command
+                    {
+                        // The text reader continues in text; a session that
+                        // came from the environment needs no flag.
+                        let mut command = command.replacen(" --json", "", 1);
+                        if !explicit_session && let Some(session) = &session {
+                            command = command.replacen(&format!(" --session {session}"), "", 1);
+                        }
+                        pt::outln!(
+                            "  ... {} actionable task(s) omitted; run `{command}`",
+                            response.projection.omitted_count
+                        );
+                    }
                 }
             }
         }
