@@ -212,8 +212,9 @@ satisfy proof.
 
 `papertiger-mise` ships beside `papertiger` in this skill's `bin/`. When a
 bounded improvement campaign is warranted, invoke it with `--project-root
-<consumer>`; read `MISE.md` from this skill directory before admission. The consumer owns its Mise database, object store and
-campaign workspaces, and the binary must not change during a campaign. Mise
-nominations are evidence, never completion, promotion or deployment
-authority; attach a derived projection with `papertiger mise record`, which
-cannot resolve a task or gate.
+<consumer>`; read `MISE.md` from this skill directory before admission. The
+consumer owns its Mise database, object store and campaign workspaces, and the
+binary must not change during a campaign, so do not replace the skill
+directory while one is open. Mise nominations are evidence, never completion,
+promotion or deployment authority; attach a derived projection with
+`papertiger mise record`, which cannot resolve a task or gate.

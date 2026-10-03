@@ -13,9 +13,10 @@ existing team or domain lifecycle.
 
 ## Select the authority once
 
-Run `bin/papertiger[.exe]` from this skill's directory in the native shell;
-below, `papertiger` means that executable. From inside a project it uses the
-nearest `state/papertiger.sqlite` above the working directory. Keep work in
+The executable is `bin/papertiger[.exe]` inside this skill's directory; below,
+`papertiger` means that path. Run it in the native shell from the project you
+are working in, not from the skill directory: it uses the nearest
+`state/papertiger.sqlite` above the working directory. Keep work in
 the canonical project that owns the outcome, including cross-repository work;
 from elsewhere pass `--project-root <canonical-root>`. Do not guess `--db` or
 create a second store in a worktree. When no project owns the work, use the
