@@ -171,6 +171,8 @@ pub use blockers::{
     TaskBlocker, add_blocker, remove_blocker, reopen_blocker, resolve_blocker, task_blockers,
     waive_blocker,
 };
+pub mod model_report;
+pub use model_report::{ModelOutcomes, ModelReport, model_report};
 pub mod review;
 pub use review::{
     ClaimReview, ReviewState, ReviewTarget, ReviewVerdict, TaskReview, normalized_model,

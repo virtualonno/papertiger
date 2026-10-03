@@ -47,6 +47,9 @@
     },
     {
       "$ref": "#/$defs/task_outline"
+    },
+    {
+      "$ref": "#/$defs/model_report"
     }
   ],
   "$defs": {
@@ -2691,6 +2694,197 @@
       "required": [
         "filing",
         "result"
+      ],
+      "additionalProperties": false
+    },
+    "model_report": {
+      "description": "Claim outcomes per normalized authoring model; counts only, ranking nothing. Claims recorded before authorship group under 'unknown'.",
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "papertiger.model_report.v1"
+        },
+        "plan": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "filings": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "cross_model": {
+                    "type": "object",
+                    "properties": {
+                      "confirmed": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "disputed": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "confirmed",
+                      "disputed"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "same_model": {
+                    "type": "object",
+                    "properties": {
+                      "confirmed": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "disputed": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "confirmed",
+                      "disputed"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "unreviewed": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "engaged": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "done": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "retired": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "rejected": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "open": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "total",
+                  "cross_model",
+                  "same_model",
+                  "unreviewed",
+                  "engaged",
+                  "done",
+                  "retired",
+                  "rejected",
+                  "open"
+                ],
+                "additionalProperties": false
+              },
+              "results": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "cross_model": {
+                    "type": "object",
+                    "properties": {
+                      "confirmed": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "disputed": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "confirmed",
+                      "disputed"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "same_model": {
+                    "type": "object",
+                    "properties": {
+                      "confirmed": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "disputed": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "confirmed",
+                      "disputed"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "unreviewed": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "reopened": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "total",
+                  "cross_model",
+                  "same_model",
+                  "unreviewed",
+                  "reopened"
+                ],
+                "additionalProperties": false
+              },
+              "small_sample": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "model",
+              "filings",
+              "results",
+              "small_sample"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "plan",
+        "since",
+        "models"
       ],
       "additionalProperties": false
     }

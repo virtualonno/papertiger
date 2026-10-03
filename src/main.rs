@@ -250,6 +250,15 @@ enum Cmd {
         #[command(flatten)]
         why: WhyArgs,
     },
+    /// Claim outcomes per authoring model: filings, results, reviews and reopens
+    Models {
+        /// Restrict to one plan slug; every plan by default
+        #[arg(long)]
+        plan: Option<String>,
+        /// Only claims made at or after this RFC3339 instant
+        #[arg(long)]
+        since: Option<String>,
+    },
     /// Record whether a task's filing (or, with --result, its result) holds up, from another session
     Review {
         /// Task: N, #N or its handle (e.g. F-N)
@@ -781,6 +790,7 @@ impl Cmd {
                 | Self::List { .. }
                 | Self::Search { .. }
                 | Self::Focus { .. }
+                | Self::Models { .. }
                 | Self::Tree { .. }
                 | Self::Log { .. }
                 | Self::Audit
@@ -1998,6 +2008,63 @@ fn run_planner(cli: Cli) -> Result<()> {
                 mutation_output!("#{seq} retired into #{replacement_seq}");
             } else {
                 mutation_output!("#{seq} retired");
+            }
+        }
+        Cmd::Models { plan, since } => {
+            let report = pt::model_report(&conn, plan.as_deref(), since.as_deref())?;
+            if json {
+                pt::outln!("{}", serde_json::to_string_pretty(&report)?);
+                return Ok(());
+            }
+            if report.models.is_empty() {
+                pt::outln!("no claims in scope");
+            }
+            for outcome in &report.models {
+                let verdicts = |claims: &pt::model_report::ClaimCounts| {
+                    let parts = [
+                        (claims.cross_model.confirmed, "confirmed by other models"),
+                        (claims.cross_model.disputed, "disputed by other models"),
+                        (claims.same_model.confirmed, "confirmed by the same model"),
+                        (claims.same_model.disputed, "disputed by the same model"),
+                        (claims.unreviewed, "unreviewed"),
+                    ]
+                    .into_iter()
+                    .filter(|(count, _)| *count > 0)
+                    .map(|(count, label)| format!("{count} {label}"))
+                    .collect::<Vec<_>>();
+                    if parts.is_empty() {
+                        "no reviews".to_owned()
+                    } else {
+                        parts.join(", ")
+                    }
+                };
+                let filings = &outcome.filings;
+                let results = &outcome.results;
+                pt::outln!(
+                    "{}{}",
+                    outcome.model,
+                    if outcome.small_sample {
+                        " (small sample)"
+                    } else {
+                        ""
+                    }
+                );
+                pt::outln!(
+                    "  filings {}: {} done, {} retired, {} rejected, {} open; {} engaged; {}",
+                    filings.claims.total,
+                    filings.done,
+                    filings.retired,
+                    filings.rejected,
+                    filings.open,
+                    filings.engaged,
+                    verdicts(&filings.claims)
+                );
+                pt::outln!(
+                    "  results {}: {} reopened; {}",
+                    results.claims.total,
+                    results.reopened,
+                    verdicts(&results.claims)
+                );
             }
         }
         Cmd::Review {

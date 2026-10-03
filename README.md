@@ -225,6 +225,13 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   `focus --unreviewed` select claims needing a check; results recorded before
   authorship are not flagged. Same-model reviews count and are reported as
   such (`same_model`).
+- `models [--plan <slug>] [--since <RFC3339>] [--json]` reports claim
+  outcomes per authoring model, grouping ids that differ only by `.` or `-`
+  between digits: filings (done, retired, rejected, open, engaged) and results
+  (reopened), each with confirmed and disputed reviews split by whether the
+  reviewer ran the same model, and unreviewed counts. Claims recorded before
+  authorship group as `unknown`; groups under 10 claims are marked as small
+  samples. It counts; it does not rank models.
 - `add --start` creates and starts a task atomically, rolling back task and
   events on readiness failure.
 - Optional caller-resolved commit associations support local task/commit lookup

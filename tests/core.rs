@@ -255,6 +255,96 @@ UPDATE meta SET value='12' WHERE key='schema_version';
 /// vocabulary, blocker `reason`, and admission triggers calling the retired
 /// function name.
 #[test]
+fn model_report_groups_claims_by_normalized_model_and_separates_same_model_reviews() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
+    let as_author = |model: &str, session: &str| {
+        let authorship = pt::resolve_authorship(
+            pt::AuthorshipFlags {
+                model: Some(model),
+                session: Some(session),
+                actor: Some(session),
+                ..Default::default()
+            },
+            &|_| None,
+        )
+        .unwrap();
+        pt::set_authorship(&conn, &authorship).unwrap();
+    };
+    as_author("deepseek-v4.1-flash", "fleet-1");
+    let filed = pt::add_task(
+        &conn,
+        "fleet-1",
+        plan,
+        pt::TaskCreation::new("Cache reads", "feature"),
+    )
+    .unwrap();
+    let rejected = pt::add_task(
+        &conn,
+        "fleet-1",
+        plan,
+        pt::TaskCreation::new("Crash on empty", "bug"),
+    )
+    .unwrap();
+    as_author("claude-opus-5.5", "strong-1");
+    pt::review_task(
+        &conn,
+        "strong-1",
+        rejected,
+        pt::ReviewTarget::Filing,
+        pt::ReviewVerdict::Disputed,
+        "renders fine",
+    )
+    .unwrap();
+    pt::reject_task(&conn, "strong-1", rejected, "not reproducible").unwrap();
+    pt::start_task(&conn, "strong-1", filed, Some("checked"), Some("strong-1")).unwrap();
+    pt::complete_task(&conn, "strong-1", filed, Some("reads cached")).unwrap();
+    as_author("claude-opus-5-5", "strong-2");
+    pt::review_task(
+        &conn,
+        "strong-2",
+        filed,
+        pt::ReviewTarget::Result,
+        pt::ReviewVerdict::Confirmed,
+        "verified",
+    )
+    .unwrap();
+    pt::reopen_task(&conn, "strong-2", filed, "cold path still misses").unwrap();
+
+    let report = pt::model_report(&conn, None, None).unwrap();
+    let by_model = |model: &str| {
+        report
+            .models
+            .iter()
+            .find(|outcome| outcome.model == model)
+            .unwrap_or_else(|| panic!("no {model} in {report:?}"))
+    };
+    let fleet = by_model("deepseek-v4-1-flash");
+    assert_eq!(fleet.filings.claims.total, 2);
+    assert_eq!(fleet.filings.rejected, 1);
+    assert_eq!(fleet.filings.engaged, 1);
+    assert_eq!(fleet.filings.claims.cross_model.disputed, 1);
+    assert!(fleet.small_sample);
+    let strong = by_model("claude-opus-5-5");
+    assert_eq!(strong.results.reopened, 1, "5.5 and 5-5 are one model");
+    assert_eq!(strong.filings.claims.total, 0);
+    assert!(
+        report
+            .models
+            .iter()
+            .all(|outcome| outcome.model != "unknown")
+    );
+    let future = pt::model_report(&conn, None, Some("2999-01-01T00:00:00Z")).unwrap();
+    assert!(
+        future
+            .models
+            .iter()
+            .all(|outcome| outcome.filings.claims.total == 0)
+    );
+    assert!(pt::model_report(&conn, None, Some("yesterday")).is_err());
+}
+
+#[test]
 fn typed_kinds_refuse_legacy_assignment_and_bugs_record_their_cause() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();

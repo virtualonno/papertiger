@@ -34,6 +34,12 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   captures receipts. Audit reports malformed authorship as
   `invalid_event_authorship`. A subagent inherits its parent's environment;
   pass `--model` where a launch-time model could be wrong.
+- `models` (`papertiger.model_report.v1`) reports claim outcomes per
+  normalized authoring model, with same-model and cross-model reviews kept
+  apart, reopened results, and small samples labeled; `--plan` and `--since`
+  narrow it. `audit` now suggests a kind for more legacy tasks: it reads the
+  verb after a short `Label:` prefix and falls back to defect language
+  (`cannot`, `crashes`, `blocks`, ...).
 - Claims carry review state derived from history: a task's filing and its
   result are `unreviewed`, `engaged` (filing only: started or rewritten by a
   different session), `confirmed` or `disputed`, with the authoring model and

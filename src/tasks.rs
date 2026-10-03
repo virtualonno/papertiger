@@ -109,27 +109,65 @@ pub fn kind_requires_result(kind: &str) -> bool {
     matches!(kind, "probe" | "decision" | "bug")
 }
 
-/// A kind suggested by a title's first word, for retyping legacy `work`
-/// tasks. Only a suggestion: the outcome, not the verb, decides the kind.
+/// A kind suggested by a title, for retyping legacy `work` tasks: its first
+/// verb (after a short `Label:` prefix), else defect language anywhere in
+/// it. Only a suggestion: the outcome, not the wording, decides the kind.
 pub fn suggested_task_kind(title: &str) -> Option<&'static str> {
+    let title = match title.split_once(": ") {
+        Some((label, rest)) if label.split_whitespace().count() <= 3 => rest,
+        _ => title,
+    };
     let first = title
-        .split(|c: char| !c.is_alphanumeric())
+        .split(|c: char| !(c.is_alphanumeric() || c == '-'))
         .find(|word| !word.is_empty())?
         .to_ascii_lowercase();
-    Some(match first.as_str() {
-        "fix" | "repair" | "correct" | "restore" | "stop" => "bug",
-        "decide" | "choose" | "select" | "ratify" | "settle" => "decision",
+    let by_verb = match first.as_str() {
+        "fix" | "repair" | "correct" | "restore" | "stop" => Some("bug"),
+        "decide" | "choose" | "select" | "ratify" | "settle" => Some("decision"),
         "probe" | "investigate" | "measure" | "evaluate" | "assess" | "diagnose" | "explore"
-        | "compare" | "qualify" | "prove" | "verify" | "audit" | "review" => "probe",
+        | "compare" | "qualify" | "prove" | "verify" | "re-verify" | "audit" | "review" => {
+            Some("probe")
+        }
         "release" | "publish" | "ship" | "upgrade" | "refresh" | "vendor" | "install" | "roll"
-        | "deploy" | "bump" => "release",
+        | "deploy" | "bump" => Some("release"),
         "refactor" | "split" | "cut" | "remove" | "rename" | "retire" | "migrate" | "replace"
         | "simplify" | "harden" | "keep" | "preserve" | "refuse" | "consolidate" | "move"
-        | "drop" | "delete" | "trim" | "align" | "unify" => "change",
+        | "drop" | "delete" | "trim" | "align" | "unify" | "reorganize" | "reduce" | "document" => {
+            Some("change")
+        }
         "add" | "build" | "implement" | "expose" | "support" | "create" | "enable" | "let"
-        | "make" | "introduce" | "provide" | "record" | "show" | "report" => "feature",
-        _ => return None,
-    })
+        | "make" | "introduce" | "provide" | "record" | "show" | "report" | "model" | "emit"
+        | "lower" | "admit" | "allow" | "attribute" | "establish" | "decompile" => Some("feature"),
+        _ => None,
+    };
+    if by_verb.is_some() {
+        return by_verb;
+    }
+    let lower = title.to_ascii_lowercase();
+    [
+        "cannot",
+        "can never",
+        "crash",
+        "fails",
+        "failed",
+        "blocks",
+        "drops",
+        "silently",
+        "misleading",
+        "never",
+        "stays",
+        "is still",
+        "wrong",
+        "incorrect",
+        "refuses",
+        "breaks",
+        "broken",
+        "regress",
+        "instead of",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    .then_some("bug")
 }
 
 pub fn validate_meaning_source(source: Option<&str>) -> Result<Option<&str>> {
@@ -333,5 +371,28 @@ pub fn task_handle(seq: i64, kind: &str) -> String {
     match task_kind_letter(kind) {
         Some(letter) => format!("{letter}-{seq}"),
         None => format!("#{seq}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kind_suggestions_read_the_verb_after_a_label_then_defect_language() {
+        assert_eq!(suggested_task_kind("Fix the empty plan crash"), Some("bug"));
+        assert_eq!(
+            suggested_task_kind("Dracomink: emit sequential facts"),
+            Some("feature")
+        );
+        assert_eq!(
+            suggested_task_kind("Native claims cannot express conditional delegation"),
+            Some("bug")
+        );
+        assert_eq!(
+            suggested_task_kind("Re-verify the framerate fixture"),
+            Some("probe")
+        );
+        assert_eq!(suggested_task_kind("Plan templates for consumers"), None);
     }
 }

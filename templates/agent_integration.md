@@ -216,7 +216,9 @@ papertiger review <task.seq> --verdict confirmed --why "What you verified"
 papertiger review <task.seq> --result --verdict disputed --why "What does not hold"
 ```
 
-You cannot review a claim your own session made. A disputed result holds the
+`models` reports, per authoring model, how filings and results fared (retired,
+rejected, reopened, confirmed, disputed); it counts and does not rank. You
+cannot review a claim your own session made. A disputed result holds the
 tasks that depend on it and keeps its parent from surfacing for closure until a
 later confirmation. `list --unreviewed` and `focus --unreviewed` select claims
 that need a check; results recorded before authorship are not flagged.
