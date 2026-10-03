@@ -635,8 +635,14 @@ fn claims_show_their_review_state_and_a_disputed_result_holds_its_dependents() {
     );
     let unreviewed = ok(strong(&["list", "--unreviewed"]));
     assert!(
-        unreviewed.contains("F-1") && unreviewed.contains("B-2"),
-        "{unreviewed}"
+        unreviewed.contains("F-1 Cache plan reads [unreviewed · deepseek-v4.1-flash]")
+            && unreviewed.contains("B-2 Crash on empty plan [unreviewed · deepseek-v4.1-flash]"),
+        "the triage view labels each claim with its state and model: {unreviewed}"
+    );
+    let triage = ok(strong(&["focus", "--unreviewed"]));
+    assert!(
+        triage.contains("[unreviewed · deepseek-v4.1-flash]"),
+        "{triage}"
     );
     let (refused, _, stderr) = fleet(&[
         "review",

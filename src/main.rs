@@ -753,7 +753,8 @@ fn open_external_gates(conn: &Connection, task_id: i64) -> Result<Vec<String>> {
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
+/// `triage` marks unreviewed claims too, for `list --unreviewed`.
+fn print_task_line(conn: &Connection, t: &pt::Task, triage: bool) -> Result<()> {
     let deps = pt::open_deps(conn, t.task_id)?;
     let external = open_external_gates(conn, t.task_id)?;
     let open_gate_count: i64 = conn.query_row(
@@ -779,10 +780,14 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
     }
     let review = pt::task_review(conn, t)?;
     match t.status.as_str() {
-        "proposed" | "in_progress" => extra.push_str(&disputed_marker("", &review.filing)),
+        "proposed" | "in_progress" => extra.push_str(&review_marker("", &review.filing, triage)),
         "done" => {
             if let Some(result) = &review.result {
-                extra.push_str(&disputed_marker("result ", result));
+                extra.push_str(&review_marker(
+                    "result ",
+                    result,
+                    triage && !result.is_legacy(),
+                ));
             }
         }
         _ => {}
@@ -804,7 +809,7 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
         status_glyph(&task.status),
         task.handle,
         task.title,
-        disputed_marker("", &brief.review)
+        review_marker("", &brief.review, false)
     );
     if !brief.ancestry.is_empty() {
         pt::outln!("  path: {}", brief.ancestry.join(" › "));
@@ -854,7 +859,7 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
     if !brief.open.entries.is_empty() {
         pt::outln!("open:");
         for open in &brief.open.entries {
-            let review = disputed_marker("", &open.review);
+            let review = review_marker("", &open.review, false);
             pt::outln!(
                 "  {} {} {}{}{}",
                 status_glyph(&open.task.status),
@@ -885,7 +890,7 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
             let review = outcome
                 .review
                 .as_ref()
-                .map(|review| disputed_marker("result ", review))
+                .map(|review| review_marker("result ", review, false))
                 .unwrap_or_default();
             pt::outln!(
                 "  {} {}{}: {}",
@@ -927,10 +932,15 @@ fn preview(text: &str) -> String {
 }
 
 /// ` [disputed · deepseek-v4.1-flash]` for a disputed claim, else nothing.
-/// Review is optional, so an unreviewed claim carries no marker; `show`,
-/// JSON and `--unreviewed` still expose it.
-fn disputed_marker(prefix: &str, claim: &pt::ClaimReview) -> String {
-    if claim.state != pt::ReviewState::Disputed {
+/// Review is optional, so an ordinary view leaves an unreviewed claim
+/// unmarked; a `--unreviewed` triage view (`triage`) marks it too.
+fn review_marker(prefix: &str, claim: &pt::ClaimReview, triage: bool) -> String {
+    let shown = match claim.state {
+        pt::ReviewState::Disputed => true,
+        pt::ReviewState::Unreviewed => triage,
+        _ => false,
+    };
+    if !shown {
         return String::new();
     }
     format!(
@@ -1769,7 +1779,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 if unreviewed && !pt::review::needs_review(&conn, t)? {
                     continue;
                 }
-                print_task_line(&conn, t)?;
+                print_task_line(&conn, t, unreviewed)?;
             }
         }
         Cmd::Search {
@@ -2312,7 +2322,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     } else {
                         format!(" [in {}]", entry.ancestry.join(" › "))
                     };
-                    let review = disputed_marker("", &entry.review);
+                    let review = review_marker("", &entry.review, unreviewed);
                     let closing = if entry.closed_child_count > 0 {
                         format!(" [close: all {} children closed]", entry.closed_child_count)
                     } else {

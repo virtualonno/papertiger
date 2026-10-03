@@ -123,7 +123,7 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   (`[disputed · <model>]`), and a disputed result is a
   `disputed-result:<handle>` blocker for its dependents and its parent.
   `list --unreviewed` and `focus --unreviewed` select unreviewed or disputed
-  claims for optional triage.
+  claims for optional triage and label each (`[unreviewed · <model>]`).
   JSON: `review` on show, focus entries (with `unreviewed_dependencies`) and
   list items. Claims recorded before 1.0 are `legacy` (their events carry no
   model source): their results are not flagged for review, open legacy

@@ -128,7 +128,8 @@ papertiger review <task.seq> --result --verdict disputed --why "What does not ho
 A session cannot review its own claim. A disputed result holds the tasks that
 depend on it until confirmed or revised. `show` and JSON carry every claim's
 state; `list --unreviewed` and `focus --unreviewed` select unreviewed or
-disputed claims when you choose to triage, and `models` counts how each
+disputed claims when you choose to triage, labelling each with its state and
+model (`[unreviewed · deepseek-v4.1-flash]`), and `models` counts how each
 model's filings and results fared. Claims recorded before 1.0 are `legacy`:
 their results are left out of that triage, and same-agent review of them
 cannot be detected.

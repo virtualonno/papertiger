@@ -170,13 +170,15 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
 - Review state is derived per claim: a task's filing and, once done, its
   result. Review is optional: text output marks only a disputed claim, with
   the model that made it, e.g. `[disputed · deepseek-v4.1-flash]`; `show`
-  and the JSON of `show`, `focus` and `list` carry every claim's `review`. A filing becomes `engaged` when a
-  different session starts the task or rewrites its title or intent.
+  and the JSON of `show`, `focus` and `list` carry every claim's `review`. A
+  filing becomes `engaged` when a different session starts the task or
+  rewrites its title or intent.
   `review <N> --verdict confirmed|disputed --why ... [--result]` records a
   verdict from a different session (the claim's own session is refused).
   Nothing is refused or reranked, except that a disputed result holds its
   dependents and its parent's closure. `list --unreviewed` and
-  `focus --unreviewed` select unreviewed or disputed claims for optional triage; results recorded before
+  `focus --unreviewed` select unreviewed or disputed claims for optional
+  triage and label each with its state and model; results recorded before
   authorship are not flagged. Same-model reviews count and are reported as
   such (`same_model`).
 - Priority is a scheduling level, `--priority now|next|later` (default
