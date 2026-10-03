@@ -509,6 +509,147 @@ fn tag_and_dependency_edits_take_an_optional_reason_and_transitions_keep_theirs(
 }
 
 #[test]
+fn claims_show_their_review_state_and_a_disputed_result_holds_its_dependents() {
+    let db = TestDatabase::new("reviews");
+    let as_session = |session: &str, model: &str, args: &[&str]| {
+        let output = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+            .arg("--db")
+            .arg(&db.0)
+            .args(args)
+            .env("PAPERTIGER_SESSION", session)
+            .env("PAPERTIGER_ACTOR", session)
+            .env("PAPERTIGER_MODEL", model)
+            .output()
+            .expect("run papertiger");
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let fleet = |args: &[&str]| as_session("fleet-1", "deepseek-v4.1-flash", args);
+    let strong = |args: &[&str]| as_session("strong-1", "claude-opus-5-5", args);
+    let third = |args: &[&str]| as_session("third-1", "claude-opus-5.5", args);
+    let ok = |(success, stdout, stderr): (bool, String, String)| {
+        assert!(success, "stdout:\n{stdout}\nstderr:\n{stderr}");
+        stdout
+    };
+    ok(strong(&["init"]));
+    ok(strong(&["plan", "add", "work", "Work"]));
+    ok(fleet(&["add", "--kind", "feature", "Cache plan reads"]));
+    ok(fleet(&["add", "--kind", "bug", "Crash on empty plan"]));
+    ok(strong(&[
+        "add",
+        "--kind",
+        "feature",
+        "--dep",
+        "F-1",
+        "Warm the cache at startup",
+    ]));
+
+    let list = ok(strong(&["list"]));
+    assert!(
+        list.contains("F-1 Cache plan reads [unreviewed · deepseek-v4.1-flash]"),
+        "{list}"
+    );
+    assert!(
+        list.contains("B-2 Crash on empty plan [unreviewed · deepseek-v4.1-flash]"),
+        "{list}"
+    );
+    let (refused, _, stderr) = fleet(&[
+        "review",
+        "B-2",
+        "--verdict",
+        "confirmed",
+        "--why",
+        "I filed it",
+    ]);
+    assert!(
+        !refused && stderr.contains("a review must come from a different session"),
+        "{stderr}"
+    );
+    ok(strong(&[
+        "review",
+        "B-2",
+        "--verdict",
+        "disputed",
+        "--why",
+        "Empty plans render fine",
+    ]));
+    let list = ok(strong(&["list"]));
+    assert!(
+        list.contains("B-2 Crash on empty plan [disputed · deepseek-v4.1-flash]"),
+        "{list}"
+    );
+
+    ok(strong(&[
+        "start",
+        "F-1",
+        "--why",
+        "checked the cache design",
+    ]));
+    let show: serde_json::Value =
+        serde_json::from_str(&ok(strong(&["show", "F-1", "--json"]))).unwrap();
+    assert_eq!(show["review"]["filing"]["state"], "engaged");
+    assert_eq!(
+        show["review"]["filing"]["reviewer_model"],
+        "claude-opus-5-5"
+    );
+    let unreviewed: serde_json::Value =
+        serde_json::from_str(&ok(strong(&["focus", "--unreviewed", "--json"]))).unwrap();
+    let handles: Vec<_> = unreviewed["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["task"]["handle"].clone())
+        .collect();
+    assert_eq!(handles, vec![serde_json::json!("B-2")], "{unreviewed}");
+
+    ok(strong(&["done", "F-1", "--result", "Reads hit the cache"]));
+    let focus = ok(fleet(&["focus"]));
+    assert!(
+        focus.contains("F-3 Warm the cache at startup")
+            && focus.contains("[builds on unreviewed result F-1]"),
+        "{focus}"
+    );
+    ok(third(&[
+        "review",
+        "F-1",
+        "--result",
+        "--verdict",
+        "disputed",
+        "--why",
+        "Cold reads still miss",
+    ]));
+    let focus = ok(fleet(&["focus"]));
+    assert!(
+        !focus.contains("F-3"),
+        "a disputed result holds its dependent: {focus}"
+    );
+    let blocked = ok(fleet(&["focus", "--include-blocked"]));
+    assert!(blocked.contains("disputed-result:F-1"), "{blocked}");
+    ok(third(&[
+        "review",
+        "F-1",
+        "--result",
+        "--verdict",
+        "confirmed",
+        "--why",
+        "Cold reads fixed upstream",
+    ]));
+    let focus = ok(fleet(&["focus"]));
+    assert!(
+        focus.contains("F-3") && !focus.contains("builds on unreviewed result"),
+        "{focus}"
+    );
+    let show = ok(fleet(&["show", "F-1"]));
+    assert!(
+        show.contains("result review: confirmed (by claude-opus-5-5); last checked by claude-opus-5.5, the same model"),
+        "{show}"
+    );
+}
+
+#[test]
 fn every_write_records_a_reported_model_and_the_harness_supplies_the_rest() {
     let db = TestDatabase::new("authorship");
     let command = |args: &[&str], env: &[(&str, &str)]| {

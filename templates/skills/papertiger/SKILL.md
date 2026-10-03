@@ -53,7 +53,10 @@ Split a multi-part outcome into child tasks with one `decompose` call instead
 of inventing section or phase labels. Refer to local work by its handle (`F-924`)
 inside Papertiger and by its outcome everywhere else.
 
-Read rejected history before reviving an approach. An intent stands alone: fold a
+Read rejected history before reviving an approach. A claim marked
+`[unreviewed · <model>]` or `[disputed · <model>]` is unverified: check it
+before acting, then record `review <N> --verdict confirmed|disputed --why
+"..."` (add `--result` for a done task's result). An intent stands alone: fold a
 source plan's substance in (`--intent-file`) instead of citing a scratch file.
 Write `--why` for choices a cold
 reader could question. Record a decision with `note --text "..." --task <N>`.

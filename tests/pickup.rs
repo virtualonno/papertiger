@@ -32,7 +32,7 @@ fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
     pt::add_dep(&conn, "test", blocked, ready, Some("prerequisite")).unwrap();
     let before = serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap();
 
-    let selection = pt::focus(&conn, plan, 10, true, None, Some("me")).unwrap();
+    let selection = pt::focus(&conn, plan, 10, true, None, false, Some("me")).unwrap();
     let json = serde_json::to_value(&selection).unwrap();
     let rows = json["entries"].as_array().unwrap();
     assert_eq!(
@@ -79,7 +79,7 @@ fn seed(conn: &Connection) -> (i64, i64, i64) {
 fn independent_sessions_prefer_other_work_without_stranding_abandoned_pickups() {
     let conn = Connection::open_in_memory().unwrap();
     let (plan, first, second) = seed(&conn);
-    let select = |session| pt::focus(&conn, plan, 10, false, None, Some(session)).unwrap();
+    let select = |session| pt::focus(&conn, plan, 10, false, None, false, Some(session)).unwrap();
     assert_eq!(select("a").projection.entries[0].task.seq, first);
     pt::start_task(&conn, "same-harness", first, None, Some("a")).unwrap();
     assert_eq!(select("a").projection.entries[0].readiness, "mine");
@@ -124,7 +124,7 @@ fn identified_retries_are_eventless_and_real_blockers_remain_enforced() {
     pt::add_blocker(&conn, "test", first, "input", "missing input").unwrap();
     pt::start_task(&conn, "test", first, None, Some("b")).unwrap();
     assert!(pt::complete_task(&conn, "test", first, None).is_err());
-    let focus = pt::focus(&conn, plan, 1, false, None, Some("b")).unwrap();
+    let focus = pt::focus(&conn, plan, 1, false, None, false, Some("b")).unwrap();
     assert_eq!(focus.projection.entries[0].readiness, "mine");
     assert!(!focus.projection.entries[0].blockers.is_empty());
     assert!(pt::start_task(&conn, "test", first, None, Some("bad session")).is_err());

@@ -9,6 +9,28 @@ use crate::{
     open_gates, open_task_blocker_names, pickup, task_ancestry, task_from_row, validate_session,
 };
 
+/// Handles of done dependencies whose results are unreviewed or disputed.
+fn unreviewed_dependencies(conn: &Connection, task: &Task) -> Result<Vec<String>> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {TASK_COLS} FROM tasks
+          WHERE status='done' AND task_id IN (SELECT depends_on FROM deps WHERE task_id=?1)
+          ORDER BY seq"
+    ))?;
+    let dependencies = statement
+        .query_map(params![task.task_id], task_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut handles = Vec::new();
+    for dependency in dependencies {
+        if let Some(result) = crate::task_review(conn, &dependency)?.result
+            && result.state.needs_review()
+            && !result.is_legacy()
+        {
+            handles.push(dependency.handle);
+        }
+    }
+    Ok(handles)
+}
+
 pub(crate) fn entry_blockers(conn: &Connection, task: &Task) -> Result<Vec<String>> {
     let mut blockers = open_deps(conn, task.task_id)?
         .into_iter()
@@ -19,6 +41,22 @@ pub(crate) fn entry_blockers(conn: &Connection, task: &Task) -> Result<Vec<Strin
             .into_iter()
             .map(|name| format!("blocker:{name}")),
     );
+    // A disputed result holds the work that builds on it, and the parent
+    // that would otherwise close over it, until it is confirmed or revised.
+    let mut statement = conn.prepare(&format!(
+        "SELECT {TASK_COLS} FROM tasks
+          WHERE status='done'
+            AND (task_id IN (SELECT depends_on FROM deps WHERE task_id=?1) OR parent_id=?1)
+          ORDER BY seq"
+    ))?;
+    let related = statement
+        .query_map(params![task.task_id], task_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for related in related {
+        if crate::review::result_disputed(conn, &related)? {
+            blockers.push(format!("disputed-result:{}", related.handle));
+        }
+    }
     Ok(blockers)
 }
 
@@ -42,6 +80,11 @@ pub struct FocusEntry {
     pub closed_child_count: usize,
     /// Ancestor handles from the root down to the direct parent.
     pub ancestry: Vec<String>,
+    /// Review state of the task's filing.
+    pub review: crate::ClaimReview,
+    /// Done dependencies whose results still need someone else's check.
+    /// Results recorded before authorship are not listed.
+    pub unreviewed_dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,6 +122,7 @@ pub fn focus(
     limit: usize,
     include_blocked: bool,
     kind: Option<&str>,
+    unreviewed: bool,
     session: Option<&str>,
 ) -> Result<FocusResponse> {
     crate::validate_kind_filter(kind)?;
@@ -113,6 +157,8 @@ pub fn focus(
                 unfinished_downstream_count: unfinished_downstream_count(conn, task.task_id)?,
                 closed_child_count: child_count(conn, task.task_id)?,
                 ancestry: task_ancestry(conn, &task)?,
+                review: crate::task_review(conn, &task)?.filing,
+                unreviewed_dependencies: unreviewed_dependencies(conn, &task)?,
                 task: TaskSummary::from(&task),
                 pickup: task.pickup,
                 readiness: readiness.to_string(),
@@ -125,6 +171,9 @@ pub fn focus(
     }
     if let Some(kind) = kind {
         entries.retain(|entry| entry.task.kind == kind);
+    }
+    if unreviewed {
+        entries.retain(|entry| entry.review.state.needs_review());
     }
     entries.sort_by(|left, right| {
         focus_readiness_rank(&left.readiness)
@@ -149,9 +198,12 @@ pub fn focus(
     } else {
         ""
     };
-    let kind_filter = kind
-        .map(|kind| format!(" --kind {kind}"))
-        .unwrap_or_default();
+    let kind_filter = format!(
+        "{}{}",
+        kind.map(|kind| format!(" --kind {kind}"))
+            .unwrap_or_default(),
+        if unreviewed { " --unreviewed" } else { "" }
+    );
     let continuation_command = format!(
         "papertiger focus --plan {} --limit {eligible_count}{blocked}{kind_filter}{} --json",
         plan.slug,

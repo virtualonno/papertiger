@@ -227,6 +227,7 @@ pub struct TaskListItem {
     pub task: TaskSummary,
     pub tags: Vec<String>,
     pub last_event: Option<ActivityEvent>,
+    pub review: crate::TaskReview,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -236,6 +237,8 @@ pub struct TaskListResponse {
     pub status: Option<String>,
     pub tag: Option<String>,
     pub kind: Option<String>,
+    /// Whether the list holds only tasks whose claims need review.
+    pub unreviewed: bool,
     pub sort: String,
     pub tasks: Vec<TaskListItem>,
 }
@@ -773,6 +776,7 @@ pub fn task_list_response(
     status: Option<&str>,
     tag: Option<&str>,
     kind: Option<&str>,
+    unreviewed: bool,
     sort: &str,
 ) -> Result<TaskListResponse> {
     if let Some(status) = status
@@ -789,22 +793,26 @@ pub fn task_list_response(
         "activity" => list_tasks_by_activity(conn, plan_id, status, tag, kind)?,
         _ => bail!("unknown list sort '{sort}' (expected seq|activity)"),
     };
-    let tasks = tasks
-        .into_iter()
-        .map(|task| {
-            Ok(TaskListItem {
-                tags: task_tags_by_id(conn, task.task_id)?,
-                last_event: task_activity(conn, task.seq)?.last_event,
-                task: TaskSummary::from(&task),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let mut items = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        if unreviewed && !crate::review::needs_review(conn, &task)? {
+            continue;
+        }
+        items.push(TaskListItem {
+            tags: task_tags_by_id(conn, task.task_id)?,
+            last_event: task_activity(conn, task.seq)?.last_event,
+            review: crate::task_review(conn, &task)?,
+            task: TaskSummary::from(&task),
+        });
+    }
+    let tasks = items;
     Ok(TaskListResponse {
         schema: "papertiger.task_list.v2".into(),
         plan: get_plan(conn, plan_id)?,
         status: status.map(str::to_owned),
         tag: tag.map(str::to_owned),
         kind: kind.map(str::to_owned),
+        unreviewed,
         sort: sort.into(),
         tasks,
     })

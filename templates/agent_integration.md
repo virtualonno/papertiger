@@ -202,6 +202,25 @@ prose must stand alone. When a shared issue or artifact is relevant, record its
 stable URL or evidence locator in Papertiger; local planning identity never
 flows outward.
 
+## Review state of claims
+
+A task carries two claims: its filing (title and intent) and, once done, its
+result. Each shows its review state with the model that made it, e.g.
+`[unreviewed · deepseek-v4.1-flash]`. A filing is `unreviewed` until a
+different session starts the task, rewrites its title or intent (`engaged`) or
+reviews it; a result changes only through a review. An unreviewed or disputed
+claim is unverified: check it before acting on it or building on it.
+
+```bash
+papertiger review <task.seq> --verdict confirmed --why "What you verified"
+papertiger review <task.seq> --result --verdict disputed --why "What does not hold"
+```
+
+You cannot review a claim your own session made. A disputed result holds the
+tasks that depend on it and keeps its parent from surfacing for closure until a
+later confirmation. `list --unreviewed` and `focus --unreviewed` select claims
+that need a check; results recorded before authorship are not flagged.
+
 ## Concurrent pickup without reservations
 
 A detected harness (Claude Code, Codex, pi, OpenCode, Cursor) supplies the

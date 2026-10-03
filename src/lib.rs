@@ -171,6 +171,11 @@ pub use blockers::{
     TaskBlocker, add_blocker, remove_blocker, reopen_blocker, resolve_blocker, task_blockers,
     waive_blocker,
 };
+pub mod review;
+pub use review::{
+    ClaimReview, ReviewState, ReviewTarget, ReviewVerdict, TaskReview, normalized_model,
+    review_task, task_review,
+};
 mod task_context;
 pub use task_context::{
     GateRecord, TaskContext, open_deps, task_ancestry, task_context, task_current,

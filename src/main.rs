@@ -157,6 +157,9 @@ enum Cmd {
         /// Filter by kind: goal, feature, change, bug, probe, decision, release, or work
         #[arg(long)]
         kind: Option<String>,
+        /// Only tasks whose filing or result still needs someone else's review
+        #[arg(long, conflicts_with = "all_plans")]
+        unreviewed: bool,
         /// Ordering: seq or activity
         #[arg(long, default_value = "seq")]
         sort: String,
@@ -247,6 +250,19 @@ enum Cmd {
         #[command(flatten)]
         why: WhyArgs,
     },
+    /// Record whether a task's filing (or, with --result, its result) holds up, from another session
+    Review {
+        /// Task: N, #N or its handle (e.g. F-N)
+        task: String,
+        /// confirmed or disputed
+        #[arg(long)]
+        verdict: String,
+        /// Review the done task's result instead of its filing
+        #[arg(long)]
+        result: bool,
+        #[command(flatten)]
+        why: WhyArgs,
+    },
     /// Reject a task or approach with its rationale; `reopen` can revisit it
     Reject {
         /// Task: N, #N or its handle (e.g. F-N)
@@ -293,6 +309,9 @@ enum Cmd {
         /// Filter by kind: goal, feature, change, bug, probe, decision, release, or work
         #[arg(long)]
         kind: Option<String>,
+        /// Only tasks whose filing still needs someone else's review
+        #[arg(long)]
+        unreviewed: bool,
     },
     /// Task tag management
     Tag {
@@ -832,6 +851,22 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
     if open_gate_count > 0 {
         extra.push_str(&format!(" [gates open: {open_gate_count}]"));
     }
+    let review = pt::task_review(conn, t)?;
+    match t.status.as_str() {
+        "proposed" if review.filing.state.needs_review() => {
+            extra.push_str(&claim_marker("", &review.filing));
+        }
+        "done" => {
+            if let Some(result) = review
+                .result
+                .as_ref()
+                .filter(|result| result.state.needs_review() && !result.is_legacy())
+            {
+                extra.push_str(&claim_marker("result ", result));
+            }
+        }
+        _ => {}
+    }
     pt::outln!(
         "{} {} {}{}",
         status_glyph(&t.status),
@@ -840,6 +875,32 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
         extra
     );
     Ok(())
+}
+
+/// ` [unreviewed · deepseek-v4.1-flash]`: a claim's review state and the
+/// model that made it.
+fn claim_marker(prefix: &str, claim: &pt::ClaimReview) -> String {
+    format!(
+        " [{prefix}{} · {}]",
+        claim.state.as_str(),
+        claim.author_model.as_deref().unwrap_or("model unknown")
+    )
+}
+
+/// One line describing a claim's review for `show`.
+fn claim_review_line(claim: &pt::ClaimReview) -> String {
+    let mut line = format!(
+        "{} (by {})",
+        claim.state.as_str(),
+        claim.author_model.as_deref().unwrap_or("model unknown")
+    );
+    if let Some(reviewer) = &claim.reviewer_model {
+        line.push_str(&format!("; last checked by {reviewer}"));
+        if claim.same_model == Some(true) {
+            line.push_str(", the same model");
+        }
+    }
+    line
 }
 
 fn pickup_label(pickup: Option<&pt::TaskPickup>) -> String {
@@ -917,6 +978,10 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
         pt::outln!("  result: {}", result.replace('\n', "\n  "));
     }
     pt::outln!("  kind: {}", task.kind);
+    pt::outln!("  filing: {}", claim_review_line(&context.review.filing));
+    if let Some(result) = &context.review.result {
+        pt::outln!("  result review: {}", claim_review_line(result));
+    }
     for (label, event) in [
         ("created", context.activity.created_event.as_ref()),
         ("last event", context.activity.last_event.as_ref()),
@@ -1736,6 +1801,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             status,
             tag,
             kind,
+            unreviewed,
             sort,
         } => {
             if all_plans {
@@ -1774,6 +1840,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     status.as_deref(),
                     tag.as_deref(),
                     kind.as_deref(),
+                    unreviewed,
                     &sort,
                 )?;
                 pt::outln!("{}", serde_json::to_string_pretty(&response)?);
@@ -1798,6 +1865,9 @@ fn run_planner(cli: Cli) -> Result<()> {
                 _ => bail!("unknown list sort '{sort}' (expected seq|activity)"),
             };
             for t in &tasks {
+                if unreviewed && !pt::review::needs_review(&conn, t)? {
+                    continue;
+                }
                 print_task_line(&conn, t)?;
             }
         }
@@ -1929,6 +1999,31 @@ fn run_planner(cli: Cli) -> Result<()> {
             } else {
                 mutation_output!("#{seq} retired");
             }
+        }
+        Cmd::Review {
+            task,
+            verdict,
+            result,
+            why,
+        } => {
+            let why = why.required()?;
+            let seq = pt::resolve_task_ref(&conn, &task)?;
+            let target = if result {
+                pt::ReviewTarget::Result
+            } else {
+                pt::ReviewTarget::Filing
+            };
+            pt::review_task(
+                &conn,
+                &actor,
+                seq,
+                target,
+                pt::ReviewVerdict::parse(&verdict)?,
+                &why,
+            )?;
+            let handle = pt::get_task(&conn, seq)?.handle;
+            let claim = if result { "result" } else { "filing" };
+            mutation_output!("{handle} {claim} {verdict}");
         }
         Cmd::Reject { task, why } => {
             let why = why.required()?;
@@ -2230,6 +2325,7 @@ fn run_planner(cli: Cli) -> Result<()> {
             limit,
             include_blocked,
             kind,
+            unreviewed,
         } => {
             let selected_plan = match plan.as_deref() {
                 Some(slug) => Some(pt::resolve_plan(&conn, Some(slug))?),
@@ -2249,6 +2345,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                 limit,
                 include_blocked,
                 kind.as_deref(),
+                unreviewed,
                 session.as_deref(),
             )?;
             if json {
@@ -2273,13 +2370,24 @@ fn run_planner(cli: Cli) -> Result<()> {
                     } else {
                         format!(" [in {}]", entry.ancestry.join(" › "))
                     };
+                    let mut review = if entry.review.state.needs_review() {
+                        claim_marker("", &entry.review)
+                    } else {
+                        String::new()
+                    };
+                    if !entry.unreviewed_dependencies.is_empty() {
+                        review.push_str(&format!(
+                            " [builds on unreviewed result {}]",
+                            entry.unreviewed_dependencies.join(", ")
+                        ));
+                    }
                     let closing = if entry.closed_child_count > 0 {
                         format!(" [close: all {} children closed]", entry.closed_child_count)
                     } else {
                         String::new()
                     };
                     pt::outln!(
-                        "  {} {}{} [priority {} unlocks {} downstream {} gates {}]{}{}{}",
+                        "  {} {}{} [priority {} unlocks {} downstream {} gates {}]{}{}{}{}",
                         entry.task.handle,
                         entry.task.title,
                         path,
@@ -2287,6 +2395,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                         entry.immediate_unlock_count,
                         entry.unfinished_downstream_count,
                         entry.open_gate_count,
+                        review,
                         closing,
                         blockers,
                         pickup_label(entry.pickup.as_ref()),

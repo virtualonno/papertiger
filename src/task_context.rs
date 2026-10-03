@@ -32,6 +32,8 @@ pub struct TaskContext {
     pub tags: Vec<String>,
     /// Ancestor handles from the root down to the direct parent.
     pub ancestry: Vec<String>,
+    /// Review state of the task's filing and, once done, its result.
+    pub review: crate::TaskReview,
     pub parent: Option<TaskSummary>,
     pub replacement: Option<TaskSummary>,
     pub dependencies: Vec<TaskSummary>,
@@ -185,11 +187,13 @@ fn task_context_with_history(
     };
 
     let ancestry = task_ancestry(conn, &task)?;
+    let review = crate::task_review(conn, &task)?;
     Ok(TaskContext {
         schema: "papertiger.task_context.v8".into(),
         plan,
         tags,
         ancestry,
+        review,
         parent: parent.as_ref().map(TaskSummary::from),
         replacement: replacement.as_ref().map(TaskSummary::from),
         dependencies: dependencies.iter().map(TaskSummary::from).collect(),

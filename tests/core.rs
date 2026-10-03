@@ -2358,7 +2358,7 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
     pt::start_task(&conn, "test", container, None, None).unwrap();
     pt::start_task(&conn, "test", active_leaf, None, None).unwrap();
 
-    let focus = pt::focus(&conn, plan, 20, true, None, None).unwrap();
+    let focus = pt::focus(&conn, plan, 20, true, None, false, None).unwrap();
     let sequences = focus
         .projection
         .entries
@@ -2493,7 +2493,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
     let err = pt::start_task(&conn, "test", decision, None, None).unwrap_err();
     assert!(err.to_string().contains(&format!("dep:#{prerequisite}")));
     assert!(err.to_string().contains("blocker:operator input"));
-    let default_focus = pt::focus(&conn, plan, 20, false, None, None).unwrap();
+    let default_focus = pt::focus(&conn, plan, 20, false, None, false, None).unwrap();
     assert!(
         !default_focus
             .projection
@@ -2501,7 +2501,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
             .iter()
             .any(|entry| entry.task.seq == decision)
     );
-    let full_focus = pt::focus(&conn, plan, 20, true, None, None).unwrap();
+    let full_focus = pt::focus(&conn, plan, 20, true, None, false, None).unwrap();
     let entry = full_focus
         .projection
         .entries
@@ -2559,7 +2559,7 @@ fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
     )
     .unwrap();
 
-    let focus = pt::focus(&conn, plan, 10, false, None, None).unwrap();
+    let focus = pt::focus(&conn, plan, 10, false, None, false, None).unwrap();
     assert_eq!(focus.projection.entries[0].task.seq, task);
     assert_eq!(focus.projection.entries[0].readiness, "in_progress");
     assert!(

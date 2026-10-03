@@ -794,6 +794,9 @@
             "pattern": "^[GFCBPDRW]-[1-9][0-9]*$"
           }
         },
+        "review": {
+          "$ref": "#/$defs/task_review"
+        },
         "parent": {
           "anyOf": [
             {
@@ -897,6 +900,7 @@
         "task",
         "tags",
         "ancestry",
+        "review",
         "parent",
         "replacement",
         "dependencies",
@@ -955,6 +959,9 @@
             }
           ]
         },
+        "unreviewed": {
+          "type": "boolean"
+        },
         "sort": {
           "enum": [
             "seq",
@@ -984,12 +991,16 @@
                     "type": "null"
                   }
                 ]
+              },
+              "review": {
+                "$ref": "#/$defs/task_review"
               }
             },
             "required": [
               "task",
               "tags",
-              "last_event"
+              "last_event",
+              "review"
             ],
             "additionalProperties": false
           }
@@ -1001,6 +1012,7 @@
         "status",
         "tag",
         "kind",
+        "unreviewed",
         "sort",
         "tasks"
       ],
@@ -2341,6 +2353,16 @@
                   "pattern": "^[GFCBPDRW]-[1-9][0-9]*$"
                 }
               },
+              "review": {
+                "$ref": "#/$defs/claim_review"
+              },
+              "unreviewed_dependencies": {
+                "description": "Done dependencies whose results still need review; results recorded before authorship are not listed.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "pickup": {
                 "$ref": "#/$defs/pickup"
               }
@@ -2354,7 +2376,9 @@
               "immediate_unlock_count",
               "unfinished_downstream_count",
               "closed_child_count",
-              "ancestry"
+              "ancestry",
+              "review",
+              "unreviewed_dependencies"
             ],
             "additionalProperties": false
           }
@@ -2606,6 +2630,69 @@
         "release",
         "work"
       ]
+    },
+    "claim_review": {
+      "description": "Review state of one claim, derived from the event log.",
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "unreviewed",
+            "engaged",
+            "confirmed",
+            "disputed"
+          ]
+        },
+        "author_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reviewer_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "same_model": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "author_model",
+        "reviewer_model",
+        "same_model"
+      ],
+      "additionalProperties": false
+    },
+    "task_review": {
+      "description": "Review state of a task's filing and, once done, its result.",
+      "type": "object",
+      "properties": {
+        "filing": {
+          "$ref": "#/$defs/claim_review"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/claim_review"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "filing",
+        "result"
+      ],
+      "additionalProperties": false
     }
   }
 }

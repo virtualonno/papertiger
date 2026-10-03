@@ -213,6 +213,18 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   never a blocker: `start` resumes unfinished work directly, with no release,
   expiry, heartbeat, or harness integration. It does not detect liveness or
   guarantee exclusive execution; concurrent explicit starts can both succeed.
+- Review state is derived per claim: a task's filing and, once done, its
+  result. Text output marks claims that need a check with the model that made
+  them, e.g. `[unreviewed · deepseek-v4.1-flash]`; `show` and the JSON of
+  `show`, `focus` and `list` carry `review`. A filing becomes `engaged` when a
+  different session starts the task or rewrites its title or intent.
+  `review <N> --verdict confirmed|disputed --why ... [--result]` records a
+  verdict from a different session (the claim's own session is refused).
+  Nothing is refused or reranked, except that a disputed result holds its
+  dependents and its parent's closure. `list --unreviewed` and
+  `focus --unreviewed` select claims needing a check; results recorded before
+  authorship are not flagged. Same-model reviews count and are reported as
+  such (`same_model`).
 - `add --start` creates and starts a task atomically, rolling back task and
   events on readiness failure.
 - Optional caller-resolved commit associations support local task/commit lookup
