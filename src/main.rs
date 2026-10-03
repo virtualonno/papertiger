@@ -196,6 +196,9 @@ enum Cmd {
     Start {
         /// Task: N, #N or its handle (e.g. F-N)
         task: String,
+        /// The rationale as a second word, like --why
+        #[arg(value_name = "WHY")]
+        text: Option<String>,
         #[command(flatten)]
         why: WhyArgs,
     },
@@ -203,6 +206,9 @@ enum Cmd {
     Done {
         /// Task: N, #N or its handle (e.g. F-N)
         task: String,
+        /// The result as a second word, like --result
+        #[arg(value_name = "RESULT")]
+        text: Option<String>,
         #[command(flatten)]
         result: ResultArgs,
     },
@@ -210,6 +216,9 @@ enum Cmd {
     Reopen {
         /// Task: N, #N or its handle (e.g. F-N)
         task: String,
+        /// The rationale as a second word, like --why
+        #[arg(value_name = "WHY")]
+        text: Option<String>,
         #[command(flatten)]
         why: WhyArgs,
     },
@@ -217,6 +226,9 @@ enum Cmd {
     Retire {
         /// Task: N, #N or its handle (e.g. F-N)
         task: String,
+        /// The rationale as a second word, like --why
+        #[arg(value_name = "WHY")]
+        text: Option<String>,
         /// Same-plan task that replaces this work
         #[arg(long, value_name = "TASK")]
         into: Option<String>,
@@ -254,6 +266,9 @@ enum Cmd {
     Reject {
         /// Task: N, #N or its handle (e.g. F-N)
         task: String,
+        /// The rationale as a second word, like --why
+        #[arg(value_name = "WHY")]
+        text: Option<String>,
         #[command(flatten)]
         why: WhyArgs,
     },
@@ -957,6 +972,16 @@ fn review_marker(prefix: &str, claim: &pt::ClaimReview, triage: bool) -> String 
     )
 }
 
+/// Text given as a command's second word or by its flag, but not both.
+fn second_word(word: Option<String>, flag: Option<String>, field: &str) -> Result<Option<String>> {
+    match (word, flag) {
+        (Some(_), Some(_)) => bail!(
+            "give the {field} once, as the second word or with --{field}/--{field}-file, not both"
+        ),
+        (word, flag) => Ok(word.filter(|text| !text.trim().is_empty()).or(flag)),
+    }
+}
+
 /// A kind or similar keyword in any letter case; the lists are lowercase.
 fn lowercase(value: &str) -> Result<String, std::convert::Infallible> {
     Ok(value.to_ascii_lowercase())
@@ -976,6 +1001,8 @@ fn log_line(conn: &Connection, event: &pt::EventRecord) -> String {
         "seq",
         "fields",
         "revision_schema",
+        "pickup",
+        "previous_pickup",
     ];
     let target = match (event.task_seq, &event.gate) {
         (Some(seq), gate) => {
@@ -2005,8 +2032,8 @@ fn run_planner(cli: Cli) -> Result<()> {
             let handle = pt::seq_handle(&conn, seq)?;
             mutation_output!("{handle} updated ({})", changed.join(", "));
         }
-        Cmd::Start { task, why } => {
-            let why = why.optional()?;
+        Cmd::Start { task, text, why } => {
+            let why = second_word(text, why.optional()?, "why")?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::start_task(&conn, &actor, seq, why.as_deref(), session.as_deref())?;
             let handle = pt::seq_handle(&conn, seq)?;
@@ -2021,22 +2048,27 @@ fn run_planner(cli: Cli) -> Result<()> {
             pt::move_tasks_to_plan(&conn, &actor, &sequences, &plan, why.as_deref())?;
             mutation_output!("moved {} task(s) to {plan}", sequences.len());
         }
-        Cmd::Done { task, result } => {
-            let result = result.optional()?;
+        Cmd::Done { task, text, result } => {
+            let result = second_word(text, result.optional()?, "result")?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::complete_task(&conn, &actor, seq, result.as_deref())?;
             let handle = pt::seq_handle(&conn, seq)?;
             mutation_output!("{handle} done");
         }
-        Cmd::Reopen { task, why } => {
-            let why = why.optional()?;
+        Cmd::Reopen { task, text, why } => {
+            let why = second_word(text, why.optional()?, "why")?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::reopen_task(&conn, &actor, seq, why.as_deref())?;
             let handle = pt::seq_handle(&conn, seq)?;
             mutation_output!("{handle} reopened");
         }
-        Cmd::Retire { task, into, why } => {
-            let why = why.optional()?;
+        Cmd::Retire {
+            task,
+            text,
+            into,
+            why,
+        } => {
+            let why = second_word(text, why.optional()?, "why")?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             let replacement_seq = into
                 .as_deref()
@@ -2145,8 +2177,12 @@ fn run_planner(cli: Cli) -> Result<()> {
             let claim = if result { "result" } else { "filing" };
             mutation_output!("{handle} {claim} {verdict}");
         }
-        Cmd::Reject { task, why } => {
-            let why = why.required()?;
+        Cmd::Reject { task, text, why } => {
+            let why = second_word(text, why.optional()?, "why")?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "reject requires a reason: `papertiger reject <task> \"<why>\"`, or --why/--why-file"
+                )
+            })?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::reject_task(&conn, &actor, seq, &why)?;
             let handle = pt::seq_handle(&conn, seq)?;

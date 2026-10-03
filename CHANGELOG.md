@@ -32,6 +32,10 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Changed
 
+- `start`, `done`, `reopen`, `retire` and `reject` take their reason or
+  result as a second word too: `done F-3 "Exporter writes JSON"`,
+  `reject F-4 "duplicate of F-2"`. The flags still work; giving it both ways
+  is refused.
 - `note` takes its text positionally, alone or after a task:
   `note "text"`, `note F-3 "text"`; `--text`, `--text-file` and `--task` still
   work.

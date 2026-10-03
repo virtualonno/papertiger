@@ -46,7 +46,7 @@ permission for requested work.
 ```text
 papertiger start <N>
 papertiger add "Outcome" --kind <kind> --plan <slug> --start --intent "Standalone purpose"
-papertiger done <N> --result "Outcome and verification"
+papertiger done <N> "Outcome and verification"
 papertiger decompose <N> --outline-file outline.json --start-ready
 ```
 
