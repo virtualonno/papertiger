@@ -1460,13 +1460,15 @@ fn run_planner(cli: Cli) -> Result<()> {
     }
     let db_path = match (db_override, project_root.as_deref()) {
         (Some(path), _) => path,
-        (None, Some(root)) => project_setup::project_authority(root)?
-            .to_string_lossy()
-            .into_owned(),
-        (None, None) => project_setup::discover_project_authority(&std::env::current_dir()?)?
+        // Selected paths are shown in refusals; render them as a user would
+        // type them, without Windows verbatim prefixes.
+        (None, Some(root)) => pt::portable_absolute(&project_setup::project_authority(root)?)?,
+        (None, None) => match project_setup::discover_project_authority(&std::env::current_dir()?)?
             .or(user_setup::fallback_authority()?)
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "state/papertiger.sqlite".into()),
+        {
+            Some(path) => pt::portable_absolute(&path)?,
+            None => "state/papertiger.sqlite".into(),
+        },
     };
     let actor = authorship
         .as_ref()

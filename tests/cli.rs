@@ -1079,6 +1079,47 @@ fn kind_filters_select_one_kind_and_status_counts_open_work_by_kind() {
 }
 
 #[test]
+fn authority_refusals_print_paths_without_windows_verbatim_prefixes() {
+    let project = std::env::temp_dir().join(format!(
+        "papertiger-plain-path-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(project.join("state")).unwrap();
+    let authority = project.join("state/papertiger.sqlite");
+    assert_success(&papertiger(&authority, &["init"]));
+    let raw = rusqlite::Connection::open(&authority).unwrap();
+    raw.create_scalar_function(
+        "papertiger_write_requires_public_api",
+        0,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        |_| Ok(1_i64),
+    )
+    .unwrap();
+    raw.execute("UPDATE meta SET value='13' WHERE key='schema_version'", [])
+        .unwrap();
+    drop(raw);
+    let refused = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+        .arg("--project-root")
+        .arg(&project)
+        .arg("status")
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("init` explicitly to upgrade to v14"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains(r"\?\"), "{stderr}");
+    assert!(stderr.contains("/state/papertiger.sqlite"), "{stderr}");
+    std::fs::remove_dir_all(project).unwrap();
+}
+
+#[test]
 fn handles_name_the_kind_resolve_like_numbers_and_refuse_when_stale() {
     let db = TestDatabase::new("handles");
     let run = |args: &[&str]| papertiger(&db.0, args);
