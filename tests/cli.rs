@@ -23,8 +23,13 @@ fn session_pickup_is_visible_advisory_and_requires_no_release() {
     };
     assert_success(&invoke("a", &["init"]));
     assert_success(&invoke("a", &["plan", "add", "work", "Work"]));
-    assert_success(&invoke("a", &["add", "First", "--start", "--why", "begin"]));
-    assert_success(&invoke("a", &["add", "Second"]));
+    assert_success(&invoke(
+        "a",
+        &[
+            "add", "--kind", "feature", "First", "--start", "--why", "begin",
+        ],
+    ));
+    assert_success(&invoke("a", &["add", "--kind", "feature", "Second"]));
     let focus = invoke("b", &["focus", "--limit", "1", "--json"]);
     assert_success(&focus);
     let focus: serde_json::Value = serde_json::from_slice(&focus.stdout).unwrap();
@@ -117,6 +122,8 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
         };
         assert_success(&invoke(&[
             "add",
+            "--kind",
+            "feature",
             &format!("discovery {i}"),
             "--plan",
             plan,
@@ -266,7 +273,14 @@ fn progressive_reads_preserve_full_context_and_all_plan_inventory() {
             "inventory authority changed since this cursor; restart with `papertiger list --all-plans --status unfinished --limit 100 --json`"
         )
     );
-    assert_success(&invoke(&["add", "discarded design", "--plan", "active"]));
+    assert_success(&invoke(&[
+        "add",
+        "--kind",
+        "feature",
+        "discarded design",
+        "--plan",
+        "active",
+    ]));
     assert_success(&invoke(&[
         "reject",
         "69",
@@ -338,6 +352,8 @@ fn mutation_receipts_model_attribution_and_task_moves_are_cli_usable() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "a proposal",
             "--plan",
             "old",
@@ -417,6 +433,8 @@ fn mutation_receipts_model_attribution_and_task_moves_are_cli_usable() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "invalid model",
             "--plan",
             "old",
@@ -462,12 +480,33 @@ fn closed_children_count_as_closed_and_their_parent_surfaces_for_closing() {
     };
     run(&["init"]);
     run(&["plan", "add", "work", "Work"]);
-    run(&["add", "Parent outcome"]);
-    run(&["add", "Built child", "--parent", "1"]);
-    run(&["add", "Superseded child", "--parent", "1"]);
-    run(&["add", "Wrong approach", "--parent", "1"]);
-    run(&["add", "Other parent"]);
-    run(&["add", "Finished child", "--parent", "5"]);
+    run(&["add", "--kind", "feature", "Parent outcome"]);
+    run(&["add", "--kind", "feature", "Built child", "--parent", "1"]);
+    run(&[
+        "add",
+        "--kind",
+        "feature",
+        "Superseded child",
+        "--parent",
+        "1",
+    ]);
+    run(&[
+        "add",
+        "--kind",
+        "feature",
+        "Wrong approach",
+        "--parent",
+        "1",
+    ]);
+    run(&["add", "--kind", "feature", "Other parent"]);
+    run(&[
+        "add",
+        "--kind",
+        "feature",
+        "Finished child",
+        "--parent",
+        "5",
+    ]);
     run(&["done", "6"]);
     let focus_entries = |focus: &str| -> Vec<(i64, i64)> {
         let focus: serde_json::Value = serde_json::from_str(focus).unwrap();
@@ -513,12 +552,16 @@ fn a_reader_that_closes_the_pipe_ends_output_without_failure() {
     let db = TestDatabase::new("closed-pipe");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
-    assert_success(&papertiger(&db.0, &["add", "Parent outcome"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Parent outcome"],
+    ));
     let children: Vec<_> = (0..256)
         .map(|index| {
             serde_json::json!({
                 "key": format!("c{index}"),
                 "title": format!("Child outcome {index} with a title long enough to fill the pipe buffer quickly"),
+                "kind": "feature",
             })
         })
         .collect();
@@ -565,15 +608,40 @@ fn orientation_reads_leave_the_authority_bytes_unchanged() {
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
     assert_success(&papertiger(
         &db.0,
-        &["add", "Parent outcome", "--plan", "work"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "Parent outcome",
+            "--plan",
+            "work",
+        ],
     ));
     assert_success(&papertiger(
         &db.0,
-        &["add", "Child outcome", "--plan", "work", "--parent", "1"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "Child outcome",
+            "--plan",
+            "work",
+            "--parent",
+            "1",
+        ],
     ));
     assert_success(&papertiger(
         &db.0,
-        &["add", "Later outcome", "--plan", "work", "--dep", "2"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "Later outcome",
+            "--plan",
+            "work",
+            "--dep",
+            "2",
+        ],
     ));
     let before = std::fs::read(&db.0).unwrap();
     for args in [
@@ -619,7 +687,7 @@ fn reasoning_effort_uses_environment_and_explicit_flags_without_inference() {
         command.output().unwrap()
     };
     let created = run(
-        &["add", "precise identity", "--json"],
+        &["add", "--kind", "feature", "precise identity", "--json"],
         Some("gpt-6-astra"),
         Some("high"),
     );
@@ -669,7 +737,7 @@ fn reasoning_effort_uses_environment_and_explicit_flags_without_inference() {
         "medium"
     );
     let known_model = run(
-        &["add", "unknown effort", "--json"],
+        &["add", "--kind", "feature", "unknown effort", "--json"],
         Some("gpt-6-astra"),
         None,
     );
@@ -680,12 +748,20 @@ fn reasoning_effort_uses_environment_and_explicit_flags_without_inference() {
     assert_success(&before);
     for output in [
         run(
-            &["add", "orphan", "--reasoning-effort", "high", "--json"],
+            &[
+                "add",
+                "--kind",
+                "feature",
+                "orphan",
+                "--reasoning-effort",
+                "high",
+                "--json",
+            ],
             None,
             None,
         ),
         run(
-            &["add", "invalid", "--json"],
+            &["add", "--kind", "feature", "invalid", "--json"],
             Some("gpt-6-astra"),
             Some("very high"),
         ),
@@ -717,7 +793,14 @@ fn backup_preserves_legacy_schema_and_committed_wal_without_importing_evidence()
     for args in [
         vec!["init"],
         vec!["plan", "add", "work", "Work"],
-        vec!["add", "historical outcome", "--plan", "work"],
+        vec![
+            "add",
+            "--kind",
+            "feature",
+            "historical outcome",
+            "--plan",
+            "work",
+        ],
         vec![
             "gate",
             "add",
@@ -1000,12 +1083,27 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
     assert_success(&papertiger(
         &db.0,
-        &["add", "open dependency", "--plan", "work"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "open dependency",
+            "--plan",
+            "work",
+        ],
     ));
 
     let missing_why = papertiger(
         &db.0,
-        &["add", "missing rationale", "--plan", "work", "--start"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "missing rationale",
+            "--plan",
+            "work",
+            "--start",
+        ],
     );
     assert!(!missing_why.status.success());
     assert!(String::from_utf8_lossy(&missing_why.stderr).contains("add --start requires --why"));
@@ -1017,6 +1115,8 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "blocked atomic task",
             "--plan",
             "work",
@@ -1047,6 +1147,8 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "atomic task",
             "--plan",
             "work",
@@ -1081,11 +1183,26 @@ fn dependencies_that_finish_only_after_their_dependent_are_refused() {
     let db = TestDatabase::new("wait-for-deadlock");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
-    assert_success(&papertiger(&db.0, &["add", "Grandparent"]));
-    assert_success(&papertiger(&db.0, &["add", "Parent", "--parent", "1"]));
-    assert_success(&papertiger(&db.0, &["add", "Downstream", "--dep", "2"]));
-    assert_success(&papertiger(&db.0, &["add", "Child", "--parent", "2"]));
-    assert_success(&papertiger(&db.0, &["add", "Independent"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Grandparent"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Parent", "--parent", "1"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Downstream", "--dep", "2"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Child", "--parent", "2"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Independent"],
+    ));
     let head = |db: &TestDatabase| {
         let log = papertiger(&db.0, &["log", "--json"]);
         assert_success(&log);
@@ -1094,15 +1211,15 @@ fn dependencies_that_finish_only_after_their_dependent_are_refused() {
     let before = head(&db);
     for (args, expected) in [
         (
-            vec!["add", "New child", "--parent", "2", "--dep", "1"],
+            vec!["add", "--kind", "feature", "New child", "--parent", "2", "--dep", "1"],
             "dependency #6 -> #1 would deadlock: #1 finishes only after #6",
         ),
         (
-            vec!["add", "New child", "--parent", "2", "--dep", "3"],
+            vec!["add", "--kind", "feature", "New child", "--parent", "2", "--dep", "3"],
             "dependency #6 -> #3 would deadlock: #3 finishes only after #6",
         ),
         (
-            vec!["add", "New child", "--parent", "2", "--dep", "2"],
+            vec!["add", "--kind", "feature", "New child", "--parent", "2", "--dep", "2"],
             "dependency #6 -> #2 would deadlock: #2 finishes only after #6",
         ),
         (
@@ -1146,12 +1263,17 @@ fn dependencies_that_finish_only_after_their_dependent_are_refused() {
     ));
     assert_success(&papertiger(
         &db.0,
-        &["add", "Sibling", "--parent", "2", "--dep", "4"],
+        &[
+            "add", "--kind", "feature", "Sibling", "--parent", "2", "--dep", "4",
+        ],
     ));
 
     // A finished task gains no wait edge when moved, but reopening it makes
     // its new parent wait for it again.
-    assert_success(&papertiger(&db.0, &["add", "Moved later", "--dep", "3"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Moved later", "--dep", "3"],
+    ));
     assert_success(&papertiger(&db.0, &["retire", "7", "--why", "set aside"]));
     assert_success(&papertiger(
         &db.0,
@@ -1195,6 +1317,8 @@ fn meaning_provenance_is_correctable_visible_and_transferable() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "invalid source",
             "--plan",
             "work",
@@ -1212,6 +1336,8 @@ fn meaning_provenance_is_correctable_visible_and_transferable() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "attributed outcome",
             "--plan",
             "work",
@@ -1377,7 +1503,10 @@ fn entry_bounds_tag_identity_and_focus_projection_are_explicit() {
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
 
     let long_title = "x".repeat(papertiger::MAX_TASK_TITLE_CHARS + 1);
-    let refused = papertiger(&db.0, &["add", &long_title, "--plan", "work"]);
+    let refused = papertiger(
+        &db.0,
+        &["add", "--kind", "feature", &long_title, "--plan", "work"],
+    );
     assert!(!refused.status.success());
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
@@ -1387,7 +1516,9 @@ fn entry_bounds_tag_identity_and_focus_projection_are_explicit() {
 
     let blank_tag = papertiger(
         &db.0,
-        &["add", "tagged", "--plan", "work", "--tag", "a,,  b"],
+        &[
+            "add", "--kind", "feature", "tagged", "--plan", "work", "--tag", "a,,  b",
+        ],
     );
     assert!(!blank_tag.status.success());
     let stderr = String::from_utf8_lossy(&blank_tag.stderr);
@@ -1400,7 +1531,9 @@ fn entry_bounds_tag_identity_and_focus_projection_are_explicit() {
     for title in ["first", "second", "third"] {
         assert_success(&papertiger(
             &db.0,
-            &["add", title, "--plan", "work", "--tag", " alpha "],
+            &[
+                "add", "--kind", "feature", title, "--plan", "work", "--tag", " alpha ",
+            ],
         ));
     }
     let focus = papertiger(
@@ -1445,7 +1578,14 @@ fn evidence_verification_is_read_only_and_fails_closed_on_byte_drift() {
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
     assert_success(&papertiger(
         &db.0,
-        &["add", "verified task", "--plan", "work"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "verified task",
+            "--plan",
+            "work",
+        ],
     ));
     assert_success(&papertiger(
         &db.0,
@@ -1575,7 +1715,9 @@ fn new_file_evidence_resolves_against_the_discovered_project_from_a_subdirectory
     };
     assert_success(&invoke(&["init"]));
     assert_success(&invoke(&["plan", "add", "work", "Work"]));
-    assert_success(&invoke(&["add", "bound", "--plan", "work"]));
+    assert_success(&invoke(&[
+        "add", "--kind", "feature", "bound", "--plan", "work",
+    ]));
     assert_success(&invoke(&[
         "gate",
         "add",
@@ -1658,7 +1800,10 @@ fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
     };
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
-    assert_success(&papertiger(&db.0, &["add", "bound", "--plan", "work"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "bound", "--plan", "work"],
+    ));
     for gate in ["proof", "commit"] {
         assert_success(&papertiger(
             &db.0,
@@ -1851,7 +1996,14 @@ fn evidence_verification_json_is_summary_first_filtered_and_pageable() {
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
     assert_success(&papertiger(
         &db.0,
-        &["add", "mixed evidence", "--plan", "work"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "mixed evidence",
+            "--plan",
+            "work",
+        ],
     ));
     let root_text = root.0.to_str().unwrap();
     // New file: bindings must name existing files; they go missing afterwards.
@@ -2215,7 +2367,7 @@ fn explicit_project_root_preserves_one_authority_across_installed_projects() {
         .args([
             "--actor",
             "cross-project-test",
-            "add",
+            "add", "--kind", "feature",
             "Canonical cross-project outcome",
             "--plan",
             "canonical",
@@ -2335,6 +2487,8 @@ fn explicit_project_root_selects_existing_default_authority_without_receipt() {
         "--project-root",
         root,
         "add",
+        "--kind",
+        "feature",
         "Selected by project root",
         "--plan",
         "work",
@@ -2585,7 +2739,7 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     );
     let export = command_help(&["export"]);
     assert!(
-        export.contains("events and Mise projections as papertiger.dump.v10 JSON"),
+        export.contains("events and Mise projections as papertiger.dump.v11 JSON"),
         "{export}"
     );
     let focus = command_help(&["focus"]);
@@ -2684,7 +2838,10 @@ fn status_show_and_log_do_not_panic_on_noncanonical_short_or_multibyte_timestamp
     let db = TestDatabase::new("noncanonical-event-time");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "campaign", "Campaign"]));
-    assert_success(&papertiger(&db.0, &["add", "task", "--plan", "campaign"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "task", "--plan", "campaign"],
+    ));
     assert_success(&papertiger(
         &db.0,
         &["note", "--text", "historical timestamp", "--task", "1"],
@@ -2726,8 +2883,14 @@ fn commit_lookup_lifecycle_json_and_activity_sort_are_agent_usable() {
     let db = TestDatabase::new("commit-and-time");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
-    assert_success(&papertiger(&db.0, &["add", "first", "--plan", "work"]));
-    assert_success(&papertiger(&db.0, &["add", "second", "--plan", "work"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "first", "--plan", "work"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "second", "--plan", "work"],
+    ));
     let oid = "b".repeat(40);
     assert_success(&papertiger(
         &db.0,
@@ -2925,12 +3088,17 @@ fn long_text_sources_refuse_ambiguous_missing_and_blank_input() {
 
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
-    assert_success(&papertiger(&db.0, &["add", "first", "--plan", "work"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "first", "--plan", "work"],
+    ));
 
     let ambiguous = papertiger_with_stdin(
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "ambiguous",
             "--plan",
             "work",
@@ -2950,6 +3118,8 @@ fn long_text_sources_refuse_ambiguous_missing_and_blank_input() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "conflict",
             "--plan",
             "work",
@@ -2974,6 +3144,8 @@ fn long_text_sources_refuse_ambiguous_missing_and_blank_input() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "invalid encoding",
             "--plan",
             "work",
@@ -3023,8 +3195,14 @@ fn retire_into_is_visible_without_redirecting_show() {
     let db = TestDatabase::new("retire-into");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
-    assert_success(&papertiger(&db.0, &["add", "duplicate", "--plan", "work"]));
-    assert_success(&papertiger(&db.0, &["add", "canonical", "--plan", "work"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "duplicate", "--plan", "work"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "canonical", "--plan", "work"],
+    ));
 
     let retirement = papertiger(
         &db.0,
@@ -3137,7 +3315,14 @@ fn retire_into_is_visible_without_redirecting_show() {
     );
     assert_success(&papertiger(
         &db.0,
-        &["add", "final canonical", "--plan", "work"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "final canonical",
+            "--plan",
+            "work",
+        ],
     ));
     assert_success(&papertiger(
         &db.0,
@@ -3178,6 +3363,8 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "Object store recovery",
             "--plan",
             "work",
@@ -3187,7 +3374,14 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     ));
     assert_success(&papertiger(
         &db.0,
-        &["add", "Continue implementation", "--plan", "work"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "Continue implementation",
+            "--plan",
+            "work",
+        ],
     ));
     assert_success(&papertiger(
         &db.0,
@@ -3284,10 +3478,10 @@ fn structured_reads_search_cursors_and_recovery_export_are_cli_usable() {
     assert_success(&export);
     let receipt: serde_json::Value = serde_json::from_slice(&export.stdout).unwrap();
     assert_eq!(receipt["schema"], "papertiger.export_file.v1");
-    assert_eq!(receipt["dump_schema"], "papertiger.dump.v10");
+    assert_eq!(receipt["dump_schema"], "papertiger.dump.v11");
     let dump: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&export_path).unwrap()).unwrap();
-    assert_eq!(dump["schema"], "papertiger.dump.v10");
+    assert_eq!(dump["schema"], "papertiger.dump.v11");
     let same_authority = papertiger(
         &db.0,
         &["export", "--output", db.0.to_str().unwrap(), "--replace"],
@@ -3326,13 +3520,15 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
         let leaf_seq = leaf_seq.to_string();
         assert_success(&papertiger(
             &db.0,
-            &["add", &parent_title, "--plan", "work"],
+            &["add", "--kind", "feature", &parent_title, "--plan", "work"],
         ));
         assert_success(&papertiger(&db.0, &["start", &parent_seq]));
         assert_success(&papertiger(
             &db.0,
             &[
                 "add",
+                "--kind",
+                "feature",
                 &leaf_title,
                 "--plan",
                 "work",
@@ -3347,7 +3543,16 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
         let priority = priority.to_string();
         assert_success(&papertiger(
             &db.0,
-            &["add", &title, "--plan", "work", "--priority", &priority],
+            &[
+                "add",
+                "--kind",
+                "feature",
+                &title,
+                "--plan",
+                "work",
+                "--priority",
+                &priority,
+            ],
         ));
     }
     for index in 1..=4 {
@@ -3433,6 +3638,8 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "Parent original",
             "--plan",
             "work",
@@ -3446,6 +3653,8 @@ fn task_edits_preserve_reconstructible_revisions_and_legacy_honesty() {
         &db.0,
         &[
             "add",
+            "--kind",
+            "feature",
             "Child original",
             "--plan",
             "work",

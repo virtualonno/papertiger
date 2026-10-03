@@ -74,7 +74,7 @@ pub use mise_projection_contract::{
     MiseProjectionDisposition, MiseSourceProjection,
 };
 
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 14;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.planner";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
 pub const TASK_DEFINITION_REVISION_SCHEMA: &str = "papertiger.task_definition_revision.v1";
@@ -83,7 +83,16 @@ pub const MAX_TAG_CHARS: usize = 64;
 const SQLITE_LOCK_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 
 pub const TASK_STATUSES: [&str; 5] = ["proposed", "in_progress", "done", "retired", "rejected"];
-pub const TASK_KINDS: [&str; 3] = ["work", "probe", "decision"];
+/// What sort of outcome a task is. Each kind has the letter its handle shows;
+/// `work` is the legacy kind of tasks recorded before typed kinds.
+pub const TASK_KINDS: [&str; 8] = [
+    "goal", "feature", "change", "bug", "probe", "decision", "release", "work",
+];
+/// Kinds a task can be given; `work` survives only on existing records.
+pub const ASSIGNABLE_TASK_KINDS: [&str; 7] = [
+    "goal", "feature", "change", "bug", "probe", "decision", "release",
+];
+pub const LEGACY_TASK_KIND: &str = "work";
 pub const MEANING_SOURCES: [&str; 3] = ["user", "agent", "external"];
 pub const GATE_KINDS: [&str; 8] = [
     "test",
@@ -119,10 +128,11 @@ pub(crate) use events::record_event_in_mutation;
 mod tasks;
 pub(crate) use tasks::{
     TASK_COLS, meaning_source_requires_text, require_nonblank, task_from_row, task_tags_by_id,
-    validate_tag, validate_task_kind, validate_task_title,
+    validate_assignable_task_kind, validate_tag, validate_task_kind, validate_task_title,
 };
 pub use tasks::{
-    Task, get_task, leaf_tasks_with_status, list_tasks, list_tasks_by_activity, parse_task_ref,
+    Task, get_task, kind_requires_result, leaf_tasks_with_status, list_tasks,
+    list_tasks_by_activity, parse_task_ref, suggested_task_kind, task_kind_letter,
     validate_meaning_source,
 };
 mod plans;
@@ -166,6 +176,6 @@ pub(crate) use audit::{
 mod transfer;
 pub(crate) use transfer::default_open;
 pub use transfer::{
-    DUMP_SCHEMA, Dump, EventDump, GateDump, PlanDump, TaskDump, convert_dump_v9, export, import,
+    DUMP_SCHEMA, Dump, EventDump, GateDump, PlanDump, TaskDump, convert_dump_v10, export, import,
     parse_dump_json,
 };

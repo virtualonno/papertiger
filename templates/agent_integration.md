@@ -76,11 +76,11 @@ database can verify or bind `file:` locators beneath a supplied project root.
 - Mutate the database only through Papertiger commands and public APIs.
 - `init` is the only command that initializes or migrates the selected live authority. Read commands never
   migrate; follow their exact corrective command deliberately.
-- The current planner authority schema is v13 and the current dump format is
-  `papertiger.dump.v10`. To migrate an older authority, first create a
+- The current planner authority schema is v14 and the current dump format is
+  `papertiger.dump.v11`. To migrate an older authority, first create a
   standalone recovery file with the new release's
   `--db <source> backup --output <new-path>`, then run `init` with the new
-  release. `import` also converts `papertiger.dump.v9`; older dumps need their
+  release. `import` also converts `papertiger.dump.v10`; older dumps need their
   matching release, a temporary authority migration, and a current-format
   re-export. Migration never rewrites stored events and leaves earlier
   malformed rows untouched for `audit`. Mise's schema is independent.
@@ -284,7 +284,7 @@ Windows PowerShell 5.1 uses a legacy encoding for native pipelines by default,
 so send non-ASCII text through a UTF-8 file or configure `$OutputEncoding`.
 
 ```bash
-papertiger add "Outcome" --start \
+papertiger add "Outcome" --kind feature --start \
   --intent "Standalone purpose" --intent-source user \
   --why "Why this outcome starts now"
 papertiger start <task.seq> --why "Why execution starts now"
@@ -366,7 +366,12 @@ The repository label defaults to `.` for the project root selected by this
 authority. Pass `--repo` only for a nested or external repository, using the
 same stable label for add, remove, and find.
 
-Probe and decision tasks require `--result` or `--result-file`. `done` refuses
+Choose each task's kind when creating it: `goal` for a container of child
+outcomes, `feature`, `change` (refactor, migration, hardening, removal), `bug`,
+`probe`, `decision`, or `release` (publishing, rollout and other chores). The
+legacy `work` kind cannot be assigned; retype an open `work` task with
+`edit <task.seq> --kind <kind> --why <reason>`. Probe, decision and bug tasks
+require `--result` or `--result-file`; a bug's result names its cause. `done` refuses
 open dependencies, blockers, gates, or children; resolve or waive them with
 evidence and reasons rather than routing around the refusal. Check
 `list --status rejected` before reviving an old approach; `reopen` can revisit a

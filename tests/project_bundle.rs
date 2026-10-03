@@ -88,6 +88,8 @@ impl Fixture {
         ]);
         self.ok(&[
             "add",
+            "--kind",
+            "feature",
             "Retained outcome",
             "--plan",
             "work",

@@ -68,7 +68,7 @@ pub fn init_at(conn: &Connection, path: &str) -> Result<InitOutcome> {
             "refusing to initialize nonempty database without papertiger metadata: found {initial_page_count} allocated page(s)"
         );
     }
-    tx.execute_batch(
+    tx.execute_batch(&format!(
         r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE plans (
@@ -80,24 +80,7 @@ CREATE TABLE plans (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE TABLE tasks (
-  task_id INTEGER PRIMARY KEY,
-  seq INTEGER NOT NULL UNIQUE,
-  plan_id INTEGER NOT NULL REFERENCES plans(plan_id),
-  parent_id INTEGER REFERENCES tasks(task_id),
-  replacement_task_id INTEGER REFERENCES tasks(task_id),
-  title TEXT NOT NULL,
-  intent TEXT NOT NULL DEFAULT '',
-  intent_source TEXT CHECK (intent_source IN ('user','agent','external')),
-  kind TEXT NOT NULL DEFAULT 'work' CHECK (kind IN ('work','probe','decision')),
-  result TEXT,
-  result_source TEXT CHECK (result_source IN ('user','agent','external')),
-  status TEXT NOT NULL DEFAULT 'proposed'
-    CHECK (status IN ('proposed','in_progress','done','retired','rejected')),
-  priority INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
+{tasks}
 CREATE TABLE task_tags (
   task_id INTEGER NOT NULL REFERENCES tasks(task_id),
   tag TEXT NOT NULL,
@@ -162,8 +145,8 @@ CREATE INDEX idx_events_entity ON events(entity, entity_id);
 CREATE INDEX idx_events_entity_seq ON events(entity_seq, event_id);
 CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, commit_oid);
 "#,
-    )?;
-    tx.execute_batch(pickup::SCHEMA)?;
+        tasks = tasks_table("tasks")
+    ))?;
     tx.execute_batch(external_reference::REFERENCE_SCHEMA)?;
     tx.execute_batch(mise_projection::MISE_PROJECTION_SCHEMA_V4)?;
     history_recovery::install_schema(&tx)?;
@@ -178,6 +161,76 @@ CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, c
     )?;
     tx.commit()?;
     Ok(InitOutcome::Created)
+}
+
+/// The current tasks table. Fresh authorities create it directly; the v14
+/// migration rebuilds the stored table into it, because SQLite cannot alter
+/// a CHECK constraint in place.
+fn tasks_table(name: &str) -> String {
+    format!(
+        r#"CREATE TABLE {name} (
+  task_id INTEGER PRIMARY KEY,
+  seq INTEGER NOT NULL UNIQUE,
+  plan_id INTEGER NOT NULL REFERENCES plans(plan_id),
+  parent_id INTEGER REFERENCES tasks(task_id),
+  replacement_task_id INTEGER REFERENCES tasks(task_id),
+  title TEXT NOT NULL,
+  intent TEXT NOT NULL DEFAULT '',
+  intent_source TEXT CHECK (intent_source IN ('user','agent','external')),
+  kind TEXT NOT NULL
+    CHECK (kind IN ('goal','feature','change','bug','probe','decision','release','work')),
+  result TEXT,
+  result_source TEXT CHECK (result_source IN ('user','agent','external')),
+  status TEXT NOT NULL DEFAULT 'proposed'
+    CHECK (status IN ('proposed','in_progress','done','retired','rejected')),
+  priority INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  pickup_session TEXT,
+  pickup_at TEXT
+    CHECK ((pickup_session IS NULL AND pickup_at IS NULL) OR
+           (pickup_at IS NOT NULL AND status = 'in_progress'))
+);"#
+    )
+}
+
+const TASK_COLUMNS_V14: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title,     intent, intent_source, kind, result, result_source, status, priority, created_at, updated_at,     pickup_session, pickup_at";
+
+/// Typed task kinds widen the kind CHECK, so the tasks table is rebuilt.
+/// Stored kinds keep their values: `probe` and `decision` keep their meaning
+/// and `work` becomes the legacy kind. Every trigger is dropped first and the
+/// canonical guards are reinstalled after; the caller has turned foreign-key
+/// enforcement off and this step verifies the references before returning.
+fn migrate_v14(tx: &Connection) -> Result<()> {
+    let triggers = tx
+        .prepare("SELECT name FROM sqlite_schema WHERE type='trigger'")?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for trigger in triggers {
+        tx.execute_batch(&format!(
+            "DROP TRIGGER \"{}\";",
+            trigger.replace('"', "\"\"")
+        ))?;
+    }
+    tx.execute_batch(&format!(
+        "DROP VIEW IF EXISTS canonical_events;
+         {table}
+         INSERT INTO tasks_v14 ({TASK_COLUMNS_V14}) SELECT {TASK_COLUMNS_V14} FROM tasks;
+         DROP TABLE tasks;
+         ALTER TABLE tasks_v14 RENAME TO tasks;
+         CREATE INDEX idx_tasks_plan ON tasks(plan_id);",
+        table = tasks_table("tasks_v14")
+    ))?;
+    let violations: i64 =
+        tx.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })?;
+    if violations > 0 {
+        bail!(
+            "the v14 tasks rebuild found {violations} broken foreign-key reference(s); nothing was migrated. Restore a verified export into a fresh database with `papertiger --db <new-path> import <dump>`"
+        );
+    }
+    write_guard::install(tx)
 }
 
 /// Blockers name their `condition`; gates share the blockers' `resolved`
@@ -218,6 +271,16 @@ fn migrate(conn: &Connection, from: i64) -> Result<()> {
     if from == SCHEMA_VERSION {
         return Ok(());
     }
+    // Rebuilding a table that other tables reference needs foreign-key
+    // enforcement off, and SQLite ignores that pragma inside a transaction.
+    conn.pragma_update(None, "foreign_keys", "OFF")?;
+    let migrated = migrate_in_transaction(conn, from);
+    let restored = conn.pragma_update(None, "foreign_keys", "ON");
+    migrated?;
+    Ok(restored?)
+}
+
+fn migrate_in_transaction(conn: &Connection, from: i64) -> Result<()> {
     let tx = begin_mutation(conn)?;
     let mut version = from;
     if version == 1 {
@@ -360,6 +423,10 @@ ALTER TABLE tasks
         tx.execute_batch(SCHEMA_V13_MIGRATION)?;
         write_guard::install(&tx)?;
         version = 13;
+    }
+    if version == 13 {
+        migrate_v14(&tx)?;
+        version = 14;
     }
     if version != SCHEMA_VERSION {
         bail!("no papertiger migration path from schema v{from} to v{SCHEMA_VERSION}");

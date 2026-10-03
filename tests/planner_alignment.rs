@@ -16,7 +16,7 @@ fn task(conn: &rusqlite::Connection, title: &str) -> i64 {
         Some("old"),
         pt::TaskCreation {
             intent: "standalone purpose",
-            ..pt::TaskCreation::new(title)
+            ..pt::TaskCreation::new(title, "feature")
         },
     )
     .unwrap()
@@ -256,7 +256,7 @@ fn relocation_preserves_edges_gate_refusals_cursors_and_scoped_recovery() {
         pt::TaskCreation {
             intent: "child context",
             parent: Some(parent),
-            ..pt::TaskCreation::new("child")
+            ..pt::TaskCreation::new("child", "feature")
         },
     )
     .unwrap();

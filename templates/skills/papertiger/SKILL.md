@@ -44,7 +44,7 @@ to ask permission for requested work.
 
 ```text
 papertiger start <N> --why "Why this work resumes" --json
-papertiger add "Outcome" --plan <slug> --start --intent "Standalone purpose" --intent-source user --why "Why now" --json
+papertiger add "Outcome" --kind <kind> --plan <slug> --start --intent "Standalone purpose" --intent-source user --why "Why now" --json
 papertiger done <N> --result "Outcome and verification" --result-source agent --json
 papertiger decompose <N> --outline-file outline.json --start-ready --json
 ```
@@ -67,8 +67,9 @@ fails after a successful mutation, check with `show`/`log`; never replay it.
 
 Before completion, record any commit that represents the outcome with
 `commit add <N> <full-oid>` (add `--repo <label>` only for a nested or external
-repository). Keep task numbers out of shared Git/PR prose. Probes and decisions
-require results; `done` refuses open obligations. Resolve them with evidence,
+repository). Keep task numbers out of shared Git/PR prose. Choose a kind
+(goal, feature, change, bug, probe, decision, release) for every task; probes,
+decisions and bugs require results; `done` refuses open obligations. Resolve them with evidence,
 never route around a refusal. Run `audit` after planning changes.
 
 Use live `--help` for operations. Read [the reference](../../../tools/papertiger/agent_integration.md)

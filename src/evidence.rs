@@ -491,7 +491,7 @@ fn add_corrective_commands(
                     if let Some(source) = &binding.task_result_source {
                         arguments.extend(["--result-source".into(), source.clone()]);
                     }
-                } else if matches!(binding.task_kind.as_str(), "probe" | "decision") {
+                } else if crate::kind_requires_result(&binding.task_kind) {
                     arguments.extend(["--result".into(), "<durable-outcome>".into()]);
                 }
                 arguments

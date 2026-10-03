@@ -64,19 +64,28 @@ fn decompose_creates_children_edges_and_ready_starts_in_one_receipt() {
     let db = TestDatabase::new("decompose-success");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
-    assert_success(&papertiger(&db.0, &["add", "Finished prerequisite"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Finished prerequisite"],
+    ));
     assert_success(&papertiger(&db.0, &["done", "1"]));
-    assert_success(&papertiger(&db.0, &["add", "Open prerequisite"]));
-    assert_success(&papertiger(&db.0, &["add", "Records outcome"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Open prerequisite"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Records outcome"],
+    ));
     let children = outline(json!([
-        {"key": "persist", "title": "Persist records", "intent": "Records survive restarts",
+        {"key": "persist", "title": "Persist records", "kind": "feature", "intent": "Records survive restarts",
          "intent_source": "agent", "why": "Storage comes first", "deps": [1],
          "tags": ["storage"], "priority": 3},
-        {"key": "serve", "title": "Serve records", "why": "Clients read records",
+        {"key": "serve", "title": "Serve records", "kind": "feature", "why": "Clients read records",
          "deps": ["persist"]},
         {"key": "measure", "title": "Measure record reads", "kind": "probe",
          "deps": [2, "serve"]},
-        {"key": "announce", "title": "Announce records", "why": "Readers need the change"}
+        {"key": "announce", "title": "Announce records", "kind": "feature", "why": "Readers need the change"}
     ]));
     let receipt = json_of(&decompose(
         &db,
@@ -158,7 +167,7 @@ fn decompose_creates_children_edges_and_ready_starts_in_one_receipt() {
     let plain = decompose(
         &db,
         "3",
-        &outline(json!([{"key": "follow", "title": "Follow up on records"}])),
+        &outline(json!([{"key": "follow", "title": "Follow up on records", "kind": "feature"}])),
         &[],
     );
     assert_success(&plain);
@@ -176,7 +185,14 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
     assert_success(&papertiger(&db.0, &["plan", "add", "other", "Other"]));
     assert_success(&papertiger(
         &db.0,
-        &["add", "Retired prerequisite", "--plan", "work"],
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "Retired prerequisite",
+            "--plan",
+            "work",
+        ],
     ));
     assert_success(&papertiger(
         &db.0,
@@ -184,35 +200,49 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
     ));
     assert_success(&papertiger(
         &db.0,
-        &["add", "Grandparent", "--plan", "work"],
+        &["add", "--kind", "feature", "Grandparent", "--plan", "work"],
     ));
     assert_success(&papertiger(
         &db.0,
-        &["add", "Parent", "--plan", "work", "--parent", "2"],
+        &[
+            "add", "--kind", "feature", "Parent", "--plan", "work", "--parent", "2",
+        ],
     ));
-    assert_success(&papertiger(&db.0, &["add", "Foreign", "--plan", "other"]));
     assert_success(&papertiger(
         &db.0,
-        &["add", "Downstream", "--plan", "work", "--dep", "3"],
+        &["add", "--kind", "feature", "Foreign", "--plan", "other"],
+    ));
+    assert_success(&papertiger(
+        &db.0,
+        &[
+            "add",
+            "--kind",
+            "feature",
+            "Downstream",
+            "--plan",
+            "work",
+            "--dep",
+            "3",
+        ],
     ));
     let head = log_head(&db);
     let children = outline(json!([
-        {"key": "a", "title": "First"},
-        {"key": "a", "title": "Second"},
-        {"key": "1bad", "title": "Third"},
-        {"key": "c", "title": " first "},
+        {"key": "a", "title": "First", "kind": "feature"},
+        {"key": "a", "title": "Second", "kind": "feature"},
+        {"key": "1bad", "title": "Third", "kind": "feature"},
+        {"key": "c", "title": " first ", "kind": "feature"},
         {"key": "d", "title": "Fourth", "kind": "chore"},
-        {"key": "e", "title": "Fifth", "intent_source": "agent"},
-        {"key": "f", "title": "Sixth", "deps": ["missing", "#1", 1, 4, 3, 2, 5, "f", 99, true]},
-        {"key": "g", "title": "Seventh", "why": "  "},
-        {"key": "h", "title": "Eighth", "deps": ["i"]},
-        {"key": "i", "title": "Ninth", "deps": ["j"]},
-        {"key": "j", "title": "Tenth", "deps": ["h"]},
-        {"key": "k", "title": ""},
-        {"key": "l", "title": "Eleventh", "intent": "Has an intent", "intent_source": "bot"},
-        {"key": "m", "title": "Twelfth", "tags": ["", "t".repeat(65), "dup", " dup "]},
-        {"key": "n", "title": "Thirteenth", "deps": ["h", "h", 99, 99.0]},
-        {"key": "o", "title": "   "}
+        {"key": "e", "title": "Fifth", "kind": "feature", "intent_source": "agent"},
+        {"key": "f", "title": "Sixth", "kind": "feature", "deps": ["missing", "#1", 1, 4, 3, 2, 5, "f", 99, true]},
+        {"key": "g", "title": "Seventh", "kind": "feature", "why": "  "},
+        {"key": "h", "title": "Eighth", "kind": "feature", "deps": ["i"]},
+        {"key": "i", "title": "Ninth", "kind": "feature", "deps": ["j"]},
+        {"key": "j", "title": "Tenth", "kind": "feature", "deps": ["h"]},
+        {"key": "k", "title": "", "kind": "feature"},
+        {"key": "l", "title": "Eleventh", "kind": "feature", "intent": "Has an intent", "intent_source": "bot"},
+        {"key": "m", "title": "Twelfth", "kind": "feature", "tags": ["", "t".repeat(65), "dup", " dup "]},
+        {"key": "n", "title": "Thirteenth", "kind": "feature", "deps": ["h", "h", 99, 99.0]},
+        {"key": "o", "title": "   ", "kind": "feature"}
     ]));
     let refused = decompose(&db, "3", &children, &["--json"]);
     assert!(!refused.status.success());
@@ -262,23 +292,23 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
             "set \"schema\": \"papertiger.task_outline.v1\"",
         ),
         (
-            outline(json!([{"key": "a", "title": "A", "depends_on": ["b"]}])),
+            outline(json!([{"key": "a", "title": "A", "kind": "feature", "depends_on": ["b"]}])),
             "unknown field `depends_on`",
         ),
         (outline(json!([])), "task outline has no children"),
         ("not json".to_owned(), "task outline is not valid JSON"),
         (
-            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A"}],"children":[{"key":"b","title":"B"}]}"#.to_owned(),
+            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature"}],"children":[{"key":"b","title":"B","kind":"feature"}]}"#.to_owned(),
             "task outline repeats key \"children\" in one object; write each key once",
         ),
         (
-            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","title":"B"}]}"#.to_owned(),
+            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","title":"B","kind":"feature"}]}"#.to_owned(),
             "task outline repeats key \"title\" in one object",
         ),
         (
             outline(Value::Array(
                 (0..257)
-                    .map(|index| json!({"key": format!("k{index}"), "title": format!("Child {index}")}))
+                    .map(|index| json!({"key": format!("k{index}"), "title": format!("Child {index}"), "kind": "feature"}))
                     .collect(),
             )),
             "task outline has 257 children, more than the limit of 256; group them under intermediate children",
@@ -296,7 +326,12 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
             "missing {expected:?} in:\n{message}"
         );
     }
-    let finished_parent = decompose(&db, "1", &outline(json!([{"key": "a", "title": "A"}])), &[]);
+    let finished_parent = decompose(
+        &db,
+        "1",
+        &outline(json!([{"key": "a", "title": "A", "kind": "feature"}])),
+        &[],
+    );
     assert!(!finished_parent.status.success());
     assert!(stderr(&finished_parent).contains(
         "parent #1 is retired; reopen it with `papertiger reopen 1 --why <reason>` before adding live children"
@@ -309,13 +344,18 @@ fn decompose_names_the_plan_step_first_and_reads_outline_files() {
     let db = TestDatabase::new("decompose-plan-and-file");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "closed", "Closed"]));
-    assert_success(&papertiger(&db.0, &["add", "Shipped parent"]));
+    assert_success(&papertiger(
+        &db.0,
+        &["add", "--kind", "feature", "Shipped parent"],
+    ));
     assert_success(&papertiger(&db.0, &["done", "1"]));
     assert_success(&papertiger(
         &db.0,
         &["plan", "set", "closed", "done", "--why", "shipped"],
     ));
-    let children = outline(json!([{"key": "follow", "title": "Follow up", "priority": 2.0}]));
+    let children = outline(
+        json!([{"key": "follow", "title": "Follow up", "kind": "feature", "priority": 2.0}]),
+    );
     let head = log_head(&db);
     let refused = decompose(&db, "1", &children, &[]);
     assert!(!refused.status.success());
@@ -367,10 +407,10 @@ fn decompose_replays_refuse_while_children_are_live_and_starts_require_inputs() 
     let db = TestDatabase::new("decompose-replay");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
-    assert_success(&papertiger(&db.0, &["add", "Parent"]));
+    assert_success(&papertiger(&db.0, &["add", "--kind", "feature", "Parent"]));
     let children = outline(json!([
-        {"key": "model", "title": "Model the data"},
-        {"key": "check", "title": "Check the data", "deps": ["model"]}
+        {"key": "model", "title": "Model the data", "kind": "feature"},
+        {"key": "check", "title": "Check the data", "kind": "feature", "deps": ["model"]}
     ]));
     let applied = json_of(&decompose(&db, "1", &children, &["--json"]));
     assert_eq!(created(&applied)[1].0, 3);
@@ -387,7 +427,7 @@ fn decompose_replays_refuse_while_children_are_live_and_starts_require_inputs() 
     let missing_why = decompose(
         &db,
         "1",
-        &outline(json!([{"key": "ship", "title": "Ship the data"}])),
+        &outline(json!([{"key": "ship", "title": "Ship the data", "kind": "feature"}])),
         &["--start-ready"],
     );
     assert!(!missing_why.status.success());
@@ -407,7 +447,9 @@ fn decompose_replays_refuse_while_children_are_live_and_starts_require_inputs() 
     let paused = decompose(
         &db,
         "1",
-        &outline(json!([{"key": "ship", "title": "Ship the data", "why": "Ready now"}])),
+        &outline(
+            json!([{"key": "ship", "title": "Ship the data", "kind": "feature", "why": "Ready now"}]),
+        ),
         &["--start-ready"],
     );
     assert!(!paused.status.success());
@@ -416,7 +458,7 @@ fn decompose_replays_refuse_while_children_are_live_and_starts_require_inputs() 
     let proposed = json_of(&decompose(
         &db,
         "1",
-        &outline(json!([{"key": "ship", "title": "Ship the data"}])),
+        &outline(json!([{"key": "ship", "title": "Ship the data", "kind": "feature"}])),
         &["--json"],
     ));
     assert_eq!(created(&proposed), [(4, "Ship the data".to_owned())]);

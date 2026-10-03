@@ -1289,7 +1289,7 @@ impl DogfoodFixture {
             plan,
             papertiger::TaskCreation {
                 intent: "Review one exact parent promotion proof",
-                ..papertiger::TaskCreation::new("Authorize exact successor")
+                ..papertiger::TaskCreation::new("Authorize exact successor", "feature")
             },
         )
         .expect("planner task");

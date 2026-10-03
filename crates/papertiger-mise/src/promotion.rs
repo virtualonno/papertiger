@@ -307,7 +307,7 @@ mod tests {
             &conn,
             "test",
             plan,
-            papertiger::TaskCreation::new("Authorize fixture candidate"),
+            papertiger::TaskCreation::new("Authorize fixture candidate", "feature"),
         )
         .expect("fixture task");
         papertiger::add_gate(

@@ -6,9 +6,9 @@ use std::collections::HashSet;
 
 use crate::{
     MEANING_SOURCES, TASK_DEFINITION_REVISION_SCHEMA, TASK_KINDS, begin_mutation, find_cycle,
-    get_task, meaning_source_requires_text, now, plan_status, priority_recovery,
-    record_event_in_mutation, resolve_plan, start_task_in_mutation, task_graph,
-    validate_meaning_source, validate_tag, validate_task_kind, validate_task_title,
+    get_task, kind_requires_result, meaning_source_requires_text, now, plan_status,
+    priority_recovery, record_event_in_mutation, resolve_plan, start_task_in_mutation, task_graph,
+    validate_assignable_task_kind, validate_meaning_source, validate_tag, validate_task_title,
 };
 
 /// Everything a new task records. Start from [`TaskCreation::new`] and set
@@ -28,12 +28,13 @@ pub struct TaskCreation<'a> {
 }
 
 impl<'a> TaskCreation<'a> {
-    pub fn new(title: &'a str) -> Self {
+    /// A proposed task of `kind`; every task's kind is chosen deliberately.
+    pub fn new(title: &'a str, kind: &'a str) -> Self {
         Self {
             title,
             intent: "",
             intent_source: None,
-            kind: "work",
+            kind,
             parent: None,
             deps: &[],
             tags: &[],
@@ -118,7 +119,7 @@ pub(crate) fn add_task_in_mutation(
     priority: i64,
     why: Option<&str>,
 ) -> Result<i64> {
-    validate_task_kind(kind)?;
+    validate_assignable_task_kind(kind)?;
     let intent_source = validate_meaning_source(intent_source)?;
     if !meaning_source_requires_text(Some(intent), intent_source) {
         bail!("--intent-source requires --intent or --intent-file with nonblank stored meaning");
@@ -301,7 +302,7 @@ pub fn edit_task(
         );
     }
     if let Some(kind) = edit.kind {
-        validate_task_kind(kind)?;
+        validate_assignable_task_kind(kind)?;
     }
     let tx = begin_mutation(conn)?;
     if priority_recovery::repair_text_priority(&tx, actor, seq, &edit, why)? {
@@ -471,7 +472,7 @@ pub fn edit_task(
     }
     let edited = get_task(&tx, seq)?;
     if edited.status == "done"
-        && matches!(edited.kind.as_str(), "probe" | "decision")
+        && kind_requires_result(&edited.kind)
         && edited
             .result
             .as_deref()

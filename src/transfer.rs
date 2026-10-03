@@ -28,57 +28,30 @@ pub struct Dump {
     pub mise_projections: Vec<MiseProjectionDump>,
 }
 
-pub const DUMP_SCHEMA: &str = "papertiger.dump.v10";
-const DUMP_SCHEMA_V9: &str = "papertiger.dump.v9";
+pub const DUMP_SCHEMA: &str = "papertiger.dump.v11";
+const DUMP_SCHEMA_V10: &str = "papertiger.dump.v10";
 
 /// Parse an exported dump, accepting the UTF-8 BOM emitted by Windows
 /// PowerShell 5's common `Set-Content -Encoding utf8` workflow. A
-/// `papertiger.dump.v9` document is converted by [`convert_dump_v9`] first.
+/// `papertiger.dump.v10` document is converted by [`convert_dump_v10`] first.
 pub fn parse_dump_json(text: &str) -> Result<Dump> {
     let mut value: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .context("parse papertiger dump")?;
-    if value.get("schema").and_then(serde_json::Value::as_str) == Some(DUMP_SCHEMA_V9) {
-        value = convert_dump_v9(value)?;
+    if value.get("schema").and_then(serde_json::Value::as_str) == Some(DUMP_SCHEMA_V10) {
+        value = convert_dump_v10(value)?;
     }
     serde_json::from_value(value).context("parse papertiger dump")
 }
 
-/// The only legacy dump conversion: v9 named blocker text `reason`, used the
-/// gate status `closed` and its `closed_at` timestamp. Events and Mise
-/// projection documents are historical records and pass through unchanged.
-pub fn convert_dump_v9(mut value: serde_json::Value) -> Result<serde_json::Value> {
-    let invalid = || {
-        anyhow!(
-            "papertiger.dump.v9 is malformed; re-export it with the Papertiger release that produced it"
-        )
-    };
-    if value.get("schema").and_then(serde_json::Value::as_str) != Some(DUMP_SCHEMA_V9) {
-        return Err(invalid());
-    }
-    let tasks = value
-        .get_mut("tasks")
-        .and_then(serde_json::Value::as_array_mut)
-        .ok_or_else(invalid)?;
-    for task in tasks {
-        let task = task.as_object_mut().ok_or_else(invalid)?;
-        if let Some(gates) = task.get_mut("gates") {
-            for gate in gates.as_array_mut().ok_or_else(invalid)? {
-                let gate = gate.as_object_mut().ok_or_else(invalid)?;
-                if gate.get("status").and_then(serde_json::Value::as_str) == Some("closed") {
-                    gate.insert("status".into(), "resolved".into());
-                }
-                if let Some(closed_at) = gate.remove("closed_at") {
-                    gate.insert("resolved_at".into(), closed_at);
-                }
-            }
-        }
-        if let Some(blockers) = task.get_mut("blockers") {
-            for blocker in blockers.as_array_mut().ok_or_else(invalid)? {
-                let blocker = blocker.as_object_mut().ok_or_else(invalid)?;
-                let reason = blocker.remove("reason").ok_or_else(invalid)?;
-                blocker.insert("condition".into(), reason);
-            }
-        }
+/// The only legacy dump conversion. v10 knew the task kinds `work`, `probe`
+/// and `decision`, which v11 stores unchanged (`work` as the legacy kind).
+/// Events and Mise projection documents are historical records and pass
+/// through unchanged.
+pub fn convert_dump_v10(mut value: serde_json::Value) -> Result<serde_json::Value> {
+    if value.get("schema").and_then(serde_json::Value::as_str) != Some(DUMP_SCHEMA_V10) {
+        bail!(
+            "convert_dump_v10 accepts only papertiger.dump.v10; re-export with the Papertiger release that produced the dump"
+        );
     }
     value["schema"] = DUMP_SCHEMA.into();
     Ok(value)
@@ -437,7 +410,7 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
 pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usize)> {
     if dump.schema != DUMP_SCHEMA {
         bail!(
-            "unsupported dump schema '{}'; `papertiger import <file>` reads {DUMP_SCHEMA} and converts {DUMP_SCHEMA_V9}; for older dumps, import into a temporary authority with the Papertiger release that produced it, run current `papertiger --db <temporary-authority> init`, then re-export {DUMP_SCHEMA}",
+            "unsupported dump schema '{}'; `papertiger import <file>` reads {DUMP_SCHEMA} and converts {DUMP_SCHEMA_V10}; for older dumps, import into a temporary authority with the Papertiger release that produced it, run current `papertiger --db <temporary-authority> init`, then re-export {DUMP_SCHEMA}",
             dump.schema
         );
     }

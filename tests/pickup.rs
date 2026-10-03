@@ -15,7 +15,7 @@ fn focus_bounds_narrative_without_losing_pickup_or_real_blockers() {
             plan,
             pt::TaskCreation {
                 intent: &narrative,
-                ..pt::TaskCreation::new(title)
+                ..pt::TaskCreation::new(title, "feature")
             },
         )
         .unwrap()
@@ -67,7 +67,8 @@ fn seed(conn: &Connection) -> (i64, i64, i64) {
     pt::init(conn).unwrap();
     pt::add_plan(conn, "test", "work", "Work", "").unwrap();
     let (plan, _) = pt::resolve_plan(conn, Some("work")).unwrap();
-    let add = |title| pt::add_task(conn, "test", plan, pt::TaskCreation::new(title)).unwrap();
+    let add =
+        |title| pt::add_task(conn, "test", plan, pt::TaskCreation::new(title, "feature")).unwrap();
     (plan, add("First outcome"), add("Second outcome"))
 }
 
@@ -229,7 +230,7 @@ fn migration_preserves_history_without_inventing_session_identity() {
     .unwrap();
     assert!(matches!(
         pt::init(&conn).unwrap(),
-        pt::InitOutcome::Migrated { from: 9, to: 13 }
+        pt::InitOutcome::Migrated { from: 9, to: 14 }
     ));
     assert!(matches!(pt::init(&conn).unwrap(), pt::InitOutcome::Current));
     let task = pt::get_task(&conn, first).unwrap();

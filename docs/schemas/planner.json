@@ -142,9 +142,14 @@
         },
         "kind": {
           "enum": [
-            "work",
+            "goal",
+            "feature",
+            "change",
+            "bug",
             "probe",
-            "decision"
+            "decision",
+            "release",
+            "work"
           ]
         },
         "priority": {
@@ -174,9 +179,14 @@
         },
         "kind": {
           "enum": [
-            "work",
+            "goal",
+            "feature",
+            "change",
+            "bug",
             "probe",
-            "decision"
+            "decision",
+            "release",
+            "work"
           ]
         },
         "priority": {
@@ -1214,7 +1224,7 @@
               "type": "string"
             },
             "schema_version": {
-              "const": 13
+              "const": 14
             },
             "event_head": {
               "anyOf": [
@@ -1393,9 +1403,14 @@
         },
         "kind": {
           "enum": [
-            "work",
+            "goal",
+            "feature",
+            "change",
+            "bug",
             "probe",
-            "decision"
+            "decision",
+            "release",
+            "work"
           ]
         },
         "result": {
@@ -1487,7 +1502,7 @@
       "type": "object",
       "properties": {
         "schema": {
-          "const": "papertiger.dump.v10"
+          "const": "papertiger.dump.v11"
         },
         "plans": {
           "type": "array",
@@ -2426,9 +2441,13 @@
               },
               "kind": {
                 "enum": [
-                  "work",
+                  "goal",
+                  "feature",
+                  "change",
+                  "bug",
                   "probe",
-                  "decision"
+                  "decision",
+                  "release"
                 ]
               },
               "tags": {
@@ -2463,7 +2482,8 @@
             },
             "required": [
               "key",
-              "title"
+              "title",
+              "kind"
             ],
             "additionalProperties": false
           }

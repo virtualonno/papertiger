@@ -1,16 +1,16 @@
 //! Advisory integrity findings over the whole authority.
 
 use anyhow::{Result, anyhow};
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 use serde::Serialize;
 use std::collections::HashMap;
 
 use crate::{
-    MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES, TASK_STATUSES, TaskPickup,
-    external_references, get_task, history_recovery, meaning_source_requires_text, mise_projection,
-    mutation, pickup, plan_move, priority_recovery, task_graph,
-    valid_task_definition_revision_payload, validate_commit_oid, validate_new_evidence_locator,
-    validate_optional_sha256, write_guard,
+    ASSIGNABLE_TASK_KINDS, LEGACY_TASK_KIND, MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES,
+    TASK_STATUSES, TaskPickup, external_references, get_task, history_recovery,
+    meaning_source_requires_text, mise_projection, mutation, pickup, plan_move, priority_recovery,
+    suggested_task_kind, task_graph, valid_task_definition_revision_payload, validate_commit_oid,
+    validate_new_evidence_locator, validate_optional_sha256, write_guard,
 };
 
 #[derive(Serialize)]
@@ -538,7 +538,7 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
 
     let mut st = conn.prepare(
         "SELECT seq, kind FROM tasks
-          WHERE status='done' AND kind IN ('probe','decision')
+          WHERE status='done' AND kind IN ('probe','decision','bug')
             AND (result IS NULL OR trim(result)='')",
     )?;
     let rows: Vec<(i64, String)> = st
@@ -548,6 +548,28 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         push(
             "missing_task_result",
             format!("#{seq} is a completed {kind} without a durable result"),
+        );
+    }
+
+    let mut st = conn.prepare(
+        "SELECT seq, title FROM tasks
+          WHERE kind=?1 AND status IN ('proposed','in_progress')
+          ORDER BY seq",
+    )?;
+    let rows: Vec<(i64, String)> = st
+        .query_map(params![LEGACY_TASK_KIND], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    for (seq, title) in rows {
+        let choice = suggested_task_kind(&title)
+            .map(|kind| format!("{kind} (suggested from the title; confirm it fits the outcome)"))
+            .unwrap_or_else(|| format!("one of {}", ASSIGNABLE_TASK_KINDS.join("|")));
+        push(
+            "legacy_task_kind",
+            format!(
+                "#{seq} is open with the legacy kind '{LEGACY_TASK_KIND}'; run `papertiger edit {seq} --kind <kind> --why <reason>` with {choice}"
+            ),
         );
     }
 

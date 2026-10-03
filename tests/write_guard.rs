@@ -15,7 +15,13 @@ fn authority() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "work", "Work", "Guard history").unwrap();
-    pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Task")).unwrap();
+    pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Task", "feature"),
+    )
+    .unwrap();
     pt::add_note(&conn, "test", Some(1), "canonical history", None).unwrap();
     conn
 }
@@ -155,7 +161,7 @@ fn migration_guards_new_writes_and_preserves_earlier_malformed_rows() {
 
     assert!(matches!(
         pt::init(&conn).unwrap(),
-        pt::InitOutcome::Migrated { from: 10, to: 13 }
+        pt::InitOutcome::Migrated { from: 10, to: 14 }
     ));
     let installed: i64 = conn
         .query_row(
@@ -238,7 +244,13 @@ fn fresh_sqlite_connections_cannot_make_well_formed_writes() {
     let conn = Connection::open(&path).unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "work", "Work", "").unwrap();
-    pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Task")).unwrap();
+    pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Task", "feature"),
+    )
+    .unwrap();
     drop(conn);
     let raw = Connection::open(&path).unwrap();
     for sql in [
@@ -307,7 +319,13 @@ fn guard_drift_blocks_writes_but_never_reads_and_repair_restores_it() {
         let conn = Connection::open(&path).unwrap();
         pt::init(&conn).unwrap();
         let plan = pt::add_plan(&conn, "test", "work", "Work", "Keep").unwrap();
-        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Task")).unwrap();
+        pt::add_task(
+            &conn,
+            "test",
+            plan,
+            pt::TaskCreation::new("Task", "feature"),
+        )
+        .unwrap();
         drop(conn);
         Connection::open(&path)
             .unwrap()
@@ -365,7 +383,13 @@ fn foreign_triggers_are_drift_and_repair_removes_them() {
     let conn = Connection::open(&path).unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "work", "Work", "Keep").unwrap();
-    pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Task")).unwrap();
+    pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Task", "feature"),
+    )
+    .unwrap();
     drop(conn);
     Connection::open(&path)
         .unwrap()

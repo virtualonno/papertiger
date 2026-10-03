@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use crate::task_graph::{WaitGraph, describe_chain, first_cycle, or_remove_dependency};
 use crate::{
     begin_mutation, get_task, meaning_source_requires_text, parse_task_ref, plan_status,
-    validate_meaning_source, validate_tag, validate_task_kind, validate_task_title,
+    validate_assignable_task_kind, validate_meaning_source, validate_tag, validate_task_title,
 };
 
 pub const TASK_OUTLINE_SCHEMA: &str = "papertiger.task_outline.v1";
@@ -43,7 +43,6 @@ pub struct OutlineEntry {
     pub intent_source: Option<String>,
     #[serde(default)]
     pub why: Option<String>,
-    #[serde(default = "default_kind")]
     pub kind: String,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -53,10 +52,6 @@ pub struct OutlineEntry {
     /// Strings name sibling keys; integers name existing task numbers.
     #[serde(default)]
     pub deps: Vec<serde_json::Value>,
-}
-
-fn default_kind() -> String {
-    "work".into()
 }
 
 /// The integer a JSON number denotes, accepting an integral float such as
@@ -297,7 +292,7 @@ pub fn decompose_task(
                 }
             }
         }
-        if let Err(error) = validate_task_kind(&entry.kind) {
+        if let Err(error) = validate_assignable_task_kind(&entry.kind) {
             problems.push(format!("{label}: {error}"));
         }
         match validate_meaning_source(entry.intent_source.as_deref()) {
@@ -545,8 +540,8 @@ mod tests {
     fn repeated_keys_are_refused_at_any_depth() {
         for outline in [
             r#"{"schema":"papertiger.task_outline.v1","schema":"papertiger.task_outline.v1","children":[]}"#,
-            r#"{"schema":"papertiger.task_outline.v1","children":[],"children":[{"key":"a","title":"A"}]}"#,
-            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","title":"B"}]}"#,
+            r#"{"schema":"papertiger.task_outline.v1","children":[],"children":[{"key":"a","title":"A","kind":"feature"}]}"#,
+            r#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","title":"B","kind":"feature"}]}"#,
         ] {
             let error = parse_task_outline(outline.as_bytes())
                 .unwrap_err()
@@ -559,7 +554,7 @@ mod tests {
     #[test]
     fn integral_numbers_are_integers_and_oversized_input_is_refused() {
         let outline = parse_task_outline(
-            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","priority":2.0,"deps":[3.0]}]}"#,
+            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","priority":2.0,"deps":[3.0]}]}"#,
         )
         .unwrap();
         assert_eq!(outline.children[0].priority, 2);
@@ -568,7 +563,7 @@ mod tests {
         };
         assert_eq!(integral(dependency), Some(3));
         let fraction = parse_task_outline(
-            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","priority":2.5}]}"#,
+            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","priority":2.5}]}"#,
         )
         .unwrap_err();
         assert!(format!("{fraction:#}").contains("priority 2.5 is not an integer"));
@@ -587,7 +582,7 @@ mod tests {
             .to_string();
         assert!(wrong.contains("set \"schema\": \"papertiger.task_outline.v1\""));
         let unknown = parse_task_outline(
-            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","depends_on":[]}]}"#,
+            br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","depends_on":[]}]}"#,
         )
         .unwrap_err();
         assert!(format!("{unknown:#}").contains("unknown field `depends_on`"));

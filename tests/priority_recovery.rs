@@ -22,7 +22,7 @@ fn fixture() -> Connection {
         plan,
         pt::TaskCreation {
             intent: "Keep the evidence",
-            ..pt::TaskCreation::new("Recover priority")
+            ..pt::TaskCreation::new("Recover priority", "feature")
         },
     )
     .unwrap();
@@ -163,9 +163,15 @@ fn decompose_reports_an_unreadable_dependency_with_its_corrective_error() {
             r.get::<_, i64>(0)
         })
         .unwrap();
-    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Parent")).unwrap();
+    let parent = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Parent", "feature"),
+    )
+    .unwrap();
     let outline = pt::parse_task_outline(
-        br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","deps":[1]}]}"#,
+        br#"{"schema":"papertiger.task_outline.v1","children":[{"key":"a","title":"A","kind":"feature","deps":[1]}]}"#,
     )
     .unwrap();
     let error = pt::decompose_task(&conn, "test", parent, &outline, false, None)

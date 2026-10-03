@@ -6,6 +6,25 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
+Planner schema v14 and dump format `papertiger.dump.v11`. Run `init`
+deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
+
+### Changed
+
+- Tasks have typed kinds: `goal`, `feature`, `change`, `bug`, `probe`,
+  `decision` and `release`, each with the letter its future handle shows
+  (G, F, C, B, P, D, R). `add --kind` and each outline child's `kind` are now
+  required. `work` remains only on tasks recorded before typed kinds (letter
+  W): it cannot be assigned, migration keeps existing `work`, `probe` and
+  `decision` values unchanged, and `audit` reports each open `work` task as
+  `legacy_task_kind` with a title-based suggestion and the `edit --kind`
+  command that retypes it.
+- Bug tasks, like probes and decisions, require `--result` before `done`.
+- The v14 migration rebuilds the tasks table to widen its kind constraint,
+  reinstalls every write guard, and refuses if a foreign-key reference is
+  broken. Dumps move to `papertiger.dump.v11`; `papertiger.dump.v9` is no
+  longer converted.
+
 ### Fixed
 
 - `tree` counts retired and rejected children as closed: a parent shows

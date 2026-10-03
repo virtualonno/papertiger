@@ -4,8 +4,9 @@ use anyhow::{Result, bail};
 use rusqlite::{Connection, Transaction, params};
 
 use crate::{
-    Task, TaskPickup, begin_mutation, entry_blockers, find_cycle, get_task, now, pickup,
-    plan_status, record_event_in_mutation, task_graph, validate_meaning_source, validate_session,
+    Task, TaskPickup, begin_mutation, entry_blockers, find_cycle, get_task, kind_requires_result,
+    now, pickup, plan_status, record_event_in_mutation, task_graph, validate_meaning_source,
+    validate_session,
 };
 
 pub fn start_task(
@@ -135,7 +136,7 @@ pub fn complete_task(
     if result.is_none() && result_source.is_some() {
         bail!("--result-source requires --result or --result-file with a durable outcome");
     }
-    if matches!(task.kind.as_str(), "probe" | "decision") && result.is_none() {
+    if kind_requires_result(&task.kind) && result.is_none() {
         bail!(
             "completing {} task #{seq} requires --result or --result-file so the measured or selected outcome survives the session",
             task.kind

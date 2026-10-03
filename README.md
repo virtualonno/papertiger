@@ -184,8 +184,12 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
 - `search` ranks literal terms across task titles, tags, intent, results, and
   event rationale. It includes done, retired, and rejected history by default
   and needs no external or separately synchronized index.
-- Probe and decision tasks require `--result` or `--result-file` before they can
-  complete.
+- Every task has a kind chosen when it is created (`add --kind`, or `kind` on
+  each outline child): `goal`, `feature`, `change`, `bug`, `probe`, `decision`
+  or `release`. `work` remains only on tasks recorded before typed kinds and
+  cannot be assigned; `audit` reports open `work` tasks with a suggested kind.
+  Probe, decision and bug tasks require `--result` or `--result-file` before
+  they can complete.
 - `note --text <text>` or `note --text-file <path|->` records a free-standing
   evented note, optionally on one task with `--task <N>`; the two text forms
   are mutually exclusive and one is required.
@@ -403,10 +407,10 @@ overrides with `--project-root`; `evidence verify`, `gate resolve` and
 database can verify or bind `file:` locators beneath the supplied root. Run `init` only when no prior authority should exist; on an
 upgrade, follow a schema refusal's exact migration command deliberately.
 
-The current planner authority schema is v13. Before migrating an older authority,
+The current planner authority schema is v14. Before migrating an older authority,
 use the new release's `--db <source> backup --output <new-path> --json` to create
 a standalone SQLite recovery file, then run `init`. Import reads
-`papertiger.dump.v10` and converts `papertiger.dump.v9`; restore an older dump
+`papertiger.dump.v11` and converts `papertiger.dump.v10`; restore an older dump
 with the release that produced it, migrate that temporary authority, and
 re-export it. Migration never rewrites stored events. Exported pickup context
 remains advisory after recovery; it never becomes a lock. A connection must

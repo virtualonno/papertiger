@@ -5,7 +5,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
 use crate::{
-    MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES, TASK_KINDS, TaskPickup, priority_recovery,
+    ASSIGNABLE_TASK_KINDS, LEGACY_TASK_KIND, MAX_TAG_CHARS, MAX_TASK_TITLE_CHARS, MEANING_SOURCES,
+    TASK_KINDS, TaskPickup, priority_recovery,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +59,7 @@ pub(crate) fn task_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
 
 pub(crate) const TASK_COLS: &str = "task_id, seq, plan_id, parent_id, replacement_task_id, title, intent, intent_source, kind, result, result_source, status, priority, pickup_session, pickup_at";
 
+/// Validate a stored kind, which may be the legacy `work`.
 pub(crate) fn validate_task_kind(kind: &str) -> Result<()> {
     if !TASK_KINDS.contains(&kind) {
         bail!(
@@ -66,6 +68,67 @@ pub(crate) fn validate_task_kind(kind: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Validate a kind being given to a task now; the legacy `work` is refused.
+pub(crate) fn validate_assignable_task_kind(kind: &str) -> Result<()> {
+    if kind == LEGACY_TASK_KIND {
+        bail!(
+            "'{LEGACY_TASK_KIND}' is the legacy kind of tasks recorded before typed kinds and cannot be assigned; choose --kind {}",
+            ASSIGNABLE_TASK_KINDS.join("|")
+        );
+    }
+    if !ASSIGNABLE_TASK_KINDS.contains(&kind) {
+        bail!(
+            "unknown task kind '{kind}'; choose --kind {}",
+            ASSIGNABLE_TASK_KINDS.join("|")
+        );
+    }
+    Ok(())
+}
+
+/// The letter a task handle shows for `kind`, or `None` for an unknown kind.
+pub fn task_kind_letter(kind: &str) -> Option<char> {
+    Some(match kind {
+        "goal" => 'G',
+        "feature" => 'F',
+        "change" => 'C',
+        "bug" => 'B',
+        "probe" => 'P',
+        "decision" => 'D',
+        "release" => 'R',
+        "work" => 'W',
+        _ => return None,
+    })
+}
+
+/// Probes, decisions and bugs record their outcome (the measurement, the
+/// choice, the cause) before they can complete.
+pub fn kind_requires_result(kind: &str) -> bool {
+    matches!(kind, "probe" | "decision" | "bug")
+}
+
+/// A kind suggested by a title's first word, for retyping legacy `work`
+/// tasks. Only a suggestion: the outcome, not the verb, decides the kind.
+pub fn suggested_task_kind(title: &str) -> Option<&'static str> {
+    let first = title
+        .split(|c: char| !c.is_alphanumeric())
+        .find(|word| !word.is_empty())?
+        .to_ascii_lowercase();
+    Some(match first.as_str() {
+        "fix" | "repair" | "correct" | "restore" | "stop" => "bug",
+        "decide" | "choose" | "select" | "ratify" | "settle" => "decision",
+        "probe" | "investigate" | "measure" | "evaluate" | "assess" | "diagnose" | "explore"
+        | "compare" | "qualify" | "prove" | "verify" | "audit" | "review" => "probe",
+        "release" | "publish" | "ship" | "upgrade" | "refresh" | "vendor" | "install" | "roll"
+        | "deploy" | "bump" => "release",
+        "refactor" | "split" | "cut" | "remove" | "rename" | "retire" | "migrate" | "replace"
+        | "simplify" | "harden" | "keep" | "preserve" | "refuse" | "consolidate" | "move"
+        | "drop" | "delete" | "trim" | "align" | "unify" => "change",
+        "add" | "build" | "implement" | "expose" | "support" | "create" | "enable" | "let"
+        | "make" | "introduce" | "provide" | "record" | "show" | "report" => "feature",
+        _ => return None,
+    })
 }
 
 pub fn validate_meaning_source(source: Option<&str>) -> Result<Option<&str>> {

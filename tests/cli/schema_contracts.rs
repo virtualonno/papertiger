@@ -38,6 +38,8 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
     run(&["plan", "add", "destination", "Destination", "--json"]);
     run(&[
         "add",
+        "--kind",
+        "feature",
         "Selected work",
         "--plan",
         "source",
@@ -52,6 +54,8 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
     ]);
     run(&[
         "add",
+        "--kind",
+        "feature",
         "Related work",
         "--plan",
         "source",
@@ -111,7 +115,7 @@ fn emitted_contracts_match_schema_and_reject_malformed_records() {
     ]);
     run(&["export", "--plan", "destination"]);
     let outline = json!({"schema": "papertiger.task_outline.v1", "children": [
-        {"key": "model", "title": "Model outline work", "intent": "Split outline work",
+        {"key": "model", "title": "Model outline work", "kind": "change", "intent": "Split outline work",
          "intent_source": "agent", "why": "exercise the outline receipt", "tags": ["outline"],
          "priority": 1},
         {"key": "check", "title": "Check outline work", "kind": "probe", "deps": ["model", 1]}

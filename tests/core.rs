@@ -23,7 +23,13 @@ fn db() -> rusqlite::Connection {
 fn audit_reports_oversized_terminal_titles_that_would_block_recovery_import() {
     let conn = db();
     let plan = pt::add_plan(&conn, "fixture", "work", "Work", "").unwrap();
-    pt::add_task(&conn, "fixture", plan, pt::TaskCreation::new("Original")).unwrap();
+    pt::add_task(
+        &conn,
+        "fixture",
+        plan,
+        pt::TaskCreation::new("Original", "feature"),
+    )
+    .unwrap();
     // Explicitly admitted disposable fixture represents a legacy terminal task.
     conn.execute(
         "UPDATE tasks SET title=?1,status='retired'",
@@ -245,6 +251,195 @@ UPDATE meta SET value='12' WHERE key='schema_version';
 /// Rewrite a current authority into the exact v12 storage shape: legacy gate
 /// vocabulary, blocker `reason`, and admission triggers calling the retired
 /// function name.
+#[test]
+fn typed_kinds_refuse_legacy_assignment_and_bugs_record_their_cause() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
+    for (kind, expected) in [
+        ("work", "legacy kind of tasks recorded before typed kinds"),
+        ("chore", "unknown task kind 'chore'"),
+    ] {
+        let error = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("Outcome", kind))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{error}");
+        assert!(
+            error.contains("choose --kind goal|feature|change|bug|probe|decision|release"),
+            "{error}"
+        );
+    }
+    let bug = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Crash on empty plan", "bug"),
+    )
+    .unwrap();
+    let retype = |kind| pt::TaskEdit {
+        title: None,
+        intent: None,
+        intent_source: None,
+        parent: None,
+        kind: Some(kind),
+        priority: None,
+    };
+    let error = pt::edit_task(&conn, "test", bug, retype("work"), "reclassify")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("cannot be assigned"), "{error}");
+    let error = pt::complete_task(&conn, "test", bug, None, None)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("completing bug task"), "{error}");
+    pt::complete_task(
+        &conn,
+        "test",
+        bug,
+        Some("Empty plans skipped the guard"),
+        None,
+    )
+    .unwrap();
+    assert_eq!(pt::task_kind_letter("bug"), Some('B'));
+    assert_eq!(pt::task_kind_letter("work"), Some('W'));
+    assert_eq!(pt::task_kind_letter("chore"), None);
+}
+
+/// A v13 tasks table: the narrow kind CHECK and the pickup columns that
+/// migrations appended. `feature` rows become the legacy `work` they would
+/// have been.
+fn downgrade_to_v13(path: &std::path::Path) {
+    let raw = rusqlite::Connection::open(path).unwrap();
+    raw.create_scalar_function(
+        "papertiger_write_requires_public_api",
+        0,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        |_| Ok(1_i64),
+    )
+    .unwrap();
+    raw.pragma_update(None, "foreign_keys", "OFF").unwrap();
+    raw.execute_batch(
+        "CREATE TABLE tasks_v13 (
+           task_id INTEGER PRIMARY KEY,
+           seq INTEGER NOT NULL UNIQUE,
+           plan_id INTEGER NOT NULL REFERENCES plans(plan_id),
+           parent_id INTEGER REFERENCES tasks(task_id),
+           title TEXT NOT NULL,
+           intent TEXT NOT NULL DEFAULT '',
+           kind TEXT NOT NULL DEFAULT 'work' CHECK (kind IN ('work','probe','decision')),
+           result TEXT,
+           status TEXT NOT NULL DEFAULT 'proposed'
+             CHECK (status IN ('proposed','in_progress','done','retired','rejected')),
+           priority INTEGER NOT NULL DEFAULT 0,
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL,
+           replacement_task_id INTEGER REFERENCES tasks(task_id),
+           intent_source TEXT CHECK (intent_source IN ('user','agent','external')),
+           result_source TEXT CHECK (result_source IN ('user','agent','external')),
+           pickup_session TEXT,
+           pickup_at TEXT
+         );
+         INSERT INTO tasks_v13
+           SELECT task_id, seq, plan_id, parent_id, title, intent,
+                  CASE kind WHEN 'feature' THEN 'work' ELSE kind END,
+                  result, status, priority, created_at, updated_at, replacement_task_id,
+                  intent_source, result_source, pickup_session, pickup_at
+             FROM tasks;
+         DROP TABLE tasks;
+         ALTER TABLE tasks_v13 RENAME TO tasks;
+         CREATE INDEX idx_tasks_plan ON tasks(plan_id);
+         UPDATE meta SET value='13' WHERE key='schema_version';",
+    )
+    .unwrap();
+}
+
+#[test]
+fn v14_migration_widens_kinds_keeps_stored_kinds_and_restores_enforcement() {
+    let path = unique_test_path("v14-migration");
+    let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
+    pt::init(&conn).unwrap();
+    let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
+    let parent = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Fix the empty plan crash", "feature"),
+    )
+    .unwrap();
+    let probe = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            parent: Some(parent),
+            ..pt::TaskCreation::new("Measure plan reads", "probe")
+        },
+    )
+    .unwrap();
+    drop(conn);
+    downgrade_to_v13(&path);
+
+    let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
+    assert_eq!(
+        pt::init(&conn).unwrap(),
+        pt::InitOutcome::Migrated { from: 13, to: 14 }
+    );
+    let foreign_keys: i64 = conn
+        .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        foreign_keys, 1,
+        "migration restores foreign-key enforcement"
+    );
+    assert!(pt::verify_write_guards(&conn).is_ok());
+    assert_eq!(pt::get_task(&conn, parent).unwrap().kind, "work");
+    assert_eq!(pt::get_task(&conn, probe).unwrap().kind, "probe");
+    assert_eq!(
+        pt::get_task(&conn, probe).unwrap().parent_id,
+        Some(
+            conn.query_row("SELECT task_id FROM tasks WHERE seq=?1", [parent], |row| {
+                row.get(0)
+            })
+            .unwrap()
+        )
+    );
+    let legacy = pt::audit(&conn)
+        .unwrap()
+        .into_iter()
+        .find(|finding| finding.kind == "legacy_task_kind")
+        .expect("open legacy work is reported");
+    assert!(
+        legacy
+            .detail
+            .contains(&format!("papertiger edit {parent} --kind <kind>"))
+            && legacy.detail.contains("bug (suggested from the title"),
+        "{}",
+        legacy.detail
+    );
+    pt::edit_task(
+        &conn,
+        "test",
+        parent,
+        pt::TaskEdit {
+            title: None,
+            intent: None,
+            intent_source: None,
+            parent: None,
+            kind: Some("bug"),
+            priority: None,
+        },
+        "retype legacy work",
+    )
+    .unwrap();
+    assert!(
+        pt::audit(&conn)
+            .unwrap()
+            .iter()
+            .all(|finding| finding.kind != "legacy_task_kind")
+    );
+    drop(conn);
+    std::fs::remove_file(path).unwrap();
+}
+
 fn downgrade_to_v12(path: &std::path::Path) {
     let raw = rusqlite::Connection::open(path).unwrap();
     for name in [
@@ -297,7 +492,13 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
     let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "p", "P", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("gated")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("gated", "feature"),
+    )
+    .unwrap();
     pt::add_gate(&conn, "test", task, "proof", "test", "tests pass").unwrap();
     pt::add_gate(&conn, "test", task, "doc", "doc", "docs updated").unwrap();
     pt::resolve_gate(&conn, "test", task, "proof", "file:proof.json", None, None).unwrap();
@@ -346,7 +547,7 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
         .output()
         .unwrap();
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("init` explicitly to upgrade to v13")
+        String::from_utf8_lossy(&refused.stderr).contains("init` explicitly to upgrade to v14")
     );
     let init = Command::new(env!("CARGO_BIN_EXE_papertiger"))
         .args(["--db", path.to_str().unwrap(), "init"])
@@ -357,7 +558,7 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
         "{}",
         String::from_utf8_lossy(&init.stderr)
     );
-    assert!(String::from_utf8_lossy(&init.stdout).contains("from schema v12 to v13"));
+    assert!(String::from_utf8_lossy(&init.stdout).contains("from schema v12 to v14"));
 
     let migrated = pt::open_existing(path.to_str().unwrap()).unwrap();
     let context = pt::task_context(&migrated, task).unwrap();
@@ -412,37 +613,28 @@ fn v12_migration_renames_gate_and_blocker_vocabulary_and_reinstalls_admission() 
 }
 
 #[test]
-fn v9_dump_converts_once_to_v10_vocabulary() {
-    let v9 = r#"{"schema":"papertiger.dump.v9","plans":[{"slug":"p","title":"P"}],
-        "tasks":[{"seq":1,"plan":"p","title":"gated","status":"in_progress",
-          "pickup":{"session":null,"at":"2026-08-01T00:00:00Z"},
-          "gates":[{"name":"proof","kind":"test","requirement":"r","status":"closed",
-            "evidence_locator":"file:proof.json","closed_at":"2026-08-02T00:00:00Z"}],
-          "blockers":[{"name":"vendor","reason":"vendor fix released","status":"open",
-            "evidence_locator":null,"evidence_sha256":null,"note":null,"resolved_at":null}]}]}"#;
-    let dump = pt::parse_dump_json(v9).unwrap();
-    assert_eq!(dump.schema, "papertiger.dump.v10");
+fn v10_dump_converts_with_its_kinds_and_v9_is_refused_with_a_recovery_path() {
+    let v10 = r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
+        "tasks":[{"seq":1,"plan":"p","title":"legacy outcome","kind":"work"},
+                 {"seq":2,"plan":"p","title":"measured outcome","kind":"probe"}]}"#;
+    let dump = pt::parse_dump_json(v10).unwrap();
+    assert_eq!(dump.schema, "papertiger.dump.v11");
     let conn = db();
     pt::import(&conn, "test", &dump).unwrap();
-    let context = pt::task_context(&conn, 1).unwrap();
-    assert_eq!(context.gates[0].status, "resolved");
-    assert_eq!(
-        context.gates[0].resolved_at.as_deref(),
-        Some("2026-08-02T00:00:00Z")
-    );
-    assert_eq!(context.blockers[0].condition, "vendor fix released");
+    assert_eq!(pt::get_task(&conn, 1).unwrap().kind, "work");
+    assert_eq!(pt::get_task(&conn, 2).unwrap().kind, "probe");
     assert_eq!(
         pt::export(&conn, None).unwrap().schema,
-        "papertiger.dump.v10"
+        "papertiger.dump.v11"
     );
 
-    let malformed = v9.replace(r#""reason":"vendor fix released","#, "");
-    let error = pt::parse_dump_json(&malformed).err().unwrap().to_string();
-    assert!(error.contains("papertiger.dump.v9 is malformed"), "{error}");
-    let v10_with_legacy_field = v9
-        .replace("papertiger.dump.v9", "papertiger.dump.v10")
-        .replace(r#""status":"closed""#, r#""status":"resolved""#);
-    assert!(pt::parse_dump_json(&v10_with_legacy_field).is_err());
+    let v9 = v10.replace("papertiger.dump.v10", "papertiger.dump.v9");
+    let error = pt::import(&conn, "test", &pt::parse_dump_json(&v9).unwrap())
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("converts papertiger.dump.v10"), "{error}");
+    assert!(pt::convert_dump_v10(serde_json::json!({"schema": "papertiger.dump.v9"})).is_err());
 }
 
 #[test]
@@ -696,7 +888,7 @@ fn typed_authority_identity_is_migrated_and_refuses_mise_databases() {
     let legacy = pt::open_for_init(legacy_path.to_str().unwrap()).unwrap();
     assert_eq!(
         pt::init(&legacy).unwrap(),
-        pt::InitOutcome::Migrated { from: 7, to: 13 }
+        pt::InitOutcome::Migrated { from: 7, to: 14 }
     );
     assert_eq!(
         legacy
@@ -892,7 +1084,13 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
 fn task_lifecycle_and_gate_honesty_rule() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let seq = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("build thing")).unwrap();
+    let seq = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("build thing", "feature"),
+    )
+    .unwrap();
     assert_eq!(seq, 1);
     pt::add_gate(&conn, "test", seq, "smoke", "test", "smoke test passes").unwrap();
     pt::start_task(&conn, "test", seq, None, None).unwrap();
@@ -920,7 +1118,7 @@ fn task_lifecycle_and_gate_honesty_rule() {
 fn waive_requires_why_via_retire_reject_paths() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let seq = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("t")).unwrap();
+    let seq = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("t", "feature")).unwrap();
     assert!(pt::retire_task(&conn, "test", seq, None, "").is_err());
     assert!(pt::reject_task(&conn, "test", seq, "").is_err());
     pt::reject_task(&conn, "test", seq, "approach disproven").unwrap();
@@ -930,14 +1128,20 @@ fn waive_requires_why_via_retire_reject_paths() {
 fn audit_reports_stored_dependency_deadlocks_with_their_removals() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("parent")).unwrap();
+    let parent = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("parent", "feature"),
+    )
+    .unwrap();
     let child = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             parent: Some(parent),
-            ..pt::TaskCreation::new("child")
+            ..pt::TaskCreation::new("child", "feature")
         },
     )
     .unwrap();
@@ -947,7 +1151,7 @@ fn audit_reports_stored_dependency_deadlocks_with_their_removals() {
         plan,
         pt::TaskCreation {
             deps: &[parent],
-            ..pt::TaskCreation::new("downstream")
+            ..pt::TaskCreation::new("downstream", "feature")
         },
     )
     .unwrap();
@@ -985,14 +1189,14 @@ fn audit_reports_stored_dependency_deadlocks_with_their_removals() {
 fn dependency_cycles_rejected_and_readiness_derived() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let a = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("a")).unwrap();
+    let a = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("a", "feature")).unwrap();
     let b = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             deps: &[a],
-            ..pt::TaskCreation::new("b")
+            ..pt::TaskCreation::new("b", "feature")
         },
     )
     .unwrap();
@@ -1003,7 +1207,7 @@ fn dependency_cycles_rejected_and_readiness_derived() {
         pt::TaskCreation {
             deps: &[b],
             priority: 5,
-            ..pt::TaskCreation::new("c")
+            ..pt::TaskCreation::new("c", "feature")
         },
     )
     .unwrap();
@@ -1032,14 +1236,14 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
     let other_plan = pt::add_plan(&conn, "test", "other", "Other", "").unwrap();
-    let a = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("a")).unwrap();
+    let a = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("a", "feature")).unwrap();
     let b = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             deps: &[a],
-            ..pt::TaskCreation::new("b")
+            ..pt::TaskCreation::new("b", "feature")
         },
     )
     .unwrap();
@@ -1049,11 +1253,17 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
         plan,
         pt::TaskCreation {
             deps: &[b],
-            ..pt::TaskCreation::new("c")
+            ..pt::TaskCreation::new("c", "feature")
         },
     )
     .unwrap();
-    let other = pt::add_task(&conn, "test", other_plan, pt::TaskCreation::new("other")).unwrap();
+    let other = pt::add_task(
+        &conn,
+        "test",
+        other_plan,
+        pt::TaskCreation::new("other", "feature"),
+    )
+    .unwrap();
 
     assert_exact_error(
         pt::add_dep(&conn, "test", a, a, "self dependency"),
@@ -1105,15 +1315,20 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
 fn lifecycle_refusals_have_exact_corrective_messages() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let dependency =
-        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("dependency")).unwrap();
+    let dependency = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("dependency", "feature"),
+    )
+    .unwrap();
     let blocked = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             deps: &[dependency],
-            ..pt::TaskCreation::new("blocked")
+            ..pt::TaskCreation::new("blocked", "feature")
         },
     )
     .unwrap();
@@ -1148,7 +1363,7 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
         plan,
         pt::TaskCreation {
             kind: "decision",
-            ..pt::TaskCreation::new("decision")
+            ..pt::TaskCreation::new("decision", "feature")
         },
     )
     .unwrap();
@@ -1182,7 +1397,13 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
 fn gate_and_blocker_refusals_and_reopen_paths_are_exact_and_evented() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
 
     assert_exact_error(
         pt::add_gate(&conn, "test", task, "proof", "invalid", "requirement"),
@@ -1259,7 +1480,13 @@ fn evidence_verifier_classifies_unhashed_missing_escaping_and_unsupported_bindin
     std::fs::write(root.join("docs/proof.txt"), b"proof\n").unwrap();
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     for (name, locator) in [
         ("unhashed", "file:docs/proof.txt"),
         ("missing", "file:docs/missing.txt"),
@@ -1323,7 +1550,7 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
             &conn,
             "test",
             plan,
-            pt::TaskCreation::new(&format!("task-{index:02}")),
+            pt::TaskCreation::new(&format!("task-{index:02}"), "feature"),
         )
         .unwrap();
         let (name, locator, sha256) = match index % 3 {
@@ -1447,14 +1674,14 @@ fn evidence_verifier_pages_mixed_authority_details_with_scope_bound_cursors() {
 fn priority_orders_ready_queue() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let low = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("low")).unwrap();
+    let low = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("low", "feature")).unwrap();
     let high = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             priority: 9,
-            ..pt::TaskCreation::new("high")
+            ..pt::TaskCreation::new("high", "feature")
         },
     )
     .unwrap();
@@ -1469,7 +1696,13 @@ fn priority_orders_ready_queue() {
 fn ready_limit_applies_to_the_whole_result() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let blocker = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("blocker")).unwrap();
+    let blocker = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("blocker", "feature"),
+    )
+    .unwrap();
     for title in ["ready-a", "ready-b"] {
         pt::add_task(
             &conn,
@@ -1477,7 +1710,7 @@ fn ready_limit_applies_to_the_whole_result() {
             plan,
             pt::TaskCreation {
                 priority: 1,
-                ..pt::TaskCreation::new(title)
+                ..pt::TaskCreation::new(title, "feature")
             },
         )
         .unwrap();
@@ -1489,7 +1722,7 @@ fn ready_limit_applies_to_the_whole_result() {
             plan,
             pt::TaskCreation {
                 deps: &[blocker],
-                ..pt::TaskCreation::new(title)
+                ..pt::TaskCreation::new(title, "feature")
             },
         )
         .unwrap();
@@ -1518,14 +1751,20 @@ fn ready_limit_applies_to_the_whole_result() {
 fn audit_flags_dead_deps_and_lagging_parents() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let dead = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("dead")).unwrap();
+    let dead = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("dead", "feature"),
+    )
+    .unwrap();
     let live = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             deps: &[dead],
-            ..pt::TaskCreation::new("live")
+            ..pt::TaskCreation::new("live", "feature")
         },
     )
     .unwrap();
@@ -1535,14 +1774,20 @@ fn audit_flags_dead_deps_and_lagging_parents() {
         ready.iter().all(|entry| entry.task.seq != live),
         "a rejected prerequisite must keep its consumer blocked"
     );
-    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("milestone")).unwrap();
+    let parent = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("milestone", "feature"),
+    )
+    .unwrap();
     let child = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             parent: Some(parent),
-            ..pt::TaskCreation::new("child")
+            ..pt::TaskCreation::new("child", "feature")
         },
     )
     .unwrap();
@@ -1567,7 +1812,7 @@ fn export_import_roundtrip_preserves_graph() {
             tags: &["track:x".into()],
             priority: 2,
             why: Some("roundtrip fixture"),
-            ..pt::TaskCreation::new("a")
+            ..pt::TaskCreation::new("a", "feature")
         },
     )
     .unwrap();
@@ -1577,7 +1822,7 @@ fn export_import_roundtrip_preserves_graph() {
         plan,
         pt::TaskCreation {
             deps: &[a],
-            ..pt::TaskCreation::new("b")
+            ..pt::TaskCreation::new("b", "feature")
         },
     )
     .unwrap();
@@ -1610,17 +1855,17 @@ fn export_import_roundtrip_preserves_graph() {
 #[test]
 fn dump_parser_accepts_windows_utf8_bom() {
     let dump = pt::parse_dump_json(
-        "\u{feff}{\"schema\":\"papertiger.dump.v10\",\"plans\":[],\"tasks\":[]}",
+        "\u{feff}{\"schema\":\"papertiger.dump.v11\",\"plans\":[],\"tasks\":[]}",
     )
     .unwrap();
-    assert_eq!(dump.schema, "papertiger.dump.v10");
+    assert_eq!(dump.schema, "papertiger.dump.v11");
 }
 
 #[test]
 fn import_refuses_resolved_gate_without_evidence() {
     let conn = db();
     let dump: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v10",
+        r#"{"schema":"papertiger.dump.v11",
             "plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"t","status":"done",
                       "gates":[{"name":"g","kind":"test","requirement":"r","status":"resolved"}]}]}"#,
@@ -1635,7 +1880,7 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
     for (fixture, expected) in [
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task",
                     "result":"  ","result_source":"agent"}]
@@ -1644,7 +1889,7 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","gates":[{
                     "name":"proof","kind":"test","requirement":"prove it",
@@ -1656,7 +1901,7 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -1669,7 +1914,7 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -1696,9 +1941,9 @@ fn import_reuses_live_validators_and_never_creates_auditable_corruption() {
     let normalized = db();
     let dump: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v10",
+            "schema":"papertiger.dump.v11",
             "plans":[{"slug":"p","title":"P"}],
-            "tasks":[{"seq":1,"plan":"p","title":"task","intent":"asked",
+            "tasks":[{"seq":1,"plan":"p","title":"task","kind":"feature","intent":"asked",
                 "intent_source":" user ","tags":[" alpha "]}]
         }"#,
     )
@@ -1726,7 +1971,7 @@ fn import_plan_events_are_dump_local_and_plan_reuse_requires_identical_definitio
     .unwrap();
     let external_event: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v10",
+            "schema":"papertiger.dump.v11",
             "plans":[{"slug":"incoming","title":"Incoming"}],
             "tasks":[],
             "events":[{
@@ -1745,7 +1990,7 @@ fn import_plan_events_are_dump_local_and_plan_reuse_requires_identical_definitio
 
     let conflicting: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v10",
+            "schema":"papertiger.dump.v11",
             "plans":[{"slug":"existing","title":"Different",
                 "intent":"destination definition"}],
             "tasks":[]
@@ -1768,21 +2013,27 @@ fn import_refuses_superseded_dump_with_a_complete_recovery_path() {
     let error = pt::import(&conn, "test", &dump).unwrap_err().to_string();
     assert!(error.contains("release that produced it"));
     assert!(error.contains("papertiger --db <temporary-authority> init"));
-    assert!(error.contains("then re-export papertiger.dump.v10"));
+    assert!(error.contains("then re-export papertiger.dump.v11"));
 }
 
 #[test]
 fn container_tasks_never_enter_ready_queue() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("milestone")).unwrap();
+    let parent = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("milestone", "feature"),
+    )
+    .unwrap();
     let child = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             parent: Some(parent),
-            ..pt::TaskCreation::new("child")
+            ..pt::TaskCreation::new("child", "feature")
         },
     )
     .unwrap();
@@ -1897,7 +2148,13 @@ fn task_references_are_canonical_sequences_only() {
 fn failed_add_is_atomic() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let existing = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("existing")).unwrap();
+    let existing = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("existing", "feature"),
+    )
+    .unwrap();
     let before_events: i64 = conn
         .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
         .unwrap();
@@ -1907,7 +2164,7 @@ fn failed_add_is_atomic() {
         plan,
         pt::TaskCreation {
             deps: &[existing, 999],
-            ..pt::TaskCreation::new("must roll back")
+            ..pt::TaskCreation::new("must roll back", "feature")
         },
     )
     .unwrap_err();
@@ -1926,7 +2183,7 @@ fn failed_add_is_atomic() {
 fn import_rejects_cycles_missing_parents_and_done_open_gates() {
     let conn = db();
     let cycle: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v11","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"a","deps":[2]},
                      {"seq":2,"plan":"p","title":"b","deps":[1]}]}"#,
     )
@@ -1934,14 +2191,14 @@ fn import_rejects_cycles_missing_parents_and_done_open_gates() {
     assert!(pt::import(&conn, "test", &cycle).is_err());
 
     let missing_parent: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v11","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":3,"plan":"p","title":"child","parent_seq":999}]}"#,
     )
     .unwrap();
     assert!(pt::import(&conn, "test", &missing_parent).is_err());
 
     let done_open: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v11","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":4,"plan":"p","title":"false done","status":"done",
                       "gates":[{"name":"g","kind":"test","requirement":"r"}]}]}"#,
     )
@@ -1958,7 +2215,7 @@ fn import_rejects_cycles_missing_parents_and_done_open_gates() {
 fn import_allocates_omitted_sequences_before_linking() {
     let conn = db();
     let dump: pt::Dump = serde_json::from_str(
-        r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],
+        r#"{"schema":"papertiger.dump.v11","plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":7,"plan":"p","title":"parent"},
                      {"plan":"p","title":"child","parent_seq":7,"deps":[7]}]}"#,
     )
@@ -1973,7 +2230,13 @@ fn import_allocates_omitted_sequences_before_linking() {
 fn evidence_and_waiver_reasons_are_durable() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     pt::add_gate(&conn, "test", task, "g", "test", "r").unwrap();
     let bad = pt::resolve_gate(
         &conn,
@@ -2027,7 +2290,7 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
         plan,
         pt::TaskCreation {
             priority: 100,
-            ..pt::TaskCreation::new("container")
+            ..pt::TaskCreation::new("container", "feature")
         },
     )
     .unwrap();
@@ -2037,19 +2300,24 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
         plan,
         pt::TaskCreation {
             parent: Some(container),
-            ..pt::TaskCreation::new("active leaf")
+            ..pt::TaskCreation::new("active leaf", "feature")
         },
     )
     .unwrap();
-    let prerequisite =
-        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("prerequisite")).unwrap();
+    let prerequisite = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("prerequisite", "feature"),
+    )
+    .unwrap();
     let independent = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             priority: 50,
-            ..pt::TaskCreation::new("independent")
+            ..pt::TaskCreation::new("independent", "feature")
         },
     )
     .unwrap();
@@ -2059,7 +2327,7 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
         plan,
         pt::TaskCreation {
             deps: &[prerequisite],
-            ..pt::TaskCreation::new("dependent")
+            ..pt::TaskCreation::new("dependent", "feature")
         },
     )
     .unwrap();
@@ -2069,7 +2337,7 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
         plan,
         pt::TaskCreation {
             deps: &[dependent],
-            ..pt::TaskCreation::new("downstream")
+            ..pt::TaskCreation::new("downstream", "feature")
         },
     )
     .unwrap();
@@ -2116,7 +2384,13 @@ fn focus_excludes_containers_and_honors_priority_before_unlock_impact() {
 fn tags_and_mistaken_open_gates_are_correctable_with_evented_reasons() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "corrections", "Corrections", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     pt::add_tag(
         &conn,
         "test",
@@ -2162,7 +2436,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
         &conn,
         "test",
         plan,
-        pt::TaskCreation::new("collect evidence"),
+        pt::TaskCreation::new("collect evidence", "feature"),
     )
     .unwrap();
     let decision = pt::add_task(
@@ -2173,7 +2447,7 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
             kind: "decision",
             deps: &[prerequisite],
             priority: 5,
-            ..pt::TaskCreation::new("select design")
+            ..pt::TaskCreation::new("select design", "feature")
         },
     )
     .unwrap();
@@ -2239,7 +2513,13 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
 fn a_discovered_blocker_on_active_work_is_first_class_not_an_audit_error() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "active-blocker", "Active blocker", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("implement")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("implement", "feature"),
+    )
+    .unwrap();
     pt::start_task(&conn, "test", task, None, None).unwrap();
     pt::add_blocker(
         &conn,
@@ -2282,7 +2562,7 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
         plan,
         pt::TaskCreation {
             kind: "probe",
-            ..pt::TaskCreation::new("measure behavior")
+            ..pt::TaskCreation::new("measure behavior", "feature")
         },
     )
     .unwrap();
@@ -2349,14 +2629,20 @@ fn reopening_preserves_valid_gate_evidence_until_the_gate_is_explicitly_reopened
 fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "truth", "Truth", "").unwrap();
-    let parent = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("outcome")).unwrap();
+    let parent = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("outcome", "feature"),
+    )
+    .unwrap();
     let child = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             parent: Some(parent),
-            ..pt::TaskCreation::new("deliverable")
+            ..pt::TaskCreation::new("deliverable", "feature")
         },
     )
     .unwrap();
@@ -2369,7 +2655,7 @@ fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
             plan,
             pt::TaskCreation {
                 parent: Some(parent),
-                ..pt::TaskCreation::new("late child")
+                ..pt::TaskCreation::new("late child", "feature")
             }
         )
         .is_err()
@@ -2387,15 +2673,20 @@ fn parent_dependency_and_plan_transitions_preserve_terminal_truth() {
     .unwrap();
     pt::reopen_task(&conn, "test", child, "the deliverable needs revision").unwrap();
 
-    let prerequisite =
-        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("prerequisite")).unwrap();
+    let prerequisite = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("prerequisite", "feature"),
+    )
+    .unwrap();
     let dependent = pt::add_task(
         &conn,
         "test",
         plan,
         pt::TaskCreation {
             deps: &[prerequisite],
-            ..pt::TaskCreation::new("dependent")
+            ..pt::TaskCreation::new("dependent", "feature")
         },
     )
     .unwrap();
@@ -2434,7 +2725,7 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
             tags: &["architecture".into()],
             priority: 7,
             why: Some("decision fixture"),
-            ..pt::TaskCreation::new("choose engine")
+            ..pt::TaskCreation::new("choose engine", "feature")
         },
     )
     .unwrap();
@@ -2466,7 +2757,7 @@ fn current_export_import_preserves_task_kind_result_blocker_and_mise_evidence() 
     .unwrap();
 
     let dump = pt::export(&conn, Some("roundtrip-v2")).unwrap();
-    assert_eq!(dump.schema, "papertiger.dump.v10");
+    assert_eq!(dump.schema, "papertiger.dump.v11");
     let restored = db();
     pt::import(&restored, "test", &dump).unwrap();
     let restored_task = pt::get_task(&restored, task).unwrap();
@@ -2564,8 +2855,20 @@ fn mise_projection_fixture() -> pt::MisePlannerProjection {
 fn mise_projection_is_immutable_idempotent_non_authoritative_and_transferable() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "projection", "Projection", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("own evidence")).unwrap();
-    let other = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("unrelated")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("own evidence", "feature"),
+    )
+    .unwrap();
+    let other = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("unrelated", "feature"),
+    )
+    .unwrap();
     let bytes = serde_json::to_vec_pretty(&mise_projection_fixture()).unwrap();
 
     let (outcome, record) = pt::record_mise_projection(&conn, "test", task, &bytes).unwrap();
@@ -2609,7 +2912,13 @@ fn legacy_mise_projection_id_is_readable_history_but_not_recordable() {
     let legacy = legacy_mise_projection_fixture();
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "projection", "Projection", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("evidence")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("evidence", "feature"),
+    )
+    .unwrap();
     let error =
         pt::record_mise_projection(&conn, "test", task, &serde_json::to_vec(&legacy).unwrap())
             .unwrap_err()
@@ -2639,7 +2948,13 @@ fn legacy_mise_projection_id_is_readable_history_but_not_recordable() {
 fn task_context_includes_gate_waiver_and_reopen_history() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "gate-history", "Gate history", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     pt::add_gate(&conn, "test", task, "proof", "test", "must pass").unwrap();
     pt::waive_gate(&conn, "test", task, "proof", "fixture unavailable").unwrap();
     pt::reopen_gate(&conn, "test", task, "proof", "fixture restored").unwrap();
@@ -2662,7 +2977,13 @@ fn task_context_includes_gate_waiver_and_reopen_history() {
 fn task_context_reports_event_truncation_instead_of_hiding_it() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "event-page", "Event page", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     for index in 0..12 {
         pt::add_note(&conn, "test", Some(task), &format!("note {index}"), None)
             .expect("record task note");
@@ -2685,7 +3006,7 @@ fn canonical_task_queries_cover_status_tag_and_leaf_filters() {
         pt::TaskCreation {
             tags: &["selected".to_owned()],
             priority: 10,
-            ..pt::TaskCreation::new("parent")
+            ..pt::TaskCreation::new("parent", "feature")
         },
     )
     .unwrap();
@@ -2697,7 +3018,7 @@ fn canonical_task_queries_cover_status_tag_and_leaf_filters() {
             parent: Some(parent),
             tags: &["selected".to_owned()],
             priority: 20,
-            ..pt::TaskCreation::new("child")
+            ..pt::TaskCreation::new("child", "feature")
         },
     )
     .unwrap();
@@ -2721,7 +3042,13 @@ fn canonical_task_queries_cover_status_tag_and_leaf_filters() {
 fn removed_gate_events_survive_export_import_without_recreating_the_gate() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "removed-gate", "Removed gate", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     pt::add_gate(&conn, "test", task, "mistake", "review", "wrong gate").unwrap();
     pt::remove_gate(&conn, "test", task, "mistake", "attached by mistake").unwrap();
 
@@ -2779,7 +3106,13 @@ fn import_refuses_non_rfc3339_event_timestamps() {
 fn import_canonicalizes_event_timestamps_and_preserves_lifecycle_history() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "timestamps", "Timestamps", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     pt::start_task(&conn, "agent", task, Some("begin"), None).unwrap();
     pt::complete_task(&conn, "agent", task, None, None).unwrap();
     let expected = pt::task_activity(&conn, task).unwrap();
@@ -2809,7 +3142,13 @@ fn import_canonicalizes_event_timestamps_and_preserves_lifecycle_history() {
 fn terminal_gate_and_blocker_timestamps_roundtrip_without_import_fiction() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "receipts", "Receipts", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     pt::add_gate(&conn, "agent", task, "proof", "test", "prove it").unwrap();
     pt::resolve_gate(
         &conn,
@@ -2856,7 +3195,7 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
     for (fixture, expected) in [
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","gates":[{
                     "name":"proof","kind":"test","requirement":"prove it",
@@ -2867,7 +3206,7 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","gates":[{
                     "name":"proof","kind":"test","requirement":"prove it",
@@ -2878,7 +3217,7 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","blockers":[{
                     "name":"receipt","condition":"missing","status":"resolved",
@@ -2889,7 +3228,7 @@ fn import_refuses_missing_invalid_or_stray_terminal_timestamps_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task","blockers":[{
                     "name":"receipt","condition":"missing","status":"waived","note":"not needed"
@@ -2914,7 +3253,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
     for (fixture, expected) in [
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -2929,7 +3268,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"},{"slug":"q","title":"Q"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -2945,7 +3284,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
         ),
         (
             r#"{
-                "schema":"papertiger.dump.v10",
+                "schema":"papertiger.dump.v11",
                 "plans":[{"slug":"p","title":"P"},{"slug":"q","title":"Q"}],
                 "tasks":[{"seq":1,"plan":"p","title":"task"}],
                 "events":[{
@@ -2976,7 +3315,7 @@ fn import_refuses_unstable_or_cross_plan_task_event_identity_atomically() {
 fn import_refuses_invalid_task_status_event_targets_atomically() {
     let dump: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v10",
+            "schema":"papertiger.dump.v11",
             "plans":[{"slug":"p","title":"P"}],
             "tasks":[{"seq":1,"plan":"p","title":"task"}],
             "events":[{
@@ -3013,14 +3352,14 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
         &destination,
         "test",
         existing_plan,
-        pt::TaskCreation::new("existing task"),
+        pt::TaskCreation::new("existing task", "feature"),
     )
     .unwrap();
     assert_eq!(existing_task, 1);
 
     let external_event: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v10",
+            "schema":"papertiger.dump.v11",
             "plans":[{"slug":"incoming","title":"Incoming"}],
             "tasks":[{"seq":2,"plan":"incoming","title":"imported task"}],
             "events":[{
@@ -3052,7 +3391,7 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
 
     let collision: pt::Dump = serde_json::from_str(
         r#"{
-            "schema":"papertiger.dump.v10",
+            "schema":"papertiger.dump.v11",
             "plans":[{"slug":"incoming","title":"Incoming"}],
             "tasks":[{"seq":1,"plan":"incoming","title":"colliding task"}]
         }"#,
@@ -3071,7 +3410,13 @@ fn import_refuses_dump_external_event_tasks_and_names_sequence_collisions() {
 fn commit_associations_are_exact_evented_reversible_and_transferable() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "commit_associations", "Commits", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("implement")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("implement", "feature"),
+    )
+    .unwrap();
     let oid = "a".repeat(40);
     let record = pt::add_commit_association(
         &conn,
@@ -3140,8 +3485,20 @@ fn commit_associations_are_exact_evented_reversible_and_transferable() {
 fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "time", "Time", "").unwrap();
-    let first = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("first")).unwrap();
-    let second = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("second")).unwrap();
+    let first = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("first", "feature"),
+    )
+    .unwrap();
+    let second = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("second", "feature"),
+    )
+    .unwrap();
     pt::start_task(&conn, "agent", first, Some("begin"), None).unwrap();
     pt::add_note(&conn, "agent", Some(first), "latest evidence", None).unwrap();
     let ordered = pt::list_tasks_by_activity(&conn, plan, None, None).unwrap();
@@ -3207,7 +3564,13 @@ fn lifecycle_activity_follows_event_authority_and_activity_sorting() {
 fn commit_evidence_requires_full_oid_while_audit_finds_noncanonical_values() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "evidence", "Evidence", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     pt::add_gate(&conn, "agent", task, "proof", "review", "commit proof").unwrap();
     let error =
         pt::resolve_gate(&conn, "agent", task, "proof", "commit:abc1234", None, None).unwrap_err();
@@ -3227,8 +3590,20 @@ fn commit_evidence_requires_full_oid_while_audit_finds_noncanonical_values() {
 fn audit_reports_corrupt_commit_association_identity_and_timestamp_fields() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "commits", "Commits", "").unwrap();
-    let first = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("first")).unwrap();
-    let second = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("second")).unwrap();
+    let first = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("first", "feature"),
+    )
+    .unwrap();
+    let second = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("second", "feature"),
+    )
+    .unwrap();
     let first_oid = "a".repeat(40);
     let second_oid = "b".repeat(40);
     pt::add_commit_association(&conn, "agent", first, "crates/widget", &first_oid, None).unwrap();
@@ -3265,7 +3640,13 @@ fn audit_reports_corrupt_commit_association_identity_and_timestamp_fields() {
 fn audit_reports_invalid_event_time_status_target_and_payload_corruption() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "history", "History", "").unwrap();
-    let task = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("task")).unwrap();
+    let task = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("task", "feature"),
+    )
+    .unwrap();
     pt::start_task(&conn, "agent", task, Some("begin"), None).unwrap();
     // Model history corrupted before schema v11 refused malformed events.
     conn.execute_batch("DROP TRIGGER events_append_only_update;")
@@ -3311,28 +3692,55 @@ fn retirement_replacements_are_same_plan_evented_and_cycle_safe() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "main", "Main", "").unwrap();
     let other_plan = pt::add_plan(&conn, "test", "other", "Other", "").unwrap();
-    let duplicate = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("duplicate")).unwrap();
-    let canonical = pt::add_task(&conn, "test", plan, pt::TaskCreation::new("canonical")).unwrap();
+    let duplicate = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("duplicate", "feature"),
+    )
+    .unwrap();
+    let canonical = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("canonical", "feature"),
+    )
+    .unwrap();
     let other = pt::add_task(
         &conn,
         "test",
         other_plan,
-        pt::TaskCreation::new("other-plan task"),
+        pt::TaskCreation::new("other-plan task", "feature"),
     )
     .unwrap();
-    let retired_target =
-        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("retired target")).unwrap();
+    let retired_target = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("retired target", "feature"),
+    )
+    .unwrap();
     let rejected_target = pt::add_task(
         &conn,
         "test",
         plan,
-        pt::TaskCreation::new("rejected target"),
+        pt::TaskCreation::new("rejected target", "feature"),
     )
     .unwrap();
-    let final_target =
-        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("final target")).unwrap();
-    let cycle_target =
-        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("cycle target")).unwrap();
+    let final_target = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("final target", "feature"),
+    )
+    .unwrap();
+    let cycle_target = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("cycle target", "feature"),
+    )
+    .unwrap();
     pt::retire_task(&conn, "test", retired_target, None, "no longer canonical").unwrap();
     pt::reject_task(&conn, "test", rejected_target, "disproven approach").unwrap();
 
@@ -3467,15 +3875,25 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
     for plan_scope in [true, false] {
         let conn = db();
         let plan = pt::add_plan(&conn, "test", "main", "Main", "").unwrap();
-        let duplicate =
-            pt::add_task(&conn, "test", plan, pt::TaskCreation::new("duplicate")).unwrap();
-        let canonical =
-            pt::add_task(&conn, "test", plan, pt::TaskCreation::new("canonical")).unwrap();
+        let duplicate = pt::add_task(
+            &conn,
+            "test",
+            plan,
+            pt::TaskCreation::new("duplicate", "feature"),
+        )
+        .unwrap();
+        let canonical = pt::add_task(
+            &conn,
+            "test",
+            plan,
+            pt::TaskCreation::new("canonical", "feature"),
+        )
+        .unwrap();
         let final_target = pt::add_task(
             &conn,
             "test",
             plan,
-            pt::TaskCreation::new("final canonical task"),
+            pt::TaskCreation::new("final canonical task", "feature"),
         )
         .unwrap();
         pt::retire_task(
@@ -3496,7 +3914,7 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
         .unwrap();
 
         let dump = pt::export(&conn, plan_scope.then_some("main")).unwrap();
-        assert_eq!(dump.schema, "papertiger.dump.v10");
+        assert_eq!(dump.schema, "papertiger.dump.v11");
         let duplicate_dump = dump
             .tasks
             .iter()
@@ -3546,23 +3964,23 @@ fn replacement_roundtrips_in_plan_and_full_dumps() {
 fn import_refuses_invalid_replacement_graphs_atomically() {
     for (fixture, expected) in [
         (
-            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"live","replacement_seq":2},{"seq":2,"plan":"p","title":"target"}]}"#,
+            r#"{"schema":"papertiger.dump.v11","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"live","replacement_seq":2},{"seq":2,"plan":"p","title":"target"}]}"#,
             "is not retired",
         ),
         (
-            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":99}]}"#,
+            r#"{"schema":"papertiger.dump.v11","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":99}]}"#,
             "missing replacement #99",
         ),
         (
-            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"a","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"b","status":"retired","replacement_seq":1}]}"#,
+            r#"{"schema":"papertiger.dump.v11","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"a","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"b","status":"retired","replacement_seq":1}]}"#,
             "replacement cycle",
         ),
         (
-            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"rejected endpoint","status":"rejected"}]}"#,
+            r#"{"schema":"papertiger.dump.v11","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"rejected endpoint","status":"rejected"}]}"#,
             "replacement chain terminates",
         ),
         (
-            r#"{"schema":"papertiger.dump.v10","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"retired endpoint","status":"retired"}]}"#,
+            r#"{"schema":"papertiger.dump.v11","plans":[{"slug":"p","title":"P"}],"tasks":[{"seq":1,"plan":"p","title":"old","status":"retired","replacement_seq":2},{"seq":2,"plan":"p","title":"retired endpoint","status":"retired"}]}"#,
             "retired without its own replacement",
         ),
     ] {
@@ -3582,15 +4000,48 @@ fn audit_reports_corrupt_replacement_shapes() {
     let conn = db();
     let first_plan = pt::add_plan(&conn, "test", "first", "First", "").unwrap();
     let second_plan = pt::add_plan(&conn, "test", "second", "Second", "").unwrap();
-    let dangling =
-        pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("dangling")).unwrap();
-    let live = pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("live")).unwrap();
-    let cross = pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("cross")).unwrap();
-    let cycle_a =
-        pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("cycle a")).unwrap();
-    let cycle_b =
-        pt::add_task(&conn, "test", first_plan, pt::TaskCreation::new("cycle b")).unwrap();
-    let remote = pt::add_task(&conn, "test", second_plan, pt::TaskCreation::new("remote")).unwrap();
+    let dangling = pt::add_task(
+        &conn,
+        "test",
+        first_plan,
+        pt::TaskCreation::new("dangling", "feature"),
+    )
+    .unwrap();
+    let live = pt::add_task(
+        &conn,
+        "test",
+        first_plan,
+        pt::TaskCreation::new("live", "feature"),
+    )
+    .unwrap();
+    let cross = pt::add_task(
+        &conn,
+        "test",
+        first_plan,
+        pt::TaskCreation::new("cross", "feature"),
+    )
+    .unwrap();
+    let cycle_a = pt::add_task(
+        &conn,
+        "test",
+        first_plan,
+        pt::TaskCreation::new("cycle a", "feature"),
+    )
+    .unwrap();
+    let cycle_b = pt::add_task(
+        &conn,
+        "test",
+        first_plan,
+        pt::TaskCreation::new("cycle b", "feature"),
+    )
+    .unwrap();
+    let remote = pt::add_task(
+        &conn,
+        "test",
+        second_plan,
+        pt::TaskCreation::new("remote", "feature"),
+    )
+    .unwrap();
     let id = |seq| pt::get_task(&conn, seq).unwrap().task_id;
     conn.pragma_update(None, "foreign_keys", "OFF").unwrap();
     conn.execute(
@@ -3672,22 +4123,32 @@ fn audit_reports_corrupt_replacement_shapes() {
 fn audit_and_export_refuse_terminal_replacement_dead_ends() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "terminal", "Terminal", "").unwrap();
-    let rejected_source =
-        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("source one")).unwrap();
+    let rejected_source = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("source one", "feature"),
+    )
+    .unwrap();
     let rejected_target = pt::add_task(
         &conn,
         "test",
         plan,
-        pt::TaskCreation::new("rejected endpoint"),
+        pt::TaskCreation::new("rejected endpoint", "feature"),
     )
     .unwrap();
-    let retired_source =
-        pt::add_task(&conn, "test", plan, pt::TaskCreation::new("source two")).unwrap();
+    let retired_source = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("source two", "feature"),
+    )
+    .unwrap();
     let retired_target = pt::add_task(
         &conn,
         "test",
         plan,
-        pt::TaskCreation::new("retired endpoint"),
+        pt::TaskCreation::new("retired endpoint", "feature"),
     )
     .unwrap();
     pt::retire_task(
@@ -3755,7 +4216,13 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
     conn.pragma_update(None, "foreign_keys", "ON").unwrap();
     pt::init(&conn).unwrap();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
-    pt::add_task(&conn, "test", plan, pt::TaskCreation::new("preserved")).unwrap();
+    pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("preserved", "feature"),
+    )
+    .unwrap();
     conn.execute_batch(
         "ALTER TABLE tasks DROP COLUMN pickup_at;
          ALTER TABLE tasks DROP COLUMN pickup_session;
@@ -3804,8 +4271,20 @@ fn schema_v5_requires_explicit_init_before_adding_v6_and_v7_storage() {
 fn event_cursors_page_history_and_refuse_divergent_authorities() {
     let conn = db();
     let plan = pt::add_plan(&conn, "planner", "history", "History", "").unwrap();
-    let first = pt::add_task(&conn, "planner", plan, pt::TaskCreation::new("first")).unwrap();
-    pt::add_task(&conn, "planner", plan, pt::TaskCreation::new("second")).unwrap();
+    let first = pt::add_task(
+        &conn,
+        "planner",
+        plan,
+        pt::TaskCreation::new("first", "feature"),
+    )
+    .unwrap();
+    pt::add_task(
+        &conn,
+        "planner",
+        plan,
+        pt::TaskCreation::new("second", "feature"),
+    )
+    .unwrap();
     pt::add_note(&conn, "reviewer", Some(first), "fresh evidence", None).unwrap();
 
     let latest = pt::event_log(&conn, None, 2, None, None).unwrap();
@@ -3887,7 +4366,7 @@ fn event_cursors_page_history_and_refuse_divergent_authorities() {
         &other,
         "other",
         other_plan,
-        pt::TaskCreation::new("different"),
+        pt::TaskCreation::new("different", "feature"),
     )
     .unwrap();
     let error = pt::event_log(
@@ -3917,7 +4396,7 @@ fn task_activity_records_authors_without_creating_session_ownership() {
         &conn,
         "planner",
         plan,
-        pt::TaskCreation::new("continue work"),
+        pt::TaskCreation::new("continue work", "feature"),
     )
     .unwrap();
     pt::start_task(
@@ -3971,7 +4450,7 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         primary,
         pt::TaskCreation {
             intent: "repair retained evidence",
-            ..pt::TaskCreation::new("Object store recovery")
+            ..pt::TaskCreation::new("Object store recovery", "feature")
         },
     )
     .unwrap();
@@ -3981,7 +4460,7 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         primary,
         pt::TaskCreation {
             intent: "repair the object store",
-            ..pt::TaskCreation::new("Recovery mechanics")
+            ..pt::TaskCreation::new("Recovery mechanics", "feature")
         },
     )
     .unwrap();
@@ -3989,14 +4468,14 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         &conn,
         "planner",
         primary,
-        pt::TaskCreation::new("Start activity"),
+        pt::TaskCreation::new("Start activity", "feature"),
     )
     .unwrap();
     let rejected = pt::add_task(
         &conn,
         "planner",
         primary,
-        pt::TaskCreation::new("Historical checksum report"),
+        pt::TaskCreation::new("Historical checksum report", "feature"),
     )
     .unwrap();
     pt::reject_task(
@@ -4010,7 +4489,7 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         &conn,
         "planner",
         secondary,
-        pt::TaskCreation::new("Object store elsewhere"),
+        pt::TaskCreation::new("Object store elsewhere", "feature"),
     )
     .unwrap();
     let cross_field_hit = pt::add_task(
@@ -4019,7 +4498,7 @@ fn search_is_field_ranked_exact_term_and_includes_terminal_history() {
         primary,
         pt::TaskCreation {
             intent: "store the recovered bytes",
-            ..pt::TaskCreation::new("Restore object")
+            ..pt::TaskCreation::new("Restore object", "feature")
         },
     )
     .unwrap();
@@ -4097,7 +4576,7 @@ fn search_refuses_an_unpageable_result_set_with_narrowing_commands() {
             &conn,
             "planner",
             plan,
-            pt::TaskCreation::new(&format!("common outcome {index}")),
+            pt::TaskCreation::new(&format!("common outcome {index}"), "feature"),
         )
         .unwrap();
     }
@@ -4112,7 +4591,13 @@ fn audit_advises_duplicate_live_titles_and_single_plan_export_keeps_global_event
     let conn = db();
     let plan = pt::add_plan(&conn, "planner", "work", "Work", "").unwrap();
     for title in ["Same outcome", "same outcome"] {
-        pt::add_task(&conn, "planner", plan, pt::TaskCreation::new(title)).unwrap();
+        pt::add_task(
+            &conn,
+            "planner",
+            plan,
+            pt::TaskCreation::new(title, "feature"),
+        )
+        .unwrap();
     }
     pt::add_note(&conn, "planner", None, "authority-global note", None).unwrap();
     let findings = pt::audit(&conn).unwrap();
@@ -4148,7 +4633,7 @@ fn recovery_export_file_is_atomic_hash_bound_and_refuses_unreviewed_replace() {
         &conn,
         "planner",
         plan,
-        pt::TaskCreation::new("preserve this"),
+        pt::TaskCreation::new("preserve this", "feature"),
     )
     .unwrap();
     let path = unique_test_path("recovery-export").with_extension("json");
@@ -4156,7 +4641,7 @@ fn recovery_export_file_is_atomic_hash_bound_and_refuses_unreviewed_replace() {
     let receipt = pt::write_export_file(&path, &dump, false).unwrap();
     let first_bytes = std::fs::read(&path).unwrap();
     assert_eq!(receipt.schema, "papertiger.export_file.v1");
-    assert_eq!(receipt.dump_schema, "papertiger.dump.v10");
+    assert_eq!(receipt.dump_schema, "papertiger.dump.v11");
     assert_eq!(receipt.sha256, pt::sha256(&first_bytes));
     assert_eq!(receipt.bytes, first_bytes.len());
     assert!(first_bytes.ends_with(b"\n"));

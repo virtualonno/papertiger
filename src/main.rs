@@ -94,8 +94,8 @@ enum Cmd {
         /// Who supplied the stored meaning: user, agent, or external
         #[arg(long, value_name = "user|agent|external")]
         intent_source: Option<String>,
-        /// Work kind: work, probe, or decision
-        #[arg(long, default_value = "work")]
+        /// Kind of outcome: goal, feature, change, bug, probe, decision, or release
+        #[arg(long)]
         kind: String,
         /// Parent task number (N or #N)
         #[arg(long)]
@@ -117,7 +117,7 @@ enum Cmd {
     },
     /// Create a parent's child tasks and their dependencies from a JSON outline in one atomic call
     #[command(
-        after_help = "Outline: papertiger.task_outline.v1 in `papertiger schema`. Each child has a batch-local \"key\" and a \"title\", and optionally \"intent\", \"intent_source\", \"why\", \"kind\", \"tags\", \"priority\" and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
+        after_help = "Outline: papertiger.task_outline.v1 in `papertiger schema`. Each child has a batch-local \"key\", a \"title\" and a \"kind\", and optionally \"intent\", \"intent_source\", \"why\", \"tags\", \"priority\" and \"deps\" (sibling keys as strings, existing task numbers as integers). Keys are never stored. The JSON receipt lists one task create event per child, in outline order."
     )]
     Decompose {
         /// Parent task number (N or #N)
@@ -199,7 +199,7 @@ enum Cmd {
         /// Remove the current parent
         #[arg(long)]
         clear_parent: bool,
-        /// Replacement work kind: work, probe, or decision
+        /// Replacement kind: goal, feature, change, bug, probe, decision, or release
         #[arg(long)]
         kind: Option<String>,
         /// Replacement scheduling priority
@@ -346,7 +346,7 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EvidenceCmd,
     },
-    /// Export plans, tasks, gates, blockers, events and Mise projections as papertiger.dump.v10 JSON
+    /// Export plans, tasks, gates, blockers, events and Mise projections as papertiger.dump.v11 JSON
     Export {
         /// Export only this plan slug and its scoped history
         #[arg(long)]
@@ -373,7 +373,7 @@ enum Cmd {
         #[arg(long, value_name = "PATH")]
         output: std::path::PathBuf,
     },
-    /// Import a papertiger.dump.v10 JSON file (papertiger.dump.v9 is converted)
+    /// Import a papertiger.dump.v11 JSON file (papertiger.dump.v10 is converted)
     Import {
         /// Dump file to validate and import atomically
         file: String,
