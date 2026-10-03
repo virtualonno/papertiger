@@ -32,6 +32,10 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Changed
 
+- Text `status` stays one screen: per plan it shows up to 8 in-progress tasks
+  (live owners first, then the latest pickups) with a count and a `list`
+  command for the rest, caps note text, and points omitted ready work at text
+  `focus`. JSON is unchanged.
 - Text `log` prints one readable line per event: actor, model, the task's
   handle, the event, its changed fields (each capped) and the rationale,
   without repeating every event's authorship block; JSON is unchanged.

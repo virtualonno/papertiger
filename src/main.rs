@@ -1588,20 +1588,46 @@ fn run_planner(cli: Cli) -> Result<()> {
                             .join(", ")
                     );
                 }
-                for entry in &active.in_progress.parents.entries {
+                // One screen: live owners first, then the most recent pickups.
+                const IN_PROGRESS_SHOWN: usize = 8;
+                let mut in_progress = active
+                    .in_progress
+                    .parents
+                    .entries
+                    .iter()
+                    .map(|entry| ("parent", entry))
+                    .chain(
+                        active
+                            .in_progress
+                            .leaves
+                            .entries
+                            .iter()
+                            .map(|entry| ("leaf", entry)),
+                    )
+                    .collect::<Vec<_>>();
+                in_progress.sort_by_key(|(_, entry)| {
+                    let running = entry
+                        .pickup
+                        .as_ref()
+                        .is_some_and(|pickup| pt::owner_state(pickup) == pt::OwnerState::Running);
+                    let at = entry.pickup.as_ref().map(|pickup| pickup.at.clone());
+                    (!running, std::cmp::Reverse(at))
+                });
+                let hidden = in_progress.len().saturating_sub(IN_PROGRESS_SHOWN)
+                    + active.in_progress.parents.omitted_count
+                    + active.in_progress.leaves.omitted_count;
+                for (role, entry) in in_progress.iter().take(IN_PROGRESS_SHOWN) {
                     pt::outln!(
-                        "> parent {} {}{}",
+                        "> {role} {} {}{}",
                         entry.task.handle,
                         entry.task.title,
                         pickup_label(entry.pickup.as_ref())
                     );
                 }
-                for entry in &active.in_progress.leaves.entries {
+                if hidden > 0 {
                     pt::outln!(
-                        "> leaf {} {}{}",
-                        entry.task.handle,
-                        entry.task.title,
-                        pickup_label(entry.pickup.as_ref())
+                        "  ... {hidden} more in progress; run `papertiger list --plan {} --status in_progress --sort activity`",
+                        active.plan.slug
                     );
                 }
                 for entry in &active.ready.entries {
@@ -1609,13 +1635,9 @@ fn run_planner(cli: Cli) -> Result<()> {
                 }
                 if !active.ready.complete {
                     pt::outln!(
-                        "  ... {} ready task(s) omitted; run `{}`",
+                        "  ... {} ready task(s) omitted; run `papertiger focus --plan {}`",
                         active.ready.omitted_count,
-                        active
-                            .ready
-                            .continuation_command
-                            .as_deref()
-                            .unwrap_or_default()
+                        active.plan.slug
                     );
                 }
             }
@@ -1625,7 +1647,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     note.event_id,
                     short_event_time(&note.at),
                     note.actor,
-                    note.why.as_deref().unwrap_or_default()
+                    preview(note.why.as_deref().unwrap_or_default())
                 );
             }
             if !status.recent_notes.complete {

@@ -4466,9 +4466,23 @@ fn status_exposes_hierarchy_and_bounded_projection_completeness() {
     let human = papertiger(&db.0, &["status"]);
     assert_success(&human);
     let human = String::from_utf8(human.stdout).unwrap();
-    assert!(human.contains("> parent F-1 Canonical parent 1"), "{human}");
-    assert!(human.contains("> leaf F-2 Active leaf 1"), "{human}");
-    assert!(human.contains("1 ready task(s) omitted"), "{human}");
+    // Text shows the eight most recent pickups and counts the rest.
+    assert!(
+        human.contains("> leaf F-10 Active leaf 5")
+            && human.contains("> parent F-3 Canonical parent 2"),
+        "{human}"
+    );
+    assert!(!human.contains("F-1 Canonical parent 1"), "{human}");
+    assert!(
+        human.contains(
+            "... 2 more in progress; run `papertiger list --plan work --status in_progress --sort activity`"
+        ),
+        "{human}"
+    );
+    assert!(
+        human.contains("1 ready task(s) omitted; run `papertiger focus --plan work`"),
+        "{human}"
+    );
     assert!(human.contains("1 older note(s) omitted"), "{human}");
 }
 
