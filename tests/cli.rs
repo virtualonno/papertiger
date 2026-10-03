@@ -3252,7 +3252,9 @@ fn planner_help_describes_nested_commands_and_important_arguments() {
     assert!(root.contains("--project-root <DIR>"), "{root}");
     assert!(
         root.contains("Project root whose state/papertiger.sqlite is the authority")
-            && root.contains("every write requires one"),
+            && root.contains("every write requires one")
+            && root.contains("else the harness and session")
+            && root.contains("else the harness session"),
         "{root}"
     );
     assert!(!root.contains("invalid with"), "{root}");

@@ -23,10 +23,10 @@ struct Cli {
     /// Project root whose state/papertiger.sqlite is the authority; evidence verify and gate resolve also resolve file: locators beneath it
     #[arg(long = "project-root", global = true, value_name = "DIR")]
     authority_project_root: Option<std::path::PathBuf>,
-    /// Actor recorded on events (default: PAPERTIGER_ACTOR or 'operator')
+    /// Actor label recorded on events (default: PAPERTIGER_ACTOR, else the harness and session, else 'operator' for the human model, else the model); provenance, never ownership
     #[arg(long, global = true)]
     actor: Option<String>,
-    /// Advisory pickup identity (default: PAPERTIGER_SESSION); never an exclusive lock or liveness signal
+    /// Advisory pickup identity (default: PAPERTIGER_SESSION, else the harness session); never an exclusive lock or liveness signal
     #[arg(long, global = true)]
     session: Option<String>,
     /// Emit JSON: versioned reads or committed mutation receipts
