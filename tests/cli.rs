@@ -549,12 +549,16 @@ fn claims_show_their_review_state_and_a_disputed_result_holds_its_dependents() {
 
     let list = ok(strong(&["list"]));
     assert!(
-        list.contains("F-1 Cache plan reads [unreviewed · deepseek-v4.1-flash]"),
-        "{list}"
+        list.contains(
+            "F-1 Cache plan reads
+"
+        ) && !list.contains("unreviewed"),
+        "review is optional, so an unreviewed claim carries no marker: {list}"
     );
+    let unreviewed = ok(strong(&["list", "--unreviewed"]));
     assert!(
-        list.contains("B-2 Crash on empty plan [unreviewed · deepseek-v4.1-flash]"),
-        "{list}"
+        unreviewed.contains("F-1") && unreviewed.contains("B-2"),
+        "{unreviewed}"
     );
     let (refused, _, stderr) = fleet(&[
         "review",
@@ -608,9 +612,8 @@ fn claims_show_their_review_state_and_a_disputed_result_holds_its_dependents() {
     ok(strong(&["done", "F-1", "--result", "Reads hit the cache"]));
     let focus = ok(fleet(&["focus"]));
     assert!(
-        focus.contains("F-3 Warm the cache at startup")
-            && focus.contains("[builds on unreviewed result F-1]"),
-        "{focus}"
+        focus.contains("F-3 Warm the cache at startup") && !focus.contains("unreviewed"),
+        "an unreviewed result neither holds nor marks its dependent: {focus}"
     );
     ok(third(&[
         "review",
@@ -639,7 +642,11 @@ fn claims_show_their_review_state_and_a_disputed_result_holds_its_dependents() {
     ]));
     let focus = ok(fleet(&["focus"]));
     assert!(
-        focus.contains("F-3") && !focus.contains("builds on unreviewed result"),
+        !focus.contains("disputed-result")
+            && focus.contains(
+                "F-3 Warm the cache at startup [priority next unlocks 0 downstream 0 gates 0]
+"
+            ),
         "{focus}"
     );
     let show = ok(fleet(&["show", "F-1"]));

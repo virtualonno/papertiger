@@ -114,22 +114,23 @@ which (`model_source`). Never use `human` (the operator's manual model) or
 from the environment. Authorship is provenance, never ownership.
 
 A task carries two claims: its filing (title and intent) and, once done, its
-result. Each shows its review state with the model that made it, e.g.
-`[unreviewed · deepseek-v4.1-flash]`. An unreviewed or disputed claim is
-unverified: check it before acting on it or building on it, then record what
-you found:
+result, each with the model that made it and a review state. Review is
+optional and never required to proceed. When you have checked a claim, for
+example another model's filing before acting on it, record what you found;
+text output marks only a disputed claim (`[disputed · deepseek-v4.1-flash]`):
 
 ```bash
 papertiger review <task.seq> --verdict confirmed --why "What you verified"
 papertiger review <task.seq> --result --verdict disputed --why "What does not hold"
 ```
 
-A session cannot review its own claim. Claims recorded before 1.0 are
-`legacy`: their results are not flagged, and same-agent review of them cannot
-be detected. A disputed result holds the tasks that
-depend on it until confirmed or revised. `list --unreviewed` and
-`focus --unreviewed` select claims needing a check; `models` counts how each
-model's filings and results fared.
+A session cannot review its own claim. A disputed result holds the tasks that
+depend on it until confirmed or revised. `show` and JSON carry every claim's
+state; `list --unreviewed` and `focus --unreviewed` select unreviewed or
+disputed claims when you choose to triage, and `models` counts how each
+model's filings and results fared. Claims recorded before 1.0 are `legacy`:
+their results are left out of that triage, and same-agent review of them
+cannot be detected.
 
 ## Pickup
 

@@ -807,16 +807,10 @@ fn print_task_line(conn: &Connection, t: &pt::Task) -> Result<()> {
     }
     let review = pt::task_review(conn, t)?;
     match t.status.as_str() {
-        "proposed" if review.filing.state.needs_review() => {
-            extra.push_str(&claim_marker("", &review.filing));
-        }
+        "proposed" | "in_progress" => extra.push_str(&disputed_marker("", &review.filing)),
         "done" => {
-            if let Some(result) = review
-                .result
-                .as_ref()
-                .filter(|result| result.state.needs_review() && !result.is_legacy())
-            {
-                extra.push_str(&claim_marker("result ", result));
+            if let Some(result) = &review.result {
+                extra.push_str(&disputed_marker("result ", result));
             }
         }
         _ => {}
@@ -838,11 +832,7 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
         status_glyph(&task.status),
         task.handle,
         task.title,
-        if brief.review.state.needs_review() {
-            claim_marker("", &brief.review)
-        } else {
-            String::new()
-        }
+        disputed_marker("", &brief.review)
     );
     if !brief.ancestry.is_empty() {
         pt::outln!("  path: {}", brief.ancestry.join(" › "));
@@ -887,11 +877,7 @@ fn print_brief(brief: &pt::Brief) -> Result<()> {
     if !brief.open.entries.is_empty() {
         pt::outln!("open:");
         for open in &brief.open.entries {
-            let review = if open.review.state.needs_review() {
-                claim_marker("", &open.review)
-            } else {
-                String::new()
-            };
+            let review = disputed_marker("", &open.review);
             pt::outln!(
                 "  {} {} {}{}{}",
                 status_glyph(&open.task.status),
@@ -957,9 +943,13 @@ fn preview(text: &str) -> String {
     cut
 }
 
-/// ` [unreviewed · deepseek-v4.1-flash]`: a claim's review state and the
-/// model that made it.
-fn claim_marker(prefix: &str, claim: &pt::ClaimReview) -> String {
+/// ` [disputed · deepseek-v4.1-flash]` for a disputed claim, else nothing.
+/// Review is optional, so an unreviewed claim carries no marker; `show`,
+/// JSON and `--unreviewed` still expose it.
+fn disputed_marker(prefix: &str, claim: &pt::ClaimReview) -> String {
+    if claim.state != pt::ReviewState::Disputed {
+        return String::new();
+    }
     format!(
         " [{prefix}{} · {}]",
         claim.state.as_str(),
@@ -2445,17 +2435,7 @@ fn run_planner(cli: Cli) -> Result<()> {
                     } else {
                         format!(" [in {}]", entry.ancestry.join(" › "))
                     };
-                    let mut review = if entry.review.state.needs_review() {
-                        claim_marker("", &entry.review)
-                    } else {
-                        String::new()
-                    };
-                    if !entry.unreviewed_dependencies.is_empty() {
-                        review.push_str(&format!(
-                            " [builds on unreviewed result {}]",
-                            entry.unreviewed_dependencies.join(", ")
-                        ));
-                    }
+                    let review = disputed_marker("", &entry.review);
                     let closing = if entry.closed_child_count > 0 {
                         format!(" [close: all {} children closed]", entry.closed_child_count)
                     } else {

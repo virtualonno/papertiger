@@ -6,7 +6,7 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
-Local dogfood candidate `1.0.0-rc.1`; not published.
+Local dogfood candidate `1.0.0-rc.2`; not published.
 
 Planner schema v14 and dump format `papertiger.dump.v11`. Run `init`
 deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
@@ -89,10 +89,11 @@ deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
   different session), `confirmed` or `disputed`, with the authoring model and
   whether the last reviewer ran the same model. New `review <N> --verdict
   confirmed|disputed --why ... [--result]`, refused for the claim's own
-  session. Text marks claims that need a check (`[unreviewed · <model>]`),
-  focus notes `[builds on unreviewed result ...]`, and a disputed result is a
+  session. Review is optional: text marks only a disputed claim
+  (`[disputed · <model>]`), and a disputed result is a
   `disputed-result:<handle>` blocker for its dependents and its parent.
-  `list --unreviewed` and `focus --unreviewed` select claims needing review.
+  `list --unreviewed` and `focus --unreviewed` select unreviewed or disputed
+  claims for optional triage.
   JSON: `review` on show, focus entries (with `unreviewed_dependencies`) and
   list items. Claims recorded before 1.0 are `legacy` (their events carry no
   model source): their results are not flagged for review, open legacy

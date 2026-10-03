@@ -224,15 +224,15 @@ remain intact. Skill descriptions route agents; no project guidance edit is need
   host, no recorded owner, or an uninspectable process). Age is never proof,
   and an ended owner changes nothing by itself.
 - Review state is derived per claim: a task's filing and, once done, its
-  result. Text output marks claims that need a check with the model that made
-  them, e.g. `[unreviewed · deepseek-v4.1-flash]`; `show` and the JSON of
-  `show`, `focus` and `list` carry `review`. A filing becomes `engaged` when a
+  result. Review is optional: text output marks only a disputed claim, with
+  the model that made it, e.g. `[disputed · deepseek-v4.1-flash]`; `show`
+  and the JSON of `show`, `focus` and `list` carry every claim's `review`. A filing becomes `engaged` when a
   different session starts the task or rewrites its title or intent.
   `review <N> --verdict confirmed|disputed --why ... [--result]` records a
   verdict from a different session (the claim's own session is refused).
   Nothing is refused or reranked, except that a disputed result holds its
   dependents and its parent's closure. `list --unreviewed` and
-  `focus --unreviewed` select claims needing a check; results recorded before
+  `focus --unreviewed` select unreviewed or disputed claims for optional triage; results recorded before
   authorship are not flagged. Same-model reviews count and are reported as
   such (`same_model`).
 - Priority is a scheduling level, `--priority now|next|later` (default
