@@ -32,7 +32,7 @@ struct Cli {
     /// Emit JSON: versioned reads or committed mutation receipts
     #[arg(long, global = true)]
     json: bool,
-    /// Model that authored this write (default: PAPERTIGER_MODEL); every write requires one, commands that record no event refuse it
+    /// Model that authored this write (default: PAPERTIGER_MODEL); every write requires one, and commands that record no event ignore it
     #[arg(long, global = true)]
     model: Option<String>,
     /// Configured reasoning effort of the authoring model (default: PAPERTIGER_REASONING_EFFORT or the harness)
@@ -1248,16 +1248,8 @@ fn run_planner(cli: Cli) -> Result<()> {
             cli.cmd,
             Cmd::Init | Cmd::Backup { .. } | Cmd::RepairGuards { dry_run: true, .. }
         );
-    if cli.model.is_some() && !mutation {
-        bail!(
-            "--model records planning event authorship; omit --model for commands that do not record events"
-        );
-    }
-    if cli.reasoning_effort.is_some() && !mutation {
-        bail!(
-            "--reasoning-effort records planning event authorship; omit --reasoning-effort for commands that do not record events"
-        );
-    }
+    // Agents pass their model on every command; one that records no event
+    // has nothing to attribute and simply ignores it.
     let flags = pt::AuthorshipFlags {
         actor: cli.actor.as_deref(),
         session: cli.session.as_deref(),

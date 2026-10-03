@@ -977,7 +977,7 @@ fn every_write_records_a_reported_model_and_the_harness_supplies_the_rest() {
 }
 
 #[test]
-fn add_start_needs_no_rationale() {
+fn starting_and_reading_ask_for_nothing_extra() {
     let db = TestDatabase::new("add-start-no-why");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
@@ -989,6 +989,12 @@ fn add_start_needs_no_rationale() {
     assert_success(&show);
     let show: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
     assert_eq!(show["task"]["status"], "in_progress");
+    // A read has nothing to attribute, so authorship flags are ignored.
+    for read in [&["status"][..], &["show", "F-1"], &["init"]] {
+        let mut args = read.to_vec();
+        args.extend(["--model", "claude-opus-5-5", "--reasoning-effort", "high"]);
+        assert_success(&papertiger(&db.0, &args));
+    }
 }
 
 #[test]
@@ -1751,11 +1757,6 @@ fn reasoning_effort_uses_environment_and_explicit_flags_without_inference() {
             Some("gpt-6-astra"),
             Some("very high"),
         ),
-        run(
-            &["show", &seq, "--reasoning-effort", "high", "--json"],
-            None,
-            None,
-        ),
     ] {
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
@@ -1763,7 +1764,12 @@ fn reasoning_effort_uses_environment_and_explicit_flags_without_inference() {
     let after = run(&["export"], None, None);
     assert_success(&after);
     assert_eq!(before.stdout, after.stdout);
-    // Inherited metadata must not affect ordinary read-only operations.
+    // A read ignores authorship flags, and inherited metadata never affects it.
+    assert_success(&run(
+        &["show", &seq, "--reasoning-effort", "high", "--json"],
+        None,
+        None,
+    ));
     assert_success(&run(
         &["show", &seq],
         Some("invalid model"),
@@ -2003,28 +2009,23 @@ fn backup_refuses_missing_foreign_empty_and_unsupported_authorities() {
 }
 
 #[test]
-fn backup_records_no_events_and_refuses_model_attribution() {
+fn backup_records_no_events_even_when_given_a_model() {
     let directory = TestDirectory::new("backup-events");
     let source = directory.0.join("source.sqlite");
     let output = directory.0.join("recovery.sqlite");
     assert_success(&papertiger(&source, &["init"]));
-    let rejected = papertiger(
+    let before = papertiger(&source, &["export"]);
+    assert_success(&before);
+    assert_success(&papertiger(
         &source,
         &[
             "backup",
             "--output",
             output.to_str().unwrap(),
+            "--json",
             "--model",
             "invented",
         ],
-    );
-    assert!(!rejected.status.success());
-    assert!(!output.exists());
-    let before = papertiger(&source, &["export"]);
-    assert_success(&before);
-    assert_success(&papertiger(
-        &source,
-        &["backup", "--output", output.to_str().unwrap(), "--json"],
     ));
     assert_eq!(papertiger(&source, &["export"]).stdout, before.stdout);
     assert_eq!(papertiger(&output, &["export"]).stdout, before.stdout);

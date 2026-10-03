@@ -32,6 +32,9 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Changed
 
+- Commands that record no event (reads, `init`, `backup`) ignore `--model`
+  and `--reasoning-effort` instead of refusing them, so an agent can pass its
+  model on every command.
 - Starting work never requires a rationale: `add --start` and
   `decompose --start-ready` accept a missing `--why` like `start` does. A task
   outline may carry one top-level `why` that every child without its own
