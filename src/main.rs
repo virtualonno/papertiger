@@ -491,7 +491,8 @@ enum CommitCmd {
     Add {
         /// Task: N, #N or its handle (e.g. F-N)
         task: String,
-        /// Caller-resolved lowercase 40- or 64-hex commit object ID
+        /// Full 40- or 64-hex commit object ID, e.g. from `git rev-parse HEAD` (Papertiger never runs Git)
+        #[arg(value_parser = lowercase)]
         commit_oid: String,
         /// Stable repository label; '.' denotes the authority's project root
         #[arg(long, default_value = ".")]
@@ -982,7 +983,8 @@ fn second_word(word: Option<String>, flag: Option<String>, field: &str) -> Resul
     }
 }
 
-/// A kind or similar keyword in any letter case; the lists are lowercase.
+/// A kind, commit ID or similar keyword in any letter case; Papertiger stores
+/// them lowercase.
 fn lowercase(value: &str) -> Result<String, std::convert::Infallible> {
     Ok(value.to_ascii_lowercase())
 }
@@ -1448,8 +1450,14 @@ fn run_planner(cli: Cli) -> Result<()> {
             let cwd = std::env::current_dir()?;
             match project_authority::discover(&cwd)? {
                 Some(found) => pt::portable_absolute(&found.authority)?,
-                // Creating an authority names its root: run from a
-                // subdirectory, an implicit one would nest a second authority.
+                // A bare init creates an authority only at a Git root, which
+                // is a project root by definition; from any other directory
+                // it could nest a second authority, so it names --project-root.
+                None if matches!(cli.cmd, Cmd::Init) && cwd.join(".git").exists() => {
+                    let selected = project_authority::at_root(&cwd)?;
+                    init_root = Some(selected.root);
+                    pt::portable_absolute(&selected.authority)?
+                }
                 None => return Err(project_authority::not_found(&cwd)),
             }
         }
@@ -1668,6 +1676,16 @@ fn run_planner(cli: Cli) -> Result<()> {
                 for entry in &active.ready.entries {
                     pt::outln!("· {} {}", entry.task.handle, entry.task.title);
                 }
+                if in_progress.is_empty() && hidden == 0 && active.ready.entries.is_empty() {
+                    if active.counts.proposed == 0 {
+                        pt::outln!("  no open work");
+                    } else {
+                        pt::outln!(
+                            "  nothing in progress or ready; `papertiger focus --plan {} --include-blocked` shows the blocked work",
+                            active.plan.slug
+                        );
+                    }
+                }
                 if !active.ready.complete {
                     pt::outln!(
                         "  ... {} ready task(s) omitted; run `papertiger focus --plan {}`",
@@ -1677,8 +1695,17 @@ fn run_planner(cli: Cli) -> Result<()> {
                 }
             }
             for note in &status.recent_notes.entries {
+                let on = note
+                    .task_seq
+                    .map(|seq| {
+                        format!(
+                            " on {}",
+                            pt::seq_handle(&conn, seq).unwrap_or_else(|_| format!("#{seq}"))
+                        )
+                    })
+                    .unwrap_or_default();
                 pt::outln!(
-                    "note @{} {} {}: {}",
+                    "note @{} {} {}{on}: {}",
                     note.event_id,
                     short_event_time(&note.at),
                     note.actor,

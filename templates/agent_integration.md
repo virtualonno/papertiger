@@ -11,9 +11,10 @@ executables in `bin/`. Installing, upgrading and removing it are covered by
 the README; nothing is installed in projects.
 
 Start from the authority the project already has. Only a genuinely new project
-with no planning history gets one: `papertiger --project-root <project-root>
-init` creates `state/papertiger.sqlite` there and, in a Git working tree, adds
-it and its sidecars to `.gitignore`; then `plan add <slug> "Title" --intent
+with no planning history gets one: `papertiger init` at its Git root (or
+`papertiger --project-root <project-root> init` from elsewhere) creates
+`state/papertiger.sqlite` there and, in a Git working tree, adds it and its
+sidecars to `.gitignore`; then `plan add <slug> "Title" --intent
 "Purpose"`. When history is unexpectedly missing, stop and restore it; never
 run `init` to replace it.
 

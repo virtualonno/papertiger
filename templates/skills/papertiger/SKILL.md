@@ -23,12 +23,14 @@ create a second store in a worktree. When no project owns the work, use the
 authority your operator named and put the consuming project's absolute root in
 each task intent. Write through `papertiger`, never raw SQLite. A refusal does
 not authorize removing guards or manufacturing admission; use the corrective
-command or preserve the blocker. Only for a genuinely new project, read
-[first use](references/agent_integration.md#first-use).
+command or preserve the blocker. A genuinely new project with no planning
+history gets an authority with `papertiger init` at its Git root, then
+`plan add <slug> "Title"`; see [first use](references/agent_integration.md#first-use).
 
 Every write records the model that authored it: pass `--model <your exact
-model id>` unless `PAPERTIGER_MODEL` was set at launch, and never use `human`
-or `runtime`. Harness, session and actor label come from the environment;
+model id>` on each write (shell variables you export may not survive to the
+next command; `PAPERTIGER_MODEL` counts only when every command sees it), and
+never use `human` or `runtime`. Harness, session and actor label come from the environment;
 outside a harness set `PAPERTIGER_SESSION` to one unique session ID.
 
 ## Enter, work, finish
@@ -51,9 +53,14 @@ papertiger decompose <N> --outline-file outline.json --start-ready
 ```
 
 Choose each task's kind: goal, feature, change, bug, probe, decision or
-release; probes, decisions and bugs require results. Split a multi-part
-outcome into children with one `decompose` call instead of inventing section
-or phase labels. Refer to local work by its handle (`F-924`) inside Papertiger
+release. Probes, decisions and bugs require results: a probe's states what it
+found, a decision's the choice and its reasoning, a bug's the cause and fix.
+Split a multi-part outcome into children with one `decompose` call instead of
+inventing section or phase labels; the outline is JSON like
+`{"schema": "papertiger.task_outline.v2", "why": "...", "children": [{"key":
+"fix", "kind": "bug", "title": "...", "intent": "..."}, {"key": "docs", "kind":
+"change", "title": "...", "deps": ["fix"]}]}` (`papertiger schema` has every
+field). Refer to local work by its handle (`F-924`) inside Papertiger
 and by its outcome everywhere else; keep both out of shared Git/PR prose.
 
 Review is optional. A claim marked `[disputed · <model>]` was found wrong;

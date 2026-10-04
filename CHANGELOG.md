@@ -32,6 +32,37 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Changed
 
+- Every Mise command that writes its authority now records the model that
+  authored the write, resolved the same way as the planner: pass `--model
+  <model-id>` or set `PAPERTIGER_MODEL`. Each new event records the model, how
+  it was reported, and the harness, session and reasoning effort when known.
+  The new global `--session` and `--reasoning-effort` flags override the
+  detected values. A write without a model is refused, `human` is refused
+  inside a harness, and a caller can never claim the reserved `runtime` model.
+  Commands that write nothing, such as `status`, `init` and the read commands,
+  ignore these flags.
+- The `--actor` label now follows the planner's default rule. It is taken from
+  `--actor`, else `PAPERTIGER_ACTOR`, else the harness and session, else
+  `operator` for the `human` model, else the model. It no longer defaults to
+  `operator` for everyone.
+- Steps that Mise performs itself are now recorded under the reserved
+  `runtime` model: launching, heartbeating, completing or failing a trial or
+  paired run, materializing a candidate, adjudicating, deriving a nomination,
+  recovering a run, and settling a reservation bound to one of those steps.
+  Your own requests, such as admitting a campaign, reserving budget, recording
+  a candidate or cancelling a run, are recorded with your model.
+- `candidate record` now requires `--authored-by <model-id>`, the model that
+  wrote the candidate material (`human` for your own; never `runtime`). The
+  value is checked before any object is written. It is stored on the candidate
+  as `authored_by` and in its `recorded` event, and replaying the candidate
+  with a different author is refused.
+- The Mise authority schema is now v11. It refuses any new event without a
+  consistent authoring model and any new candidate without an authoring model.
+  Run `papertiger-mise --db <database> init` to migrate. Events and candidates
+  recorded before the migration stay valid without authorship.
+- Status notes name their task, a plan with no open work says so, and
+  `commit add` accepts a commit ID in any letter case and its help points at
+  `git rev-parse HEAD`.
 - `start`, `done`, `reopen`, `retire` and `reject` take their reason or
   result as a second word too: `done F-3 "Exporter writes JSON"`,
   `reject F-4 "duplicate of F-2"`. The flags still work; giving it both ways
@@ -70,10 +101,11 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   which names `<root>/state/papertiger.sqlite`; else the nearest
   `state/papertiger.sqlite` above the working directory, the way Git finds a
   repository. With none, commands refuse and name `--project-root` and `init`.
-  Creating an authority names its root, `papertiger --project-root <root>
-  init` (or a `--db` path), so a command run from a subdirectory never nests a
-  second authority; without a selector, `init` only migrates or confirms the
-  authority found above. When `init` creates one in a Git working tree, it adds
+  A bare `init` creates an authority only at a Git root; anywhere else,
+  creating one names its root with `papertiger --project-root <root> init` (or
+  a `--db` path), so a command run from a subdirectory never nests a second
+  authority. Otherwise a bare `init` migrates or confirms the authority found
+  above. When `init` creates one in a Git working tree, it adds
   Papertiger's ignore rules to `.gitignore`. A non-regular file at the
   authority path is refused.
 - JSON documents whose shape changed move one version: task_context v9,

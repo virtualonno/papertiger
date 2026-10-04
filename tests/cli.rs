@@ -3366,6 +3366,20 @@ fn explicit_project_root_init_creates_the_project_authority_and_its_ignore_rules
 
     assert_success(&init(&plain));
     assert!(plain.join("state/papertiger.sqlite").is_file());
+
+    // At a Git root a bare init needs no selector: that directory is a
+    // project root by definition.
+    let fresh = sandbox.0.join("fresh");
+    std::fs::create_dir_all(fresh.join(".git")).unwrap();
+    let bare = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+        .arg("init")
+        .current_dir(&fresh)
+        .env_remove("PAPERTIGER_DB")
+        .output()
+        .unwrap();
+    assert_success(&bare);
+    assert!(fresh.join("state/papertiger.sqlite").is_file());
+    assert!(fresh.join(".gitignore").is_file());
     assert!(
         !plain.join(".gitignore").exists(),
         "only a Git root gets ignore rules"

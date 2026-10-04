@@ -66,7 +66,7 @@ pub(crate) fn discover(start: &Path) -> Result<Option<ProjectAuthority>> {
 /// The refusal for a command that needs an authority where none was found.
 pub(crate) fn not_found(start: &Path) -> anyhow::Error {
     anyhow!(
-        "no Papertiger authority ({AUTHORITY_PATH}) was found in {} or any parent directory; run from inside the project, pass --project-root <project-root>, or start a genuinely new project's authority with `papertiger --project-root <project-root> init`",
+        "no Papertiger authority ({AUTHORITY_PATH}) was found in {} or any parent directory; run from inside the project, pass --project-root <project-root>, or start a genuinely new project's authority with `papertiger init` at its Git root or `papertiger --project-root <project-root> init`",
         papertiger::portable_absolute(start).unwrap_or_else(|_| start.display().to_string())
     )
 }
