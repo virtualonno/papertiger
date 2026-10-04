@@ -996,16 +996,14 @@ fn run(cli: Cli) -> Result<()> {
                 std::fs::create_dir_all(parent)?;
             }
             let connection = open_for_init(&cli.db)?;
+            let shown = portable_absolute(&absolute_from(&project_root, &cli.db))?;
             match init_at(&connection, &cli.db)? {
-                AuthorityInitOutcome::Created => {
-                    papertiger::outln!("initialized {}", cli.db.display())
-                }
+                AuthorityInitOutcome::Created => papertiger::outln!("initialized {shown}"),
                 AuthorityInitOutcome::Migrated { from, to } => {
-                    papertiger::outln!("migrated {} from schema v{from} to v{to}", cli.db.display())
+                    papertiger::outln!("migrated {shown} from schema v{from} to v{to}")
                 }
                 AuthorityInitOutcome::Current => papertiger::outln!(
-                    "{} is already a papertiger-mise authority at schema v{}; nothing changed",
-                    cli.db.display(),
+                    "{shown} is already a papertiger-mise authority at schema v{}; nothing changed",
                     papertiger_mise::SCHEMA_VERSION
                 ),
             }

@@ -60,6 +60,9 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   consistent authoring model and any new candidate without an authoring model.
   Run `papertiger-mise --db <database> init` to migrate. Events and candidates
   recorded before the migration stay valid without authorship.
+- `papertiger-mise` refusals and `init` output name the authority by an
+  absolute path without Windows `\\?\` prefixes, so the corrective
+  `--db <path> init` works from any directory.
 - Status notes name their task, a plan with no open work says so, and
   `commit add` accepts a commit ID in any letter case and its help points at
   `git rev-parse HEAD`.

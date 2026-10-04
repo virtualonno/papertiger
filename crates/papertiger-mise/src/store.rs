@@ -445,15 +445,21 @@ pub fn open_existing_read_only(path: impl AsRef<Path>) -> Result<Connection> {
 }
 
 fn open_existing_with_flags(path: &Path, flags: OpenFlags) -> Result<Connection> {
+    // Refusals show an absolute path a user can paste from anywhere, without
+    // Windows verbatim prefixes.
+    let shown = std::path::absolute(path)
+        .ok()
+        .and_then(|absolute| crate::path_identity::portable_absolute(&absolute).ok())
+        .unwrap_or_else(|| path.display().to_string());
     if !path.exists() {
         bail!(
             "no papertiger-mise authority exists at {}; run `papertiger-mise --db {} init` to create one, but restore the original authority if prior campaign work existed",
-            path.display(),
-            path.display()
+            shown,
+            shown
         );
     }
     let connection = Connection::open_with_flags(path, flags)
-        .with_context(|| format!("open existing papertiger-mise database {}", path.display()))?;
+        .with_context(|| format!("open existing papertiger-mise database {}", shown))?;
     let connection = configure_connection(connection)?;
     let has_meta = connection
         .query_row(
@@ -465,15 +471,15 @@ fn open_existing_with_flags(path: &Path, flags: OpenFlags) -> Result<Connection>
         .with_context(|| {
             format!(
                 "{} is not a readable SQLite database; select a papertiger-mise authority or preserve the original bytes before running `papertiger-mise --db <new-path> init`",
-                path.display()
+                shown
             )
         })?
         .unwrap_or(false);
     if !has_meta {
         bail!(
             "{} is not an initialized papertiger-mise database; run `papertiger-mise --db {} init`",
-            path.display(),
-            path.display()
+            shown,
+            shown
         );
     }
     require_mise_identity(&connection, path, false)?;
@@ -481,8 +487,8 @@ fn open_existing_with_flags(path: &Path, flags: OpenFlags) -> Result<Connection>
     if version != SCHEMA_VERSION {
         bail!(
             "{} uses papertiger-mise schema v{version}; run `papertiger-mise --db {} init` explicitly to upgrade to v{SCHEMA_VERSION}",
-            path.display(),
-            path.display()
+            shown,
+            shown
         );
     }
     Ok(connection)

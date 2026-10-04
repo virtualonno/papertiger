@@ -229,3 +229,29 @@ fn improvement_inputs_are_mise_owned_and_do_not_create_authority() {
     assert!(!output.exists());
     assert!(!project.join("state").exists());
 }
+
+#[test]
+fn authority_refusals_name_an_absolute_pasteable_path() {
+    let project = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    let root = project.path().to_str().unwrap();
+    let missing = run(
+        &["--project-root", root, "campaign", "inspect", "missing-a01"],
+        elsewhere.path(),
+    );
+    assert!(!missing.status.success());
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    let expected = papertiger::portable_absolute(
+        &std::fs::canonicalize(project.path())
+            .unwrap()
+            .join("state/papertiger-mise.sqlite"),
+    )
+    .unwrap();
+    assert!(
+        stderr.contains(&format!(
+            "no papertiger-mise authority exists at {expected};"
+        )) && stderr.contains(&format!("--db {expected} init"))
+            && !stderr.contains(r"\?\"),
+        "{stderr}"
+    );
+}
