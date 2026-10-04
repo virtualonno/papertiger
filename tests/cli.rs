@@ -565,7 +565,7 @@ fn low_stakes_corrections_take_an_optional_reason_and_dispositions_keep_theirs()
     let reject = run(&["reject", "4"]);
     assert!(!reject.status.success());
     assert!(
-        String::from_utf8_lossy(&reject.stderr).contains("pass --why or --why-file"),
+        String::from_utf8_lossy(&reject.stderr).contains("reject requires a reason"),
         "{}",
         String::from_utf8_lossy(&reject.stderr)
     );
