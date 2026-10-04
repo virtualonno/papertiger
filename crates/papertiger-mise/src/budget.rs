@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::state::BudgetReservationStatus;
-use crate::store::{begin_mutation, now, record_event_in_mutation, require_campaign, sql_amount};
+use crate::store::{
+    EventAuthor, begin_mutation, now, record_event_in_mutation, require_campaign, sql_amount,
+};
 
 pub type BudgetAmount = u64;
 
@@ -238,7 +240,7 @@ pub(crate) fn reserve_budget_in(
     }
     record_event_in_mutation(
         transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "campaign",
         campaign_id,
         "budget-reserved",
@@ -266,7 +268,7 @@ pub fn settle_budget(
 ) -> Result<SettlementOutcome> {
     settle_budget_with_binding(
         connection,
-        actor,
+        EventAuthor::Caller(actor),
         SettlementTarget {
             campaign_id,
             reservation_id,
@@ -301,7 +303,7 @@ pub fn release_unused_budget(
     let note = format!("unused-reservation-released: {why}");
     let outcome = settle_budget_in(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         SettlementTarget {
             campaign_id,
             reservation_id,
@@ -330,9 +332,11 @@ pub(crate) fn settle_bound_budget(
     settlements: &[BudgetSettlement],
     note: Option<&str>,
 ) -> Result<SettlementOutcome> {
+    // A lifecycle-bound reservation settles as a consequence of the
+    // operation it funded: the runtime performs that settlement itself.
     settle_budget_with_binding(
         connection,
-        actor,
+        EventAuthor::Runtime(actor),
         SettlementTarget {
             campaign_id: binding.campaign_id,
             reservation_id: binding.reservation_id,
@@ -354,7 +358,7 @@ pub(crate) fn settle_bound_budget_in(
 ) -> Result<SettlementOutcome> {
     settle_budget_in(
         transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         SettlementTarget {
             campaign_id: binding.campaign_id,
             reservation_id: binding.reservation_id,
@@ -374,21 +378,21 @@ struct SettlementTarget<'a> {
 
 fn settle_budget_with_binding(
     connection: &Connection,
-    actor: &str,
+    author: EventAuthor<'_>,
     target: SettlementTarget<'_>,
     mode: SettlementMode,
     settlements: &[BudgetSettlement],
     note: Option<&str>,
 ) -> Result<SettlementOutcome> {
     let transaction = begin_mutation(connection)?;
-    let outcome = settle_budget_in(&transaction, actor, target, mode, settlements, note)?;
+    let outcome = settle_budget_in(&transaction, author, target, mode, settlements, note)?;
     transaction.commit()?;
     Ok(outcome)
 }
 
 fn settle_budget_in(
     transaction: &Transaction<'_>,
-    actor: &str,
+    author: EventAuthor<'_>,
     target: SettlementTarget<'_>,
     mode: SettlementMode,
     settlements: &[BudgetSettlement],
@@ -396,7 +400,7 @@ fn settle_budget_in(
 ) -> Result<SettlementOutcome> {
     let campaign_id = target.campaign_id;
     let reservation_id = target.reservation_id;
-    validate_request_identity(actor, campaign_id, reservation_id)?;
+    validate_request_identity(author.actor(), campaign_id, reservation_id)?;
     let measured = canonical_settlements(settlements)?;
     if mode == SettlementMode::ChargeReservation && !measured.is_empty() {
         bail!("charge-reservation settlement cannot also declare measured amounts");
@@ -501,7 +505,7 @@ fn settle_budget_in(
     }
     record_event_in_mutation(
         transaction,
-        actor,
+        author,
         "campaign",
         campaign_id,
         "budget-settled",
@@ -763,6 +767,7 @@ mod tests {
     fn prepared() -> Connection {
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize");
+        crate::store::author_test_connection(&connection);
         let mut manifest = crate::manifest::tests::valid_manifest();
         manifest.campaign_id = "budget-test".to_owned();
         manifest.execution_limits.maximum_trial_wall_time_ms = 1_000;

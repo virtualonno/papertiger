@@ -16,7 +16,7 @@ use crate::digest::sha256;
 use crate::manifest::{ContainmentGrade, Sha256Digest};
 use crate::object::{preserve_object, record_indexed_object};
 use crate::statistics::{PairedCandidateContext, PairedCohort};
-use crate::store::begin_mutation;
+use crate::store::{EventAuthor, begin_mutation};
 pub fn prepare_paired_cohort(
     connection: &Connection,
     actor: &str,
@@ -156,7 +156,7 @@ pub fn prepare_paired_cohort(
     }
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "paired_cohort",
         &spec.cohort_id,
         "prepared",

@@ -11,6 +11,27 @@ pub const GIT_CHANGE_SET_SCHEMA_V2: &str = "papertiger-mise.git_change_set.v2";
 pub const GIT_CHANGE_SET_PROTOCOL_V2: &str = "papertiger-mise.git_change_set.v2";
 pub const GIT_CHANGE_SET_MEDIA_TYPE: &str = "application/vnd.papertiger-mise.git-change-set+json";
 
+/// The canonical model that authored a candidate's material: trimmed and
+/// lowercased like every recorded model, validated with the planner's model
+/// vocabulary, and never the reserved `runtime` model. The operator's own
+/// material is recorded as `human`.
+pub fn candidate_author_model(authored_by: &str) -> Result<String> {
+    let model = authored_by.trim().to_ascii_lowercase();
+    // validate_model's only refusal is the identifier shape; name this flag instead of --model.
+    if papertiger::validate_model(&model).is_err() {
+        bail!(
+            "candidate --authored-by '{authored_by}' must be a model identifier of at most 160 ASCII letters, digits, '.', '_', ':', '/', or '-'; pass `candidate record --authored-by <model-id>` naming the model that authored the material, or `human` for the operator's own"
+        );
+    }
+    if model == papertiger::RUNTIME_MODEL {
+        bail!(
+            "the model '{}' is reserved for transitions the runtime performs itself and never authors candidate material; pass `candidate record --authored-by <model-id>` naming the model that authored it, or `human` for the operator's own",
+            papertiger::RUNTIME_MODEL
+        );
+    }
+    Ok(model)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hypothesis {
@@ -438,6 +459,22 @@ fn decode_hex(value: &str, role: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn candidate_author_is_a_canonical_model_and_never_the_runtime() {
+        assert_eq!(candidate_author_model(" Human ").unwrap(), "human");
+        assert_eq!(
+            candidate_author_model("DeepSeek-V4.1-Flash").unwrap(),
+            "deepseek-v4.1-flash"
+        );
+        for refused in ["", "two words", "runtime", "RUNTIME"] {
+            let error = candidate_author_model(refused).unwrap_err().to_string();
+            assert!(
+                error.contains("candidate record --authored-by <model-id>"),
+                "{error}"
+            );
+        }
+    }
 
     /// Canonical typed material that modifies one existing regular file.
     pub(crate) fn modify_regular_file(path: &str, old: &[u8], new: &[u8]) -> Vec<u8> {

@@ -233,6 +233,7 @@ fn prepared_with_evaluator_request_and_frozen_rust_inputs(
         Connection::open_in_memory().expect("database")
     };
     init(&connection).expect("schema");
+    crate::store::author_test_connection(&connection);
     let mut manifest = crate::manifest::tests::valid_manifest();
     manifest.containment = crate::manifest::ContainmentGrade::WorkspaceOnly;
     manifest.containment_requirement = None;
@@ -707,6 +708,7 @@ fn prepared_trial_with_evaluator_request_and_frozen_rust_inputs(
         "candidate-budget",
         &candidate,
         &material,
+        "test-author",
     )
     .expect("candidate");
     let candidate_materialization = fake_materialization(
@@ -746,6 +748,7 @@ fn prepared_trial_with_evaluator_request_and_frozen_rust_inputs(
         "baseline-candidate-budget",
         &no_op,
         &no_op_object,
+        "test-author",
     )
     .expect("baseline candidate");
     let baseline_materialization =
@@ -791,6 +794,7 @@ fn cancellation_survives_reopen_stops_real_trial_and_charges_once() {
     );
     let db = objects.path().join("mise.sqlite");
     let observer = crate::store::open_existing(&db).unwrap();
+    crate::store::author_test_connection(&observer);
     observer.busy_timeout(Duration::from_secs(1)).unwrap();
     connection.busy_timeout(Duration::from_secs(1)).unwrap();
     let spec = SupervisedTrialSpec {
@@ -834,6 +838,7 @@ fn cancellation_survives_reopen_stops_real_trial_and_charges_once() {
     .unwrap();
     drop(observer);
     let reopened = crate::store::open_existing(&db).unwrap();
+    crate::store::author_test_connection(&reopened);
     reopened.busy_timeout(Duration::from_secs(1)).unwrap();
     assert_eq!(
         cancellation_request(&reopened, CancellationTarget::Trial, "cancel-trial").unwrap(),
@@ -1114,6 +1119,7 @@ fn prepared_git_materialization() -> (
 
     let connection = Connection::open_in_memory().expect("database");
     init(&connection).expect("schema");
+    crate::store::author_test_connection(&connection);
     let admission = CampaignAdmission::from_manifest(&manifest).expect("admission");
     admit_campaign(&connection, "test", &admission).expect("campaign");
 
@@ -1151,6 +1157,7 @@ fn prepared_git_materialization() -> (
         "candidate-budget",
         &candidate,
         &material,
+        "test-author",
     )
     .expect("record candidate");
     reserve_budget(
@@ -1180,6 +1187,7 @@ fn candidate_identity_and_budget_use_are_exactly_replayable() {
             "candidate-budget",
             &candidate,
             &material,
+            "test-author",
         )
         .expect("record candidate")
     );
@@ -1191,6 +1199,7 @@ fn candidate_identity_and_budget_use_are_exactly_replayable() {
             "candidate-budget",
             &candidate,
             &material,
+            "test-author",
         )
         .expect("record replay")
     );
@@ -1200,6 +1209,90 @@ fn candidate_identity_and_budget_use_are_exactly_replayable() {
             .expect("durable candidate")
             .disposition,
         CandidateDisposition::Proposed
+    );
+}
+
+#[test]
+fn candidate_registration_records_the_model_that_authored_its_material() {
+    let (connection, objects, candidate) = prepared();
+    let material =
+        preserve_object(objects.path(), &candidate.material_bytes).expect("material object");
+    for (authored_by, refusal) in [
+        ("  ", "candidate record --authored-by <model-id>"),
+        (
+            "Runtime",
+            "reserved for transitions the runtime performs itself",
+        ),
+    ] {
+        let error = record_candidate(
+            &connection,
+            "test",
+            objects.path(),
+            "candidate-budget",
+            &candidate,
+            &material,
+            authored_by,
+        )
+        .expect_err("candidate registration requires a real authoring model");
+        assert!(format!("{error:#}").contains(refusal), "{error:#}");
+        assert!(
+            crate::lifecycle::candidate(&connection, &candidate.candidate_id)
+                .expect("candidate query")
+                .is_none()
+        );
+    }
+    assert!(
+        record_candidate(
+            &connection,
+            "test",
+            objects.path(),
+            "candidate-budget",
+            &candidate,
+            &material,
+            "Claude-Opus-5-5",
+        )
+        .expect("record candidate")
+    );
+    let durable = crate::lifecycle::candidate(&connection, &candidate.candidate_id)
+        .expect("candidate query")
+        .expect("durable candidate");
+    assert_eq!(durable.authored_by.as_deref(), Some("claude-opus-5-5"));
+    let payload: String = connection
+        .query_row(
+            "SELECT payload FROM events
+             WHERE entity='candidate' AND entity_key=?1 AND kind='recorded'",
+            [&candidate.candidate_id],
+            |row| row.get(0),
+        )
+        .expect("recorded event");
+    let payload: serde_json::Value = serde_json::from_str(&payload).expect("payload JSON");
+    assert_eq!(payload["authored_by"], "claude-opus-5-5");
+    assert_eq!(payload["model"], "test-model");
+    assert_eq!(payload["model_source"], "flag");
+
+    // The authoring model is part of the durable record: a replay that names
+    // another author conflicts instead of silently rewriting provenance.
+    let error = record_candidate(
+        &connection,
+        "test",
+        objects.path(),
+        "candidate-budget",
+        &candidate,
+        &material,
+        "human",
+    )
+    .expect_err("a replay cannot change the authoring model");
+    assert!(error.to_string().contains("authored_by"), "{error:#}");
+    let error = connection
+        .execute(
+            "UPDATE candidates SET authored_by='human' WHERE candidate_id=?1",
+            [&candidate.candidate_id],
+        )
+        .expect_err("the authoring model is immutable");
+    assert!(
+        error
+            .to_string()
+            .contains("candidate identity is immutable")
     );
 }
 
@@ -1216,6 +1309,7 @@ fn caller_constructed_candidate_fields_cannot_bypass_canonical_binding() {
         "candidate-budget",
         &candidate,
         &material,
+        "test-author",
     )
     .expect_err("forged public candidate fields must be refused");
     assert!(
@@ -1273,6 +1367,44 @@ fn workspace_supervisor_owns_real_process_and_completion() {
         execute_workspace_trial(&connection, "workspace-supervisor", objects.path(), &spec)
             .expect("replay without execution");
     assert_eq!(replay.receipt, outcome.receipt);
+    // The caller authored the trial request; the runtime authored every
+    // transition it performed while supervising and settling it.
+    let mut statement = connection
+        .prepare(
+            "SELECT kind, actor, json_extract(payload, '$.model'),
+                    json_extract(payload, '$.model_source')
+             FROM events
+             WHERE (entity='trial' AND entity_key='supervised-exploration')
+                OR (entity='campaign' AND kind='budget-settled'
+                    AND json_extract(payload, '$.reservation_id')=?1)
+             ORDER BY event_id",
+        )
+        .expect("event query");
+    let events = statement
+        .query_map([&spec.reservation_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .expect("event rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("events");
+    assert_eq!(events[0].0, "owned-intent-recorded");
+    assert!(events.iter().any(|event| event.0 == "launched"));
+    assert!(events.iter().any(|event| event.0 == "completed"));
+    assert!(events.iter().any(|event| event.0 == "budget-settled"));
+    for (kind, actor, model, source) in &events {
+        assert_eq!(actor, "workspace-supervisor");
+        let expected = if kind == "owned-intent-recorded" {
+            ("test-model", "flag")
+        } else {
+            ("runtime", "runtime")
+        };
+        assert_eq!((model.as_str(), source.as_str()), expected, "{kind}");
+    }
     assert!(
         crate::cancellation::request_cancellation(
             &connection,
@@ -2789,6 +2921,7 @@ fn record_fixture_candidate(
         reservation_id,
         &candidate,
         &object,
+        "test-author",
     )
     .expect("record fixture candidate");
     fake_materialization(
@@ -3131,6 +3264,7 @@ fn nomination_is_derived_from_calibrated_bound_trials_only() {
     let mise_path = objects.path().join("mise.sqlite");
     let connection = Connection::open(&mise_path).expect("database");
     init(&connection).expect("schema");
+    crate::store::author_test_connection(&connection);
     let known_bad_material = modify_regular_file("src/fixture.rs", b"old\n", b"known-bad\n");
     let improved_material = modify_regular_file("src/fixture.rs", b"old\n", b"improved\n");
     let mut manifest = crate::manifest::tests::valid_manifest();

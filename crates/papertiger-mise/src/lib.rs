@@ -62,7 +62,7 @@ pub use candidate::{
     BoundCandidate, CandidateDisposition, CandidateMaterial, CandidateMaterialFormat,
     CandidateProposal, GIT_CHANGE_SET_MEDIA_TYPE, GIT_CHANGE_SET_PROTOCOL_V2, GitChange,
     GitChangeOperation, GitChangeSet, GitChangeSetScope, GitFileContent, GitFileIdentity,
-    GitFileMode, Hypothesis, bind_candidate,
+    GitFileMode, Hypothesis, bind_candidate, candidate_author_model,
 };
 pub use classification::{
     Classification, DeterministicObservation, ObjectiveResult, classify_deterministic,

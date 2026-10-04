@@ -31,7 +31,7 @@ use crate::statistics::{
     PairedDisposition, assess_known_bad_cohort, assess_no_op_cohort, classify_paired_fixed,
     paired_analysis_slot,
 };
-use crate::store::{begin_mutation, campaign, now, record_event_in_mutation};
+use crate::store::{EventAuthor, begin_mutation, campaign, now, record_event_in_mutation};
 use crate::validation::validate_bounded_token as validate_token;
 use papertiger::process_identity::{ProcessObservation, observe_process};
 
@@ -780,7 +780,7 @@ pub fn adjudicate_paired_cohort(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "paired_cohort",
         cohort_id,
         "adjudicated",
@@ -1004,7 +1004,7 @@ pub fn derive_paired_nomination(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "candidate",
         &nomination.candidate_id,
         "nominated",
@@ -1473,7 +1473,7 @@ fn terminal_cohort_failure(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "paired_cohort",
         &cohort.cohort_id,
         "integrity_failed",
@@ -1545,7 +1545,7 @@ fn complete_paired_execution(
     }
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "paired_run",
         &run.execution_id,
         "succeeded",
@@ -1643,7 +1643,7 @@ fn terminal_run_failure(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "paired_run",
         &run.execution_id,
         terminal_status.as_str(),
@@ -1686,7 +1686,7 @@ fn mark_paired_execution_launched(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "paired_run",
         execution_id,
         "launched",
@@ -1716,7 +1716,7 @@ fn heartbeat_paired_execution(
     }
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "paired_run",
         execution_id,
         "heartbeat",

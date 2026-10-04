@@ -14,9 +14,30 @@ use crate::digest::{sha256, validate_sha256};
 use crate::manifest::CampaignManifest;
 use crate::validation::validate_nonblank;
 
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 pub const AUTHORITY_IDENTITY: &str = "papertiger.mise";
 const AUTHORITY_IDENTITY_KEY: &str = "authority";
+
+/// Authorship: every new candidate names the model that authored its
+/// material, and every new event carries the authorship the event-insert path
+/// merges. Candidates and events recorded before v11 predate authorship and
+/// stay valid without it.
+pub(crate) const AUTHORSHIP_SCHEMA_V11: &str = r#"
+ALTER TABLE candidates ADD COLUMN authored_by TEXT;
+DROP TRIGGER candidate_identity_no_update;
+CREATE TRIGGER candidate_identity_no_update
+BEFORE UPDATE OF candidate_id, campaign_id, proposal_json, patch_sha256, negative_fingerprint, authored_by, created_at
+ON candidates BEGIN SELECT RAISE(ABORT, 'candidate identity is immutable'); END;
+CREATE TRIGGER candidate_authorship_required BEFORE INSERT ON candidates
+WHEN NEW.authored_by IS NULL OR trim(NEW.authored_by)='' OR NEW.authored_by='runtime'
+BEGIN SELECT RAISE(ABORT, 'candidate registration records the model that authored its material; pass `candidate record --authored-by <model-id>` (never the reserved runtime model)'); END;
+CREATE TRIGGER event_authorship_required BEFORE INSERT ON events
+WHEN NEW.payload IS NULL OR NOT json_valid(NEW.payload)
+  OR json_type(NEW.payload, '$.model') IS NOT 'text'
+  OR coalesce(json_extract(NEW.payload, '$.model_source'), '') NOT IN ('flag','environment','runtime')
+  OR (json_extract(NEW.payload, '$.model')='runtime') != (json_extract(NEW.payload, '$.model_source')='runtime')
+BEGIN SELECT RAISE(ABORT, 'papertiger-mise events record the model that authored them; pass --model <model-id> or set PAPERTIGER_MODEL'); END;
+"#;
 
 const MATERIALIZATION_RETRY_SCHEMA_V7: &str = r#"
 DROP TRIGGER budget_reservation_uses_no_update;
@@ -902,6 +923,7 @@ BEGIN SELECT RAISE(ABORT, 'nomination requires a qualified terminal candidate');
     transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V9)?;
     transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V10)?;
     transaction.execute_batch(SUCCESSOR_GATE_RESOLUTION_V10)?;
+    transaction.execute_batch(AUTHORSHIP_SCHEMA_V11)?;
     transaction.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
         params![SCHEMA_VERSION.to_string()],
@@ -1010,6 +1032,16 @@ fn migrate(connection: &Connection, from: i64) -> Result<()> {
         let transaction = begin_mutation(connection)?;
         transaction.execute_batch(crate::cancellation::CANCELLATION_SCHEMA_V10)?;
         transaction.execute_batch(SUCCESSOR_GATE_RESOLUTION_V10)?;
+        transaction.execute(
+            "UPDATE meta SET value=?1 WHERE key='schema_version'",
+            params![10_i64.to_string()],
+        )?;
+        transaction.commit()?;
+        return migrate(connection, 10);
+    }
+    if from == 10 {
+        let transaction = begin_mutation(connection)?;
+        transaction.execute_batch(AUTHORSHIP_SCHEMA_V11)?;
         transaction.execute(
             "UPDATE meta SET value=?1 WHERE key='schema_version'",
             params![SCHEMA_VERSION.to_string()],
@@ -1129,7 +1161,7 @@ fn insert_campaign_rows_in(
     }
     record_event_in_mutation(
         transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "campaign",
         &admission.campaign_id,
         "admitted",
@@ -1363,7 +1395,7 @@ pub(crate) fn admit_successor_campaign(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "campaign",
         &proof.parent_campaign_id,
         "successor-budget-debited",
@@ -1377,7 +1409,7 @@ pub(crate) fn admit_successor_campaign(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "campaign",
         &proof.successor_campaign_id,
         "successor-admitted",
@@ -1623,7 +1655,7 @@ pub fn append_campaign_event(
     }
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "campaign",
         campaign_id,
         kind,
@@ -1671,26 +1703,108 @@ pub fn campaign_events(connection: &Connection, campaign_id: &str) -> Result<Vec
         .collect()
 }
 
+/// Who performed the transition an event records. The actor label is the
+/// invoking caller's either way; the model distinguishes a caller's explicit
+/// request from a transition the runtime performed itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EventAuthor<'a> {
+    /// The caller's explicit request, attributed to the authorship installed
+    /// on the connection with `papertiger::set_authorship`.
+    Caller(&'a str),
+    /// A transition the runtime performed itself (execution, supervision,
+    /// classification, settlement), attributed to the reserved `runtime` model.
+    Runtime(&'a str),
+}
+
+impl<'a> EventAuthor<'a> {
+    pub(crate) fn actor(self) -> &'a str {
+        match self {
+            Self::Caller(actor) | Self::Runtime(actor) => actor,
+        }
+    }
+}
+
+/// The authorship fields a runtime-performed transition records.
+fn runtime_authorship_fields(actor: &str) -> serde_json::Map<String, Value> {
+    let runtime = papertiger::Authorship::runtime(actor);
+    let mut fields = serde_json::Map::new();
+    fields.insert("model".into(), runtime.model.into());
+    fields.insert("model_source".into(), runtime.model_source.as_str().into());
+    for (key, value) in [
+        ("harness", runtime.harness),
+        ("session", runtime.session),
+        ("reasoning_effort", runtime.reasoning_effort),
+    ] {
+        if let Some(value) = value {
+            fields.insert(key.into(), value.into());
+        }
+    }
+    fields
+}
+
+/// Attribute a test connection's writes to a fixed test model, as the CLI
+/// attributes a command's writes to its resolved caller.
+#[cfg(test)]
+pub(crate) fn author_test_connection(connection: &Connection) {
+    papertiger::set_authorship(
+        connection,
+        &papertiger::resolve_authorship(
+            papertiger::AuthorshipFlags {
+                actor: Some("test"),
+                model: Some("test-model"),
+                ..Default::default()
+            },
+            &|_| None,
+        )
+        .expect("test authorship"),
+    )
+    .expect("install test authorship");
+}
+
+/// The single event-insert path. Every event records its author in its
+/// payload; an event on a connection without installed authorship is refused,
+/// including a runtime transition, which only ever happens inside an authored
+/// command.
 pub(crate) fn record_event_in_mutation(
     transaction: &Transaction<'_>,
-    actor: &str,
+    author: EventAuthor<'_>,
     entity: &str,
     entity_key: &str,
     kind: &str,
     why: Option<&str>,
     payload: Option<&Value>,
 ) -> Result<()> {
+    let caller = papertiger::authorship::current_authorship(transaction).context(
+        "papertiger-mise events record the model that authored them; pass --model <model-id> or set PAPERTIGER_MODEL (library callers: install authorship with `papertiger::set_authorship`)",
+    )?;
+    let fields = match author {
+        EventAuthor::Caller(_) => caller,
+        EventAuthor::Runtime(actor) => runtime_authorship_fields(actor),
+    };
+    let mut payload = payload
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    let object = payload
+        .as_object_mut()
+        .context("papertiger-mise event payload must be a JSON object to record its authorship")?;
+    for (key, value) in fields {
+        if object.insert(key.clone(), value).is_some() {
+            bail!(
+                "papertiger-mise event '{kind}' payload already carries the authorship field '{key}'; authorship is recorded only by the event-insert path"
+            );
+        }
+    }
     transaction.execute(
         "INSERT INTO events (at, actor, entity, entity_key, kind, why, payload)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             now(),
-            actor,
+            author.actor(),
             entity,
             entity_key,
             kind,
             why,
-            payload.map(serde_json::to_string).transpose()?
+            serde_json::to_string(&payload)?
         ],
     )?;
     Ok(())
@@ -1777,6 +1891,16 @@ mod tests {
     use super::*;
     use crate::manifest::tests::valid_manifest;
 
+    /// Reverse the v11 authorship step, reconstructing the exact v10 boundary.
+    const UNDO_AUTHORSHIP_SCHEMA_V11: &str = "
+        DROP TRIGGER event_authorship_required;
+        DROP TRIGGER candidate_authorship_required;
+        DROP TRIGGER candidate_identity_no_update;
+        ALTER TABLE candidates DROP COLUMN authored_by;
+        CREATE TRIGGER candidate_identity_no_update
+        BEFORE UPDATE OF candidate_id, campaign_id, proposal_json, patch_sha256, negative_fingerprint, created_at
+        ON candidates BEGIN SELECT RAISE(ABORT, 'candidate identity is immutable'); END;";
+
     fn admission(id: &str) -> CampaignAdmission {
         let mut manifest = valid_manifest();
         manifest.campaign_id = id.to_owned();
@@ -1828,8 +1952,8 @@ mod tests {
             .execute(
                 "INSERT INTO candidates
                  (candidate_id, campaign_id, proposal_json, patch_sha256,
-                  negative_fingerprint, disposition, result_json, created_at, updated_at)
-                 VALUES (?1, ?2, '{}', ?3, 'fixture-negative', 'nominated', '{}', 'now', 'now')",
+                  negative_fingerprint, disposition, result_json, created_at, updated_at, authored_by)
+                 VALUES (?1, ?2, '{}', ?3, 'fixture-negative', 'nominated', '{}', 'now', 'now', 'test-author')",
                 params![candidate_id, parent.campaign_id, patch_sha256],
             )
             .expect("fixture candidate");
@@ -1970,6 +2094,7 @@ mod tests {
         let path = directory.path().join("mise.sqlite");
         let connection = open_for_init(&path).expect("initialization connection");
         init(&connection).expect("initialize");
+        crate::store::author_test_connection(&connection);
         init(&connection).expect("idempotent initialize");
         drop(connection);
         let read_only = open_existing_read_only(&path).expect("read-only existing database");
@@ -2000,6 +2125,7 @@ mod tests {
         init(&fresh).expect("initialize current schema");
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize current schema");
+        crate::store::author_test_connection(&connection);
         // Store one v9 rationale before the v9 triggers exist, so the
         // migration must carry real data rather than only reshape DDL.
         let (v9_table, v9_triggers) = crate::cancellation::CANCELLATION_SCHEMA_V9
@@ -2007,7 +2133,8 @@ mod tests {
             .expect("v9 schema defines triggers");
         connection
             .execute_batch(&format!(
-                "DROP TRIGGER cancellation_request_launched_guard;
+                "{UNDO_AUTHORSHIP_SCHEMA_V11}
+                 DROP TRIGGER cancellation_request_launched_guard;
                  DROP TRIGGER cancellation_requests_no_update;
                  DROP TRIGGER cancellation_requests_no_delete;
                  DROP TRIGGER trial_cancellation_success_guard;
@@ -2067,11 +2194,214 @@ mod tests {
         );
     }
 
+    fn record_probe(connection: &Connection, author: EventAuthor<'_>) -> Result<()> {
+        let transaction = begin_mutation(connection)?;
+        record_event_in_mutation(
+            &transaction,
+            author,
+            "campaign",
+            "campaign-a",
+            "probe",
+            None,
+            Some(&json!({"detail": "bounded"})),
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn event_payloads(connection: &Connection) -> Vec<(String, Value)> {
+        let mut statement = connection
+            .prepare("SELECT actor, payload FROM events ORDER BY event_id")
+            .expect("event query");
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .expect("event rows")
+            .map(|row| {
+                let (actor, payload) = row.expect("event row");
+                (actor, serde_json::from_str(&payload).expect("payload JSON"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn events_record_the_installed_caller_or_the_runtime() {
+        let connection = Connection::open_in_memory().expect("database");
+        init(&connection).expect("initialize");
+        let harness = [
+            ("CLAUDE_CODE_SESSION_ID", "e2affada-00fb-43a4"),
+            ("CLAUDE_EFFORT", "medium"),
+        ];
+        let caller = papertiger::resolve_authorship(
+            papertiger::AuthorshipFlags {
+                model: Some("Claude-Opus-5-5"),
+                ..Default::default()
+            },
+            &|name| {
+                harness
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| (*value).to_owned())
+            },
+        )
+        .expect("caller authorship");
+        papertiger::set_authorship(&connection, &caller).expect("install authorship");
+
+        record_probe(&connection, EventAuthor::Caller(&caller.actor)).expect("caller event");
+        record_probe(&connection, EventAuthor::Runtime(&caller.actor)).expect("runtime event");
+        let events = event_payloads(&connection);
+        assert_eq!(
+            events,
+            vec![
+                (
+                    "claude-e2affada".to_owned(),
+                    json!({
+                        "detail": "bounded",
+                        "model": "claude-opus-5-5",
+                        "model_source": "flag",
+                        "harness": "Claude Code",
+                        "session": "e2affada-00fb-43a4",
+                        "reasoning_effort": "medium",
+                    })
+                ),
+                (
+                    "claude-e2affada".to_owned(),
+                    json!({
+                        "detail": "bounded",
+                        "model": "runtime",
+                        "model_source": "runtime",
+                    })
+                ),
+            ]
+        );
+
+        // Authorship is recorded only by the insert path, never pre-asserted.
+        let transaction = begin_mutation(&connection).expect("mutation");
+        let error = record_event_in_mutation(
+            &transaction,
+            EventAuthor::Caller("agent"),
+            "campaign",
+            "campaign-a",
+            "probe",
+            None,
+            Some(&json!({"model": "runtime"})),
+        )
+        .expect_err("payload cannot claim authorship");
+        assert!(error.to_string().contains("authorship field 'model'"));
+    }
+
+    #[test]
+    fn an_event_without_installed_authorship_is_refused() {
+        let connection = Connection::open_in_memory().expect("database");
+        init(&connection).expect("initialize");
+        for author in [EventAuthor::Caller("agent"), EventAuthor::Runtime("agent")] {
+            let error = format!(
+                "{:#}",
+                record_probe(&connection, author).expect_err("unauthored event")
+            );
+            assert!(error.contains("--model <model-id>"), "{error}");
+            assert!(error.contains("PAPERTIGER_MODEL"), "{error}");
+        }
+        // The authority refuses an unauthored or mis-sourced event even from
+        // a direct insert that bypasses the event-insert path.
+        for payload in [
+            None,
+            Some(r#"{"detail":"bounded"}"#),
+            Some(r#"{"model":"agent-model"}"#),
+            Some(r#"{"model":"runtime","model_source":"flag"}"#),
+            Some(r#"{"model":"agent-model","model_source":"runtime"}"#),
+        ] {
+            let error = connection
+                .execute(
+                    "INSERT INTO events (at, actor, entity, entity_key, kind, payload)
+                     VALUES ('now', 'agent', 'campaign', 'campaign-a', 'probe', ?1)",
+                    [payload],
+                )
+                .expect_err("unauthored direct insert");
+            assert!(
+                error.to_string().contains("--model <model-id>"),
+                "{payload:?}: {error}"
+            );
+        }
+        assert!(event_payloads(&connection).is_empty());
+    }
+
+    #[test]
+    fn schema_ten_migrates_to_required_authorship_and_keeps_older_records() {
+        let fresh = Connection::open_in_memory().expect("fresh database");
+        init(&fresh).expect("initialize current schema");
+        let connection = Connection::open_in_memory().expect("database");
+        init(&connection).expect("initialize current schema");
+        connection
+            .execute_batch(UNDO_AUTHORSHIP_SCHEMA_V11)
+            .expect("reverse the v11 authorship step");
+        // Records written before authorship was required carry none of it.
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys=OFF;
+                 INSERT INTO events (at, actor, entity, entity_key, kind, payload)
+                   VALUES ('2026-09-01T00:00:00Z', 'operator', 'campaign', 'campaign-v10',
+                           'budget-reserved', '{\"reservation_id\":\"r1\"}');
+                 INSERT INTO candidates
+                   (candidate_id, campaign_id, proposal_json, patch_sha256, negative_fingerprint,
+                    created_at, updated_at)
+                   VALUES ('candidate-v10', 'campaign-v10', '{}', 'a', 'n',
+                           '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z');
+                 PRAGMA foreign_keys=ON;
+                 UPDATE meta SET value='10' WHERE key='schema_version';",
+            )
+            .expect("construct exact v10 boundary");
+
+        assert_eq!(
+            init(&connection).expect("explicit migration"),
+            AuthorityInitOutcome::Migrated { from: 10, to: 11 }
+        );
+        let ddl = |connection: &Connection| -> Vec<String> {
+            let mut statement = connection
+                .prepare(
+                    "SELECT sql FROM sqlite_schema
+                     WHERE tbl_name IN ('candidates', 'events') AND sql IS NOT NULL
+                     ORDER BY name",
+                )
+                .expect("DDL query");
+            statement
+                .query_map([], |row| row.get(0))
+                .expect("DDL rows")
+                .collect::<rusqlite::Result<_>>()
+                .expect("DDL")
+        };
+        assert_eq!(ddl(&connection), ddl(&fresh));
+        let events = campaign_events(&connection, "campaign-v10").expect("older events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].payload, Some(json!({"reservation_id": "r1"})));
+        let older_author: Option<String> = connection
+            .query_row(
+                "SELECT authored_by FROM candidates WHERE candidate_id='candidate-v10'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("older candidate survives migration");
+        assert_eq!(older_author, None);
+        let error = connection
+            .execute(
+                "INSERT INTO events (at, actor, entity, entity_key, kind, payload)
+                 VALUES ('now', 'operator', 'campaign', 'campaign-v10', 'probe', '{}')",
+                [],
+            )
+            .expect_err("new events require authorship after migration");
+        assert!(error.to_string().contains("--model <model-id>"));
+    }
+
     #[test]
     fn schema_one_migrates_explicitly_through_all_later_authorities() {
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize current schema");
+        crate::store::author_test_connection(&connection);
         let fresh_family_schema = trust_boundary_family_schema(&connection);
+        connection
+            .execute_batch(UNDO_AUTHORSHIP_SCHEMA_V11)
+            .expect("reverse the v11 authorship step");
         connection
             .execute_batch(
                 "DROP TABLE cancellation_requests;
@@ -2179,6 +2509,7 @@ mod tests {
     fn domain_shadow_schema_requires_unchanged_state_and_refuses_decision_authority() {
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize");
+        crate::store::author_test_connection(&connection);
         let request = "a".repeat(64);
         let result = "b".repeat(64);
         let receipt = "c".repeat(64);
@@ -2234,6 +2565,7 @@ mod tests {
     fn historical_shadow_schema_cannot_be_made_decision_eligible_or_reused() {
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize");
+        crate::store::author_test_connection(&connection);
         let request = "a".repeat(64);
         let result = "b".repeat(64);
         let receipt = "c".repeat(64);
@@ -2306,6 +2638,7 @@ mod tests {
     fn campaign_admission_is_immutable_and_evented_once() {
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize");
+        crate::store::author_test_connection(&connection);
         let admission = admission("campaign-a");
         assert_eq!(
             admit_campaign(&connection, "agent", &admission).expect("admit"),
@@ -2358,6 +2691,7 @@ mod tests {
     fn descendant_admission_fails_closed_without_verified_parent_promotion() {
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize");
+        crate::store::author_test_connection(&connection);
         let mut parent = valid_manifest();
         parent.campaign_id = "generation-one".to_owned();
         let parent_admission = CampaignAdmission::from_manifest(&parent).expect("parent");
@@ -2401,6 +2735,7 @@ mod tests {
     fn verified_successor_atomically_debits_parent_and_replays_without_double_charge() {
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize");
+        crate::store::author_test_connection(&connection);
         let fixture = successor_fixture(&connection, "papertiger-lineage-child-a01");
         let child_admission =
             CampaignAdmission::from_manifest(&fixture.child).expect("child admission");
@@ -2472,6 +2807,7 @@ mod tests {
     fn successor_refusals_leave_parent_ledger_and_child_admission_unchanged() {
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize");
+        crate::store::author_test_connection(&connection);
         let fixture = successor_fixture(&connection, "papertiger-lineage-child-a02");
         let child_admission =
             CampaignAdmission::from_manifest(&fixture.child).expect("child admission");
@@ -2551,6 +2887,7 @@ mod tests {
         let path = directory.path().join("mise.sqlite");
         let first = open_for_init(&path).expect("first connection");
         init(&first).expect("initialize");
+        crate::store::author_test_connection(&first);
         let second = open_existing(&path).expect("second connection");
         let transaction = begin_mutation(&first).expect("writer reservation");
         let error = begin_mutation(&second).expect_err("second writer must fail");
@@ -2573,6 +2910,7 @@ mod tests {
     fn authority_status_is_bounded_and_reports_open_work_without_judging_it() {
         let connection = Connection::open_in_memory().expect("database");
         init(&connection).expect("initialize");
+        crate::store::author_test_connection(&connection);
         let first = admission("project-improvement-a01");
         let second = admission("project-improvement-a02");
         admit_campaign(&connection, "agent", &first).expect("first campaign");

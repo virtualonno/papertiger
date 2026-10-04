@@ -662,6 +662,7 @@ mod tests {
         };
         let connection = Connection::open_in_memory().expect("Mise authority");
         init(&connection).expect("initialize Mise authority");
+        crate::store::author_test_connection(&connection);
         let objects = temporary.path().join("objects");
         let (outcome, record) =
             record_domain_shadow(&connection, "fixture", &objects, &binding, &request)

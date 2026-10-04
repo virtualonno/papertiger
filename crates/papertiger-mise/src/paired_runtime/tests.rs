@@ -59,6 +59,7 @@ fn cancellation_of_real_paired_run_settles_the_entire_cohort() {
     );
     let db = fixture._repository_owner.path().join("mise.sqlite");
     let observer = crate::store::open_existing(&db).unwrap();
+    crate::store::author_test_connection(&observer);
     observer.busy_timeout(Duration::from_secs(1)).unwrap();
     fixture
         .connection
@@ -126,6 +127,7 @@ fn cancellation_of_real_paired_run_settles_the_entire_cohort() {
     );
     drop(observer);
     let reopened = crate::store::open_existing(&db).unwrap();
+    crate::store::author_test_connection(&reopened);
     assert_eq!(
         cancellation_request(
             &reopened,
@@ -379,6 +381,40 @@ fn persisted_calibrations_and_research_adjudicate_only_from_reopened_receipts() 
             .spent_amount,
         0
     );
+    // Preparation is the caller's request; execution, adjudication, and
+    // nomination are transitions the runtime performs itself.
+    let mut statement = fixture
+        .connection
+        .prepare(
+            "SELECT kind, json_extract(payload, '$.model') FROM events
+             WHERE kind IN ('prepared', 'launched', 'heartbeat', 'succeeded',
+                            'adjudicated', 'nominated')",
+        )
+        .unwrap();
+    let events = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    for kind in [
+        "prepared",
+        "launched",
+        "succeeded",
+        "adjudicated",
+        "nominated",
+    ] {
+        assert!(events.iter().any(|event| event.0 == kind), "missing {kind}");
+    }
+    for (kind, model) in &events {
+        let expected = if kind == "prepared" {
+            "test-model"
+        } else {
+            "runtime"
+        };
+        assert_eq!(model, expected, "{kind}");
+    }
 }
 
 #[test]
@@ -469,6 +505,7 @@ impl Fixture {
             Connection::open_in_memory().expect("database")
         };
         init(&connection).expect("schema");
+        crate::store::author_test_connection(&connection);
         let source = repository_owner.path().join("source");
         let runs = repository_owner.path().join("runs");
         std::fs::create_dir_all(source.join("src")).expect("source directory");
@@ -863,8 +900,8 @@ fn seed_candidate(
         .execute(
             "INSERT INTO candidates
                  (candidate_id, campaign_id, proposal_json, patch_sha256,
-                  negative_fingerprint, disposition, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'materialized', ?6, ?6)",
+                  negative_fingerprint, disposition, created_at, updated_at, authored_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'materialized', ?6, ?6, 'test-author')",
             params![
                 candidate.candidate_id,
                 manifest.campaign_id,

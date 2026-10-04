@@ -104,7 +104,7 @@ pub(super) fn reconcile_lost_trial(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "trial",
         trial_id,
         "reconciled-infrastructure-failure",
@@ -187,7 +187,7 @@ pub fn abandon_owned_trial(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "trial",
         trial_id,
         "abandoned-before-launch",
@@ -332,7 +332,7 @@ fn recover_succeeded_trial_settlement(
     if outcome == SettlementOutcome::Settled {
         record_event_in_mutation(
             &transaction,
-            actor,
+            EventAuthor::Runtime(actor),
             "trial",
             &current.trial_id,
             "settlement-recovered",

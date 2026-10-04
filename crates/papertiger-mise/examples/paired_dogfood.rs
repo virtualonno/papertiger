@@ -354,6 +354,15 @@ fn main() -> Result<()> {
     let database = state.join("mise.sqlite");
     let connection = open_for_init(&database)?;
     init(&connection)?;
+    // Every event records its author: the model comes from PAPERTIGER_MODEL,
+    // exactly as `papertiger-mise` resolves it for a command.
+    papertiger::set_authorship(
+        &connection,
+        &papertiger::resolve_authorship_from_env(papertiger::AuthorshipFlags {
+            actor: Some(ACTOR),
+            ..Default::default()
+        })?,
+    )?;
     admit_verified_campaign(&connection, ACTOR, &verified)?;
     for fixture in [&no_op, &known_bad, &research] {
         record_and_materialize(&connection, &objects, fixture)?;
@@ -738,6 +747,7 @@ fn record_and_materialize(
         &candidate_reservation,
         &fixture.candidate,
         &material_object,
+        "paired-dogfood-author",
     )?;
     let materialization_reservation =
         format!("materialize-{}", &fixture.candidate.candidate_id[..12]);

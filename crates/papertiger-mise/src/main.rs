@@ -49,9 +49,18 @@ struct Cli {
     /// Mise authority database, relative to the project root.
     #[arg(long, default_value = "state/papertiger-mise.sqlite")]
     db: PathBuf,
-    /// Event author recorded on every mutation.
-    #[arg(long, env = "PAPERTIGER_ACTOR", default_value = "operator")]
-    actor: String,
+    /// Actor label recorded on events (default: PAPERTIGER_ACTOR, else the harness and session, else 'operator' for the human model, else the model); provenance, never ownership
+    #[arg(long, global = true)]
+    actor: Option<String>,
+    /// Session recorded on events (default: PAPERTIGER_SESSION, else the harness session)
+    #[arg(long, global = true)]
+    session: Option<String>,
+    /// Model that authored this write (default: PAPERTIGER_MODEL); every command that writes the authority requires one, and commands that write nothing ignore it
+    #[arg(long, global = true)]
+    model: Option<String>,
+    /// Configured reasoning effort of the authoring model (default: PAPERTIGER_REASONING_EFFORT or the harness)
+    #[arg(long, global = true)]
+    reasoning_effort: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -339,6 +348,9 @@ enum CandidateCommand {
         /// Reservation charged for the candidate.
         #[arg(long)]
         reservation: String,
+        /// Model that authored the candidate material (`human` for the operator's own); never the reserved `runtime`
+        #[arg(long, value_name = "MODEL")]
+        authored_by: String,
         #[arg(long, default_value = "state/papertiger-mise-objects", help = OBJECTS_HELP)]
         objects: PathBuf,
     },
@@ -687,8 +699,72 @@ fn render_error(error: &anyhow::Error) -> String {
     rendered.join(": ")
 }
 
+impl Command {
+    /// Whether this command writes the Mise authority: it records events (or,
+    /// for shadow evidence, an authored row) and so resolves its caller's
+    /// authorship. Every other command ignores the authorship flags.
+    fn writes_authority(&self) -> bool {
+        matches!(
+            self,
+            Command::Campaign(
+                CampaignCommand::Admit { .. } | CampaignCommand::AdmitSuccessor { .. }
+            ) | Command::Budget(
+                BudgetCommand::Reserve { .. }
+                    | BudgetCommand::Settle { .. }
+                    | BudgetCommand::Release { .. }
+            ) | Command::Candidate(
+                CandidateCommand::Record { .. }
+                    | CandidateCommand::Materialize { .. }
+                    | CandidateCommand::AbandonMaterialization { .. }
+                    | CandidateCommand::Adjudicate { .. }
+            ) | Command::Trial(
+                TrialCommand::Cancel { .. }
+                    | TrialCommand::Run { .. }
+                    | TrialCommand::Recover { .. }
+                    | TrialCommand::Abandon { .. }
+            ) | Command::Paired(
+                PairedCommand::Cancel { .. }
+                    | PairedCommand::ReserveSlot { .. }
+                    | PairedCommand::Prepare { .. }
+                    | PairedCommand::ExecuteNext { .. }
+                    | PairedCommand::Adjudicate { .. }
+                    | PairedCommand::DeriveNomination { .. }
+                    | PairedCommand::Recover { .. }
+            ) | Command::Evidence(
+                EvidenceCommand::RecordDomain { .. } | EvidenceCommand::RecordHistorical { .. }
+            )
+        )
+    }
+}
+
 fn run(cli: Cli) -> Result<()> {
     let project_root = bind_project_root(cli.project_root.as_deref())?;
+    // Every authority write records its author, resolved exactly as the
+    // planner resolves it; a command that writes nothing ignores the flags.
+    let authorship = if cli.command.writes_authority() {
+        Some(papertiger::resolve_authorship_from_env(
+            papertiger::AuthorshipFlags {
+                actor: cli.actor.as_deref(),
+                session: cli.session.as_deref(),
+                model: cli.model.as_deref(),
+                reasoning_effort: cli.reasoning_effort.as_deref(),
+            },
+        )?)
+    } else {
+        None
+    };
+    let actor = authorship
+        .as_ref()
+        .map(|authorship| authorship.actor.clone())
+        .unwrap_or_default();
+    let open_authored = |database: &std::path::Path| -> Result<rusqlite::Connection> {
+        let authorship = authorship.as_ref().context(
+            "internal defect: this command opens the authority for writing but is missing from `Command::writes_authority`, so no authorship was resolved",
+        )?;
+        let connection = open_existing(database)?;
+        papertiger::set_authorship(&connection, authorship)?;
+        Ok(connection)
+    };
     match cli.command {
         Command::Guide { reference } => {
             print!(
@@ -938,8 +1014,8 @@ fn run(cli: Cli) -> Result<()> {
             manifest: manifest_path,
         }) => {
             let admission = verify_campaign_admission(&manifest_path)?;
-            let connection = open_existing(&cli.db)?;
-            let outcome = admit_verified_campaign(&connection, &cli.actor, &admission)?;
+            let connection = open_authored(&cli.db)?;
+            let outcome = admit_verified_campaign(&connection, &actor, &admission)?;
             papertiger::outln!(
                 "campaign {} {} ({})",
                 admission.campaign_id(),
@@ -969,7 +1045,7 @@ fn run(cli: Cli) -> Result<()> {
             objects,
         }) => {
             let binding: PromotionGateBinding = read_json(&gate_binding)?;
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let verified = verify_successor_admission(
                 &connection,
                 &manifest,
@@ -978,7 +1054,7 @@ fn run(cli: Cli) -> Result<()> {
                 &parent_nomination,
                 &binding,
             )?;
-            let outcome = admit_verified_successor(&connection, &cli.actor, &verified)?;
+            let outcome = admit_verified_successor(&connection, &actor, &verified)?;
             let record = successor_admission(&connection, verified.campaign_id())?
                 .context("successor admission committed without an immutable receipt")?;
             papertiger::outln!(
@@ -1060,10 +1136,10 @@ fn run(cli: Cli) -> Result<()> {
                         .map(|(resource, amount)| BudgetRequest { resource, amount })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let outcome = reserve_budget(
                 &connection,
-                &cli.actor,
+                &actor,
                 &campaign_id,
                 &reservation_id,
                 &requests,
@@ -1094,10 +1170,10 @@ fn run(cli: Cli) -> Result<()> {
             } else {
                 SettlementMode::Measured
             };
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let outcome = settle_budget(
                 &connection,
-                &cli.actor,
+                &actor,
                 &campaign_id,
                 &reservation_id,
                 mode,
@@ -1112,10 +1188,10 @@ fn run(cli: Cli) -> Result<()> {
             why,
         }) => {
             let why = why.required()?;
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let outcome = papertiger_mise::budget::release_unused_budget(
                 &connection,
-                &cli.actor,
+                &actor,
                 &campaign_id,
                 &reservation_id,
                 &why,
@@ -1149,11 +1225,14 @@ fn run(cli: Cli) -> Result<()> {
             proposal,
             material,
             reservation,
+            authored_by,
             objects,
         }) => {
-            // Validate the existing authority before a wrong-CWD invocation can
-            // create or extend an object store beside an unrelated checkout.
-            let connection = open_existing(&cli.db)?;
+            // Refuse a missing or reserved authoring model, then validate the
+            // existing authority, before a wrong-CWD invocation can create or
+            // extend an object store beside an unrelated checkout.
+            let authored_by = papertiger_mise::candidate_author_model(&authored_by)?;
+            let connection = open_authored(&cli.db)?;
             let proposal: CandidateProposal = read_json(&proposal)?;
             let material_bytes = std::fs::read(&material)
                 .with_context(|| format!("read candidate material {}", material.display()))?;
@@ -1161,11 +1240,12 @@ fn run(cli: Cli) -> Result<()> {
             let material_object = preserve_object(&objects, &material_bytes)?;
             let created = record_candidate(
                 &connection,
-                &cli.actor,
+                &actor,
                 &objects,
                 &reservation,
                 &bound,
                 &material_object,
+                &authored_by,
             )?;
             papertiger::outln!(
                 "{}",
@@ -1182,10 +1262,10 @@ fn run(cli: Cli) -> Result<()> {
             worktree,
             objects,
         }) => {
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let record = materialize_candidate(
                 &connection,
-                &cli.actor,
+                &actor,
                 &objects,
                 &reservation,
                 &candidate_id,
@@ -1199,10 +1279,10 @@ fn run(cli: Cli) -> Result<()> {
             why,
         }) => {
             let why = why.required()?;
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let outcome = abandon_materialization_attempt(
                 &connection,
-                &cli.actor,
+                &actor,
                 &candidate_id,
                 &reservation,
                 &why,
@@ -1216,9 +1296,9 @@ fn run(cli: Cli) -> Result<()> {
             papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Candidate(CandidateCommand::Adjudicate { candidate_id }) => {
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let nomination =
-                adjudicate_deterministic_candidate(&connection, &cli.actor, &candidate_id)?;
+                adjudicate_deterministic_candidate(&connection, &actor, &candidate_id)?;
             let record = candidate(&connection, &candidate_id)?
                 .context("candidate disappeared during adjudication")?;
             papertiger::outln!(
@@ -1231,27 +1311,27 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Trial(TrialCommand::Run { spec, objects }) => {
             let spec: SupervisedTrialSpec = read_json(&spec)?;
-            let connection = open_existing(&cli.db)?;
-            let outcome = execute_workspace_trial(&connection, &cli.actor, &objects, &spec)?;
+            let connection = open_authored(&cli.db)?;
+            let outcome = execute_workspace_trial(&connection, &actor, &objects, &spec)?;
             papertiger::outln!("{}", serde_json::to_string_pretty(&outcome)?);
         }
         Command::Trial(TrialCommand::Recover { trial_id, objects }) => {
-            let connection = open_existing(&cli.db)?;
-            let outcome = recover_workspace_trial(&connection, &cli.actor, &objects, &trial_id)?;
+            let connection = open_authored(&cli.db)?;
+            let outcome = recover_workspace_trial(&connection, &actor, &objects, &trial_id)?;
             papertiger::outln!("trial {trial_id} {outcome:?}");
         }
         Command::Trial(TrialCommand::Abandon { trial_id, why }) => {
             let why = why.required()?;
-            let connection = open_existing(&cli.db)?;
-            let outcome = abandon_owned_trial(&connection, &cli.actor, &trial_id, &why)?;
+            let connection = open_authored(&cli.db)?;
+            let outcome = abandon_owned_trial(&connection, &actor, &trial_id, &why)?;
             papertiger::outln!("trial {trial_id} {outcome:?}");
         }
         Command::Trial(TrialCommand::Cancel { trial_id, why }) => {
             let why = why.required()?;
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let request = request_cancellation(
                 &connection,
-                &cli.actor,
+                &actor,
                 CancellationTarget::Trial,
                 &trial_id,
                 &why,
@@ -1272,9 +1352,8 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Paired(PairedCommand::Prepare { spec, objects }) => {
             let spec: PreparePairedCohortSpec = read_json(&spec)?;
-            let connection = open_existing(&cli.db)?;
-            let (outcome, record) =
-                prepare_paired_cohort(&connection, &cli.actor, &objects, &spec)?;
+            let connection = open_authored(&cli.db)?;
+            let (outcome, record) = prepare_paired_cohort(&connection, &actor, &objects, &spec)?;
             papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
@@ -1291,10 +1370,10 @@ fn run(cli: Cli) -> Result<()> {
         }) => {
             let revealed_order_seed = std::fs::read(&seed)
                 .with_context(|| format!("failed to read order-seed reveal {}", seed.display()))?;
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let record = reserve_paired_analysis_slot(
                 &connection,
-                &cli.actor,
+                &actor,
                 &campaign_id,
                 &candidate_id,
                 slot,
@@ -1303,15 +1382,14 @@ fn run(cli: Cli) -> Result<()> {
             papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Paired(PairedCommand::ExecuteNext { cohort_id, objects }) => {
-            let connection = open_existing(&cli.db)?;
-            let outcome =
-                execute_next_paired_execution(&connection, &cli.actor, &objects, &cohort_id)?;
+            let connection = open_authored(&cli.db)?;
+            let outcome = execute_next_paired_execution(&connection, &actor, &objects, &cohort_id)?;
             papertiger::outln!("{}", serde_json::to_string_pretty(&outcome)?);
         }
         Command::Paired(PairedCommand::Adjudicate { cohort_id, objects }) => {
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let (cohort, adjudication) =
-                adjudicate_paired_cohort(&connection, &cli.actor, &objects, &cohort_id)?;
+                adjudicate_paired_cohort(&connection, &actor, &objects, &cohort_id)?;
             papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
@@ -1326,10 +1404,10 @@ fn run(cli: Cli) -> Result<()> {
             known_bad,
             objects,
         }) => {
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let nomination = derive_paired_nomination(
                 &connection,
-                &cli.actor,
+                &actor,
                 &objects,
                 &DerivePairedNominationSpec {
                     research_cohort_id,
@@ -1351,9 +1429,8 @@ fn run(cli: Cli) -> Result<()> {
             execution_id,
             objects,
         }) => {
-            let connection = open_existing(&cli.db)?;
-            let record =
-                recover_paired_execution(&connection, &cli.actor, &objects, &execution_id)?;
+            let connection = open_authored(&cli.db)?;
+            let record = recover_paired_execution(&connection, &actor, &objects, &execution_id)?;
             papertiger::outln!("{}", serde_json::to_string_pretty(&record)?);
         }
         Command::Paired(PairedCommand::ShowCohort { cohort_id }) => {
@@ -1371,10 +1448,10 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Paired(PairedCommand::Cancel { execution_id, why }) => {
             let why = why.required()?;
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let request = request_cancellation(
                 &connection,
-                &cli.actor,
+                &actor,
                 CancellationTarget::PairedExecution,
                 &execution_id,
                 &why,
@@ -1420,9 +1497,9 @@ fn run(cli: Cli) -> Result<()> {
         }) => {
             let binding: PairedAdapterBinding = read_json(&binding)?;
             let request: serde_json::Value = read_json(&request)?;
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let (outcome, record) =
-                record_historical_shadow(&connection, &cli.actor, &objects, &binding, &request)?;
+                record_historical_shadow(&connection, &actor, &objects, &binding, &request)?;
             papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
@@ -1438,9 +1515,9 @@ fn run(cli: Cli) -> Result<()> {
         }) => {
             let binding: DomainShadowAdapterBinding = read_json(&binding)?;
             let request: serde_json::Value = read_json(&request)?;
-            let connection = open_existing(&cli.db)?;
+            let connection = open_authored(&cli.db)?;
             let (outcome, record) =
-                record_domain_shadow(&connection, &cli.actor, &objects, &binding, &request)?;
+                record_domain_shadow(&connection, &actor, &objects, &binding, &request)?;
             papertiger::outln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({

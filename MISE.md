@@ -691,9 +691,10 @@ cannot be reserved again. This makes prelaunch refusal recoverable without
 claiming that already bound or launched work used no resources.
 
 Every rationale flag also accepts `--why-file <path>` (or `-` for stdin).
-This binary requires Mise authority schema v10, which records the cancellation
-rationale as `why`. Migrate an existing authority deliberately with
-`papertiger-mise --db <database> init`; read commands never migrate it.
+This binary requires Mise authority schema v11, which requires authorship on
+every new event and an authoring model on every new candidate (v10 recorded the
+cancellation rationale as `why`). Migrate an existing authority deliberately
+with `papertiger-mise --db <database> init`; read commands never migrate it.
 
 Every campaign has a finite deadline, cumulative resource caps, failure caps,
 and a no-improvement stopping rule. Sequential early stopping is permitted only
@@ -706,6 +707,49 @@ The intended result is recursive improvement that remains comprehensible:
 autonomous enough to explore, strict enough to falsify itself, durable enough to
 recover decidable launched work after restart, and incapable of
 self-authorizing its own deployment.
+
+## Authorship
+
+Every new Mise event records who authored it, resolved exactly as the planner
+resolves authorship. A command that writes the authority requires the
+authoring model from the global `--model <model-id>` or `PAPERTIGER_MODEL`, and
+its events record `model`, `model_source` (`flag` or `environment`), and, when
+known, `harness`, `session`, and `reasoning_effort` in their payload. Harness
+and session come from the harness environment unless `--session` or
+`PAPERTIGER_SESSION` names one; `--reasoning-effort` or
+`PAPERTIGER_REASONING_EFFORT` overrides the harness's effort. The actor label
+is `--actor`, else `PAPERTIGER_ACTOR`, else the harness and session, else
+`operator` for the `human` model, else the model. `human` is refused inside a
+harness, and no caller may supply the reserved model `runtime`. Commands that
+write nothing — `init`, `status`, reads, inspection, preflight, and projection
+export — ignore these flags.
+
+Transitions the runtime performs itself record the model `runtime` (source
+`runtime`, no harness or session) under the invoking actor: trial and paired
+execution launch, heartbeat, completion, and integrity failure; candidate
+materialization; deterministic and paired adjudication; nomination derivation;
+recovery's reconciled failure and settlement; and every settlement of a
+lifecycle-bound reservation. A caller's explicit request records the caller:
+campaign and successor admission (including the parent budget debit), `budget
+reserve`, `settle`, and `release`, candidate recording, materialization retry
+binding and abandonment, trial intent and abandonment, cancellation requests,
+paired preparation, analysis-slot reservation, and sealed-attestation recording.
+
+`candidate record` requires `--authored-by <model-id>` naming the model that
+authored the candidate material (`human` for the operator's own, never
+`runtime`). It is validated before any object is written, stored on the
+candidate record as `authored_by`, and repeated in its `recorded` event; a
+replay naming a different author conflicts with the durable candidate.
+
+The single event-insert path refuses an event on a connection without
+installed authorship and names `--model <model-id>` or `PAPERTIGER_MODEL`;
+library callers install it with `papertiger::set_authorship`. The authority
+itself refuses a new event whose payload lacks a model with a consistent
+`flag`, `environment`, or `runtime` source, and a new candidate without an
+authoring model. Events and candidates recorded before schema v11 predate
+authorship and remain valid without it. Shadow-evidence commands resolve
+authorship too, but their rows record only the actor label (`recorded_by`)
+until the shadow schema carries the model.
 
 ## Operational boundary
 
@@ -823,7 +867,9 @@ gate; `campaign admit-successor`, `promotion verify-parent`, and `promotion
 verify` open it read-only and default it to `state/papertiger.sqlite`, resolved
 like every other relative path from the project root. `promotion derive` and
 `promotion verify` always refuse until sealed confirmation attestation lands.
-The examples below assume the prefix `papertiger-mise --project-root <consumer>`:
+The examples below assume the prefix `papertiger-mise --project-root <consumer>`;
+commands that write the authority also need `--model <model-id>` or
+`PAPERTIGER_MODEL`:
 
 ```text
 papertiger-mise --project-root <consumer> status --json
@@ -840,7 +886,7 @@ papertiger-mise campaign show-successor <campaign>
 papertiger-mise budget reserve <campaign> <reservation> --amount <resource>=<n>
 papertiger-mise budget release <campaign> <reservation> --why <rationale>
 papertiger-mise candidate build-material --repository <repo> --base-tree <tree> --result-tree <tree> --output <file>
-papertiger-mise candidate record --proposal <proposal.json> --material <material.json> --reservation <id>
+papertiger-mise candidate record --proposal <proposal.json> --material <material.json> --reservation <id> --authored-by <model-id>
 papertiger-mise candidate materialize <candidate> --reservation <id> --worktree <path>
 papertiger-mise candidate abandon-materialization <candidate> --reservation <id> --why <rationale>
 papertiger-mise candidate show <candidate>

@@ -1,10 +1,12 @@
-use std::process::{Command, Output};
+use std::process::Output;
 
 use serde_json::Value;
 use tempfile::tempdir;
 
+mod support;
+
 fn run(arguments: &[&str], current_directory: &std::path::Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+    support::mise_command()
         .current_dir(current_directory)
         .args(arguments)
         .output()

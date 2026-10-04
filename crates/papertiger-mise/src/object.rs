@@ -269,6 +269,7 @@ mod tests {
     fn indexed_object_identity_includes_media_type() {
         let connection = Connection::open_in_memory().expect("database");
         crate::store::init(&connection).expect("schema");
+        crate::store::author_test_connection(&connection);
         let directory = tempdir().expect("object root");
         let object = preserve_object(directory.path(), b"typed bytes").expect("object");
         record_indexed_object(&connection, &object, "application/json").expect("first index");

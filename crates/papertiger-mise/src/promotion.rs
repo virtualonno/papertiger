@@ -339,6 +339,7 @@ mod tests {
 
         let mise = crate::store::open_for_init(&mise_path).expect("open Mise authority");
         crate::store::init(&mise).expect("Mise schema");
+        crate::store::author_test_connection(&mise);
         let manifest = crate::manifest::tests::valid_manifest();
         let admission =
             crate::store::CampaignAdmission::from_manifest(&manifest).expect("admission");
@@ -358,8 +359,8 @@ mod tests {
         mise.execute(
             "INSERT INTO candidates
              (candidate_id, campaign_id, proposal_json, patch_sha256, negative_fingerprint,
-              disposition, result_json, created_at, updated_at)
-             VALUES (?1, ?2, '{}', ?3, ?4, 'nominated', '{}', ?5, ?5)",
+              disposition, result_json, created_at, updated_at, authored_by)
+             VALUES (?1, ?2, '{}', ?3, ?4, 'nominated', '{}', ?5, ?5, 'test-author')",
             rusqlite::params![
                 candidate_id,
                 manifest.campaign_id,

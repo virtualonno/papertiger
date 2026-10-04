@@ -156,7 +156,7 @@ pub fn adjudicate_deterministic_candidate(
     };
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "candidate",
         candidate_id,
         disposition_str(disposition),

@@ -181,7 +181,7 @@ pub fn resolve_authorship(
         (Some(model), _) => (model.to_owned(), ModelSource::Flag),
         (None, Some(model)) => (model, ModelSource::Environment),
         (None, None) => bail!(
-            "every planner write records the model that authored it; pass --model <model-id> (your own model) or set PAPERTIGER_MODEL where the session is launched{}",
+            "every write records the model that authored it; pass --model <model-id> (your own model) on this command, or set PAPERTIGER_MODEL in its environment{}",
             if harness.is_some() {
                 ""
             } else {
@@ -344,9 +344,7 @@ pub(crate) fn current_owner(conn: &Connection) -> Result<Option<crate::PickupOwn
 }
 
 /// The authorship fields an event payload records.
-pub(crate) fn current_authorship(
-    conn: &Connection,
-) -> Result<serde_json::Map<String, serde_json::Value>> {
+pub fn current_authorship(conn: &Connection) -> Result<serde_json::Map<String, serde_json::Value>> {
     let installed = conn
         .query_row(
             "SELECT 1 FROM sqlite_temp_master WHERE type='table' AND name='papertiger_authorship'",
@@ -382,7 +380,7 @@ pub(crate) fn current_authorship(
     }) = row
     else {
         bail!(
-            "planner writes record their author; resolve one with `resolve_authorship` and install it with `set_authorship` before mutating (CLI: pass --model <model-id> or set PAPERTIGER_MODEL)"
+            "writes record their author; resolve one with `resolve_authorship` and install it with `set_authorship` before mutating (CLI: pass --model <model-id> or set PAPERTIGER_MODEL)"
         );
     };
     let mut fields = serde_json::Map::new();

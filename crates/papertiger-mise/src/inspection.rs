@@ -254,6 +254,7 @@ mod tests {
     fn inspection_pages_distinct_reservations_and_never_mutates_authority() {
         let connection = Connection::open_in_memory().unwrap();
         crate::init(&connection).unwrap();
+        crate::store::author_test_connection(&connection);
         let manifest = crate::manifest::tests::valid_manifest();
         admit_campaign(
             &connection,

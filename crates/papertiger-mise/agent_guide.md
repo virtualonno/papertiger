@@ -58,7 +58,9 @@ invent absence from status, a PID alone, or elapsed time.
 
 `init` is the sole creation/migration command. Never initialize a replacement
 when prior work existed, directly write SQLite/CAS, or clone an authority for
-continued operation. Set `PAPERTIGER_ACTOR` before mutations.
+continued operation. Every command that writes the authority records the model
+that authored it: pass `--model <your-model-id>` or launch with
+`PAPERTIGER_MODEL` set (`human` only for manual operator use). Reads ignore it.
 
 ## Prepare, compare, and stop
 
@@ -76,7 +78,8 @@ changing its judge, inputs, or budget requires another admission attempt.
 
 Run no-op and known-bad controls before interpreting research candidates.
 `candidate build-material` constructs exact material from full base/result
-trees. Reserve finite resources, record and materialize the candidate, and use
+trees. Reserve finite resources, record the candidate with `--authored-by
+<model-id>` naming the model that authored its material, materialize it, and use
 `trial run` for deterministic evaluation or the separate `paired` lifecycle
 for a predeclared paired design. Command help names each required input.
 Calibrate and reopen results under the same frozen evaluator environment.

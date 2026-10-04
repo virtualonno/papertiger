@@ -30,7 +30,7 @@ pub(crate) use crate::object::{
 };
 use crate::path_identity::{canonical_or_pending_absolute, portable_absolute, trial_path_identity};
 use crate::state::{BudgetReservationStatus, EvidenceGrade, TrialStatus};
-use crate::store::{begin_mutation, now, record_event_in_mutation, require_campaign};
+use crate::store::{EventAuthor, begin_mutation, now, record_event_in_mutation, require_campaign};
 use crate::validation::validate_nonblank;
 use papertiger::process_identity::{ProcessObservation, observe_process};
 
@@ -42,6 +42,10 @@ pub struct CandidateRecord {
     pub negative_fingerprint: String,
     pub disposition: CandidateDisposition,
     pub result: Option<Value>,
+    /// The model that authored the candidate's material. Absent only for
+    /// candidates recorded before registration required it.
+    #[serde(default)]
+    pub authored_by: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,9 +414,11 @@ pub fn record_candidate(
     reservation_id: &str,
     candidate: &BoundCandidate,
     material_object: &PreservedObject,
+    authored_by: &str,
 ) -> Result<bool> {
     validate_nonblank("actor", actor)?;
     validate_nonblank("reservation_id", reservation_id)?;
+    let authored_by = crate::candidate::candidate_author_model(authored_by)?;
     verify_object(object_root, material_object)?;
     let rebound = crate::candidate::bind_candidate(
         candidate.proposal.clone(),
@@ -456,6 +462,9 @@ pub fn record_candidate(
         }
         if existing_proposal_json != proposal_json {
             differing_fields.push("proposal");
+        }
+        if existing.authored_by.as_deref() != Some(authored_by.as_str()) {
+            differing_fields.push("authored_by");
         }
         if differing_fields.is_empty() {
             require_reservation_use(
@@ -529,15 +538,16 @@ pub fn record_candidate(
     transaction.execute(
         "INSERT INTO candidates
          (candidate_id, campaign_id, proposal_json, patch_sha256, negative_fingerprint,
-          disposition, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'proposed', ?6, ?6)",
+          disposition, created_at, updated_at, authored_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'proposed', ?6, ?6, ?7)",
         params![
             candidate.candidate_id,
             candidate.proposal.campaign_id,
             proposal_json,
             candidate.material_sha256,
             candidate.negative_fingerprint,
-            timestamp
+            timestamp,
+            authored_by
         ],
     )?;
     for parent in &candidate.proposal.parent_candidate_ids {
@@ -552,7 +562,7 @@ pub fn record_candidate(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "candidate",
         &candidate.candidate_id,
         "recorded",
@@ -562,6 +572,7 @@ pub fn record_candidate(
             "material_sha256": candidate.material_sha256,
             "material_format": candidate.material_format,
             "negative_fingerprint": candidate.negative_fingerprint,
+            "authored_by": authored_by,
         })),
     )?;
     transaction.commit()?;
@@ -654,7 +665,7 @@ pub fn materialize_candidate(
     if !prior_attempts.is_empty() {
         record_event_in_mutation(
             &transaction,
-            actor,
+            EventAuthor::Caller(actor),
             "candidate",
             candidate_id,
             "materialization-retry-bound",
@@ -767,7 +778,7 @@ pub fn materialize_candidate(
             )?;
             record_event_in_mutation(
                 &transaction,
-                actor,
+                EventAuthor::Runtime(actor),
                 "candidate",
                 candidate_id,
                 "materialized",
@@ -852,7 +863,7 @@ pub fn abandon_materialization_attempt(
     if outcome == SettlementOutcome::Settled {
         record_event_in_mutation(
             &transaction,
-            actor,
+            EventAuthor::Caller(actor),
             "candidate",
             candidate_id,
             "materialization-abandoned",
@@ -1433,7 +1444,7 @@ pub(crate) fn record_trial_intent(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "trial",
         &intent.trial_id,
         "owned-intent-recorded",
@@ -1500,7 +1511,7 @@ pub(crate) fn mark_trial_launched(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "trial",
         trial_id,
         "launched",
@@ -1537,7 +1548,7 @@ pub(crate) fn heartbeat_trial(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "trial",
         trial_id,
         "heartbeat",
@@ -1680,7 +1691,7 @@ pub(crate) fn complete_deterministic_trial(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "trial",
         trial_id,
         "completed",
@@ -2123,7 +2134,7 @@ pub(crate) fn record_integrity_failure(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Runtime(actor),
         "trial",
         trial_id,
         "integrity-failed",
@@ -2193,7 +2204,7 @@ fn candidate_in(connection: &Connection, candidate_id: &str) -> Result<Option<Ca
     connection
         .query_row(
             "SELECT candidate_id, campaign_id, patch_sha256, negative_fingerprint,
-                    disposition, result_json FROM candidates WHERE candidate_id=?1",
+                    disposition, result_json, authored_by FROM candidates WHERE candidate_id=?1",
             params![candidate_id],
             |row| {
                 Ok((
@@ -2203,6 +2214,7 @@ fn candidate_in(connection: &Connection, candidate_id: &str) -> Result<Option<Ca
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             },
         )
@@ -2215,6 +2227,7 @@ fn candidate_in(connection: &Connection, candidate_id: &str) -> Result<Option<Ca
                 negative_fingerprint,
                 disposition,
                 result,
+                authored_by,
             )| {
                 Ok(CandidateRecord {
                     candidate_id,
@@ -2225,6 +2238,7 @@ fn candidate_in(connection: &Connection, candidate_id: &str) -> Result<Option<Ca
                     result: result
                         .map(|value| serde_json::from_str(&value))
                         .transpose()?,
+                    authored_by,
                 })
             },
         )

@@ -31,6 +31,58 @@ use papertiger_mise::{
 use tempfile::TempDir;
 
 const ACTOR: &str = "deterministic-dogfood";
+/// The model the public-API driver attributes its own writes to.
+const DRIVER_MODEL: &str = "deterministic-dogfood-driver";
+/// The model recorded as the author of every dogfood candidate's material.
+const AUTHORING_MODEL: &str = "deterministic-dogfood-author";
+
+mod support;
+
+/// Attribute a library connection's writes to the dogfood driver, as the CLI
+/// attributes a command's writes to its resolved caller.
+fn author(connection: &rusqlite::Connection) {
+    papertiger::set_authorship(
+        connection,
+        &papertiger::resolve_authorship(
+            papertiger::AuthorshipFlags {
+                actor: Some(ACTOR),
+                model: Some(DRIVER_MODEL),
+                ..Default::default()
+            },
+            &|_| None,
+        )
+        .expect("dogfood authorship"),
+    )
+    .expect("install dogfood authorship");
+}
+
+/// Every event recorded on one entity, in order, with its parsed payload.
+fn entity_events(
+    connection: &rusqlite::Connection,
+    entity: &str,
+    entity_key: &str,
+) -> Vec<(String, String, serde_json::Value)> {
+    let mut statement = connection
+        .prepare(
+            "SELECT kind, actor, payload FROM events
+             WHERE entity=?1 AND entity_key=?2 ORDER BY event_id",
+        )
+        .expect("event query");
+    statement
+        .query_map([entity, entity_key], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get::<_, String>(2)?))
+        })
+        .expect("event rows")
+        .map(|row| {
+            let (kind, actor, payload) = row.expect("event row");
+            (
+                kind,
+                actor,
+                serde_json::from_str(&payload).expect("event payload JSON"),
+            )
+        })
+        .collect()
+}
 const CAMPAIGN_ID: &str = "papertiger-mise-deterministic-dogfood-a01";
 
 #[test]
@@ -39,6 +91,7 @@ fn interrupted_trial_worker() {
         return;
     };
     let connection = open_existing(&database).expect("open worker Mise authority");
+    author(&connection);
     let object_root = PathBuf::from(
         std::env::var("PAPERTIGER_MISE_DOGFOOD_WORKER_OBJECTS").expect("worker object root"),
     );
@@ -55,6 +108,7 @@ fn interrupted_trial_worker() {
 fn deterministic_public_api_campaign_preserves_every_outcome() {
     let fixture = DogfoodFixture::new();
     let connection = open_existing(&fixture.database).expect("open Mise authority");
+    author(&connection);
 
     let no_op = fixture.record_and_materialize(&connection, "no-op", "calibration-no-op", b"");
     let known_bad = fixture.record_and_materialize(
@@ -303,6 +357,7 @@ fn deterministic_public_api_campaign_preserves_every_outcome() {
             "candidate-improved",
             &improved,
             &duplicate_patch,
+            AUTHORING_MODEL,
         )
         .expect("exact candidate replay")
     );
@@ -422,7 +477,7 @@ fn deterministic_public_api_campaign_preserves_every_outcome() {
             .iter()
             .any(|item| item["trial_id"] == "interrupted-1")
     );
-    let first = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+    let first = support::mise_command()
         .args([
             "--project-root",
             &fixture.manifest.source.repository_locator,
@@ -448,7 +503,7 @@ fn deterministic_public_api_campaign_preserves_every_outcome() {
         .iter()
         .map(|arg| arg.as_str().unwrap())
         .collect::<Vec<_>>();
-    let second = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+    let second = support::mise_command()
         .current_dir(std::env::temp_dir())
         .args(continuation)
         .output()
@@ -475,6 +530,7 @@ mod synthetic_measurement;
 fn native_v2_completion_refuses_unscoped_or_substituted_observations() {
     let fixture = DogfoodFixture::new();
     let connection = open_existing(&fixture.database).unwrap();
+    author(&connection);
     fixture.record_and_materialize(&connection, "no-op", "calibration-no-op", b"");
     for (index, defect) in [
         "provenance-missing",
@@ -825,6 +881,7 @@ impl DogfoodFixture {
         let database = temporary.path().join("mise.sqlite");
         let connection = open_for_init(&database).expect("new Mise authority");
         init(&connection).expect("Mise schema");
+        author(&connection);
         let verified = verify_campaign_admission(&manifest_path).expect("verified admission");
         admit_verified_campaign(&connection, ACTOR, &verified).expect("admit campaign");
         drop(connection);
@@ -911,22 +968,73 @@ impl DogfoodFixture {
                 &reservation,
                 &candidate,
                 &object,
+                AUTHORING_MODEL,
             )
             .expect("record candidate")
         );
+        let recorded = entity_events(connection, "candidate", &candidate.candidate_id);
+        let (kind, actor, payload) = recorded.last().expect("candidate recorded event");
+        assert_eq!((kind.as_str(), actor.as_str()), ("recorded", ACTOR));
+        assert_eq!(payload["model"], DRIVER_MODEL);
+        assert_eq!(payload["model_source"], "flag");
+        assert_eq!(payload["authored_by"], AUTHORING_MODEL);
+        assert_eq!(
+            papertiger_mise::candidate(connection, &candidate.candidate_id)
+                .expect("candidate read")
+                .expect("durable candidate")
+                .authored_by
+                .as_deref(),
+            Some(AUTHORING_MODEL)
+        );
+        // The caller's explicit reservation records the CLI caller's flags.
         let materialization_reservation = format!("materialization-{key}");
-        reserve_budget(
-            connection,
-            ACTOR,
-            CAMPAIGN_ID,
-            &materialization_reservation,
-            &[
-                budget_request(BudgetResource::DiskBytesWritten, 1024 * 1024),
-                budget_request(BudgetResource::ArtifactBytes, 8 * 1024),
-            ],
-        )
-        .expect("materialization reservation");
-        let output = Command::new(env!("CARGO_BIN_EXE_papertiger-mise"))
+        let reserved = support::mise_command()
+            .arg("--project-root")
+            .arg(&self.manifest.source.repository_locator)
+            .arg("--db")
+            .arg(&self.database)
+            .args([
+                "--actor",
+                ACTOR,
+                "--model",
+                "Dogfood-CLI-Model",
+                "--session",
+                "dogfood-cli-session",
+                "--reasoning-effort",
+                "high",
+                "budget",
+                "reserve",
+                CAMPAIGN_ID,
+                &materialization_reservation,
+                "--amount",
+                "disk_bytes_written=1048576",
+                "--amount",
+                "artifact_bytes=8192",
+            ])
+            .output()
+            .expect("launch materialization reservation");
+        assert!(
+            reserved.status.success(),
+            "{}",
+            String::from_utf8_lossy(&reserved.stderr)
+        );
+        let reservation_event = campaign_events(connection, CAMPAIGN_ID)
+            .expect("campaign events")
+            .into_iter()
+            .rfind(|event| event.kind == "budget-reserved")
+            .expect("CLI reservation event");
+        let payload = reservation_event.payload.expect("reservation payload");
+        assert_eq!(reservation_event.actor, ACTOR);
+        assert_eq!(
+            payload["reservation_id"],
+            materialization_reservation.as_str()
+        );
+        assert_eq!(payload["model"], "dogfood-cli-model");
+        assert_eq!(payload["model_source"], "flag");
+        assert_eq!(payload["session"], "dogfood-cli-session");
+        assert_eq!(payload["reasoning_effort"], "high");
+        assert!(payload.get("harness").is_none(), "{payload}");
+        let output = support::mise_command()
             .arg("--project-root")
             .arg(&self.manifest.source.repository_locator)
             .arg("--db")
@@ -951,6 +1059,27 @@ impl DogfoodFixture {
                 .expect("materialization stdout must contain exactly one JSON receipt");
         assert_eq!(receipt.candidate_id, candidate.candidate_id);
         assert_eq!(receipt.reservation_id, materialization_reservation);
+        // Materialization and its settlement are transitions the runtime
+        // performs itself, though a caller invoked the command.
+        let (kind, actor, payload) =
+            entity_events(connection, "candidate", &candidate.candidate_id)
+                .pop()
+                .expect("materialized event");
+        assert_eq!((kind.as_str(), actor.as_str()), ("materialized", ACTOR));
+        assert_eq!(payload["model"], "runtime");
+        assert_eq!(payload["model_source"], "runtime");
+        assert!(payload.get("session").is_none(), "{payload}");
+        let settlement = campaign_events(connection, CAMPAIGN_ID)
+            .expect("campaign events")
+            .into_iter()
+            .rfind(|event| event.kind == "budget-settled")
+            .expect("materialization settlement");
+        let payload = settlement.payload.expect("settlement payload");
+        assert_eq!(
+            payload["reservation_id"],
+            materialization_reservation.as_str()
+        );
+        assert_eq!(payload["model"], "runtime");
         candidate
     }
 

@@ -873,6 +873,7 @@ mod tests {
 
         let database = rusqlite::Connection::open_in_memory().expect("database");
         init(&database).expect("schema");
+        crate::store::author_test_connection(&database);
         assert_eq!(
             admit_verified_campaign(&database, "test", &verified).expect("admit"),
             AdmissionOutcome::Admitted

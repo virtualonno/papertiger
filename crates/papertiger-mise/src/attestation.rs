@@ -9,7 +9,7 @@ use serde_json::json;
 use crate::digest::sha256;
 use crate::manifest::{CampaignManifest, ContainmentGrade, HoldoutDisclosure, HoldoutTierKind};
 use crate::object::{PreservedObject, read_object};
-use crate::store::{begin_mutation, campaign, now, record_event_in_mutation};
+use crate::store::{EventAuthor, begin_mutation, campaign, now, record_event_in_mutation};
 
 pub const SEALED_ATTESTATION_SCHEMA_V3: &str = "papertiger-mise.sealed_attestation.v3";
 pub const SEALED_ATTESTATION_PROTOCOL_V3: &str = "papertiger-mise.ed25519_sealed.v3";
@@ -184,7 +184,7 @@ pub fn record_sealed_attestation(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "trial",
         trial_id,
         "sealed-attestation-recorded",

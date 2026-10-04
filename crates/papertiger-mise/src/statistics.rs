@@ -9,7 +9,7 @@ use serde_json::json;
 use crate::candidate::CandidateDisposition;
 use crate::digest::{sha256, sha256_bytes, validate_sha256};
 use crate::manifest::{ObjectiveDirection, ObjectiveRole, ObjectiveSpec, Sha256Digest};
-use crate::store::{begin_mutation, campaign, now, record_event_in_mutation};
+use crate::store::{EventAuthor, begin_mutation, campaign, now, record_event_in_mutation};
 use crate::validation::validate_ascii_token as validate_token;
 
 pub const PAIRED_ANALYSIS_SCHEMA_V3: &str = "papertiger-mise.paired_analysis.v3";
@@ -1167,7 +1167,7 @@ pub fn reserve_paired_analysis_slot(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         "paired_analysis_slot",
         &format!("{campaign_id}:{slot}"),
         "paired-analysis-slot-reserved",
@@ -1977,8 +1977,8 @@ pub(crate) mod tests {
             .execute(
                 "INSERT INTO candidates
                  (candidate_id, campaign_id, proposal_json, patch_sha256, negative_fingerprint,
-                  disposition, result_json, created_at, updated_at)
-                 VALUES (?1, ?2, '{}', ?3, ?4, 'materialized', NULL, ?5, ?5)",
+                  disposition, result_json, created_at, updated_at, authored_by)
+                 VALUES (?1, ?2, '{}', ?3, ?4, 'materialized', NULL, ?5, ?5, 'test-author')",
                 params![
                     candidate().0,
                     manifest.campaign_id,
@@ -2435,6 +2435,7 @@ pub(crate) mod tests {
         let temporary = tempfile::tempdir().unwrap();
         let connection = crate::store::open_for_init(temporary.path().join("mise.sqlite")).unwrap();
         crate::store::init(&connection).unwrap();
+        crate::store::author_test_connection(&connection);
         admit_paired_fixture(&connection);
 
         let reserved = reserve_paired_analysis_slot(

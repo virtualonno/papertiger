@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
-use crate::store::{begin_mutation, now, record_event_in_mutation};
+use crate::store::{EventAuthor, begin_mutation, now, record_event_in_mutation};
 use crate::validation::validate_nonblank;
 
 pub(crate) const CANCELLATION_SCHEMA_V9: &str = r#"
@@ -168,7 +168,7 @@ pub fn request_cancellation(
     )?;
     record_event_in_mutation(
         &transaction,
-        actor,
+        EventAuthor::Caller(actor),
         target.entity(),
         execution_id,
         "cancellation-requested",
