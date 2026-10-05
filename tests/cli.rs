@@ -1015,9 +1015,17 @@ fn starting_and_reading_ask_for_nothing_extra() {
     let bare = papertiger(&db.0, &["reject", "B-2"]);
     assert!(String::from_utf8_lossy(&bare.stderr).contains("reject requires a reason"));
     assert_success(&papertiger(&db.0, &["reject", "B-2", "duplicate of F-1"]));
-    // A note reads its text, or a task and then its text, positionally.
-    assert_success(&papertiger(&db.0, &["note", "F-1", "Found the cause"]));
-    assert_success(&papertiger(&db.0, &["note", "Plan-level thought"]));
+    // A note reads its text, or a task and then its text, positionally; its
+    // receipt names the task like every other task receipt.
+    let noted = papertiger(&db.0, &["note", "F-1", "Found the cause"]);
+    assert_success(&noted);
+    assert_eq!(
+        String::from_utf8_lossy(&noted.stdout).trim(),
+        "noted on F-1"
+    );
+    let noted = papertiger(&db.0, &["note", "Plan-level thought"]);
+    assert_success(&noted);
+    assert_eq!(String::from_utf8_lossy(&noted.stdout).trim(), "noted");
     let log = String::from_utf8(papertiger(&db.0, &["log", "--limit", "2"]).stdout).unwrap();
     assert!(
         log.contains("plan/note - Plan-level thought")

@@ -265,6 +265,8 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   linked worktree whose main tree has no authority, and so does a
   missing-authority refusal from one; both name `papertiger --project-root
   <main> init`.
+- A note on a task names that task in its receipt (`noted on F-1`) like
+  every other task receipt. A plan-level note still prints `noted`.
 - `tree` counts retired and rejected children as closed: a parent shows
   `(6/7 closed: 5 done, 1 rejected)` instead of staying at `(5/7)` forever.
   When every closed child is done it still shows `(done/total)`.

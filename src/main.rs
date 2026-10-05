@@ -2635,7 +2635,10 @@ fn run_planner(cli: Cli) -> Result<()> {
                 .map(|task| pt::resolve_task_ref(&conn, &task))
                 .transpose()?;
             pt::add_note(&conn, &actor, task_seq, &text)?;
-            mutation_output!("noted");
+            match task_seq {
+                Some(seq) => mutation_output!("noted on {}", pt::seq_handle(&conn, seq)?),
+                None => mutation_output!("noted"),
+            }
         }
         Cmd::Log {
             task,
