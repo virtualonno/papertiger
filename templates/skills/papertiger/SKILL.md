@@ -1,6 +1,6 @@
 ---
 name: papertiger
-description: Use before implementing multiple independent changes, resuming recorded work, or preserving decisions and deferred defects. Keep outcomes resumable across sessions; skip small self-contained edits and work owned by another tracker.
+description: Use to continue work in progress, pick the next or ready task, or record work in the project's planner; also before multi-part changes and to preserve decisions and deferred defects across sessions. A session todo list is not the project planner. Skip small edits nobody asked to track and work owned by another tracker.
 ---
 
 # Papertiger
@@ -44,7 +44,8 @@ them. Text output is written for you to read and is the cheapest; add
 `--json` only when a script parses the output or you need a field the text
 omits.
 Another session's pickup is advisory: not a lock, and no reason to ask
-permission for requested work.
+permission for requested work. `start` a task before working on it: until
+then it looks free to every other session.
 
 ```text
 papertiger start <N>
@@ -70,7 +71,9 @@ when you do check a claim, record
 done task's result). Read rejected history before reviving an approach. An
 intent stands alone: fold a source plan's substance in (`--intent-file`)
 instead of citing a scratch file. Write `--why` for choices a cold reader
-could question, and record decisions with `note <N> "..."`;
+could question, and record decisions with `note <N> "..."`. `focus` ranks by
+structure, not notes: record that work waits with `edit <N> --priority later`,
+a dependency or a gate, and keep a finished parent open with an open gate;
 `--intent-file`, `--why-file`, `--result-file` and `note --text-file` read
 UTF-8 text when shell quoting becomes awkward.
 
