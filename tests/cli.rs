@@ -1040,12 +1040,21 @@ fn starting_and_reading_ask_for_nothing_extra() {
             && log.contains("F-1 task/note - Found the cause"),
         "{log}"
     );
+    // log takes its task positionally too, like note and the lifecycle commands.
+    let task_log = String::from_utf8(papertiger(&db.0, &["log", "F-1"]).stdout).unwrap();
+    assert!(
+        task_log.contains("Found the cause") && !task_log.contains("Plan-level thought"),
+        "{task_log}"
+    );
     let twice = papertiger(&db.0, &["note", "F-1", "text", "--text", "again"]);
     assert!(String::from_utf8_lossy(&twice.stderr).contains("give the note text once"));
     // Status names a note's task, and a plan with nothing open says so.
     let status = String::from_utf8(papertiger(&db.0, &["status"]).stdout).unwrap();
     assert!(status.contains("on F-1: Found the cause"), "{status}");
     assert_success(&papertiger(&db.0, &["done", "F-1", "Fixed quickly"]));
+    // show states the status in words, not only as the leading glyph.
+    let shown = String::from_utf8(papertiger(&db.0, &["show", "F-1"]).stdout).unwrap();
+    assert!(shown.contains("\n  status: done\n"), "{shown}");
     let status = String::from_utf8(papertiger(&db.0, &["status"]).stdout).unwrap();
     assert!(status.contains("  no open work"), "{status}");
     // A read has nothing to attribute, so authorship flags are ignored.

@@ -271,6 +271,10 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   `<source>` placeholder.
 - An unknown `--plan` slug lists the plans the authority has instead of only
   `no plan '<slug>'`.
+- `log` takes its task positionally (`log F-3`), like `note` and the lifecycle
+  commands; `--task` still works.
+- Text `show` states the task's status in words (`status: in_progress`), not
+  only as the leading glyph.
 - `tree` counts retired and rejected children as closed: a parent shows
   `(6/7 closed: 5 done, 1 rejected)` instead of staying at `(5/7)` forever.
   When every closed child is done it still shows `(done/total)`.

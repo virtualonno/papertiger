@@ -337,6 +337,9 @@ enum Cmd {
     },
     /// Event history
     Log {
+        /// Restrict history to this task: `log F-3`
+        #[arg(value_name = "TASK", conflicts_with = "task")]
+        task_word: Option<String>,
         /// Restrict history to this task number
         #[arg(long)]
         task: Option<String>,
@@ -1180,6 +1183,7 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
     if let Some(result) = task.result.as_deref() {
         pt::outln!("  result: {}", result.replace('\n', "\n  "));
     }
+    pt::outln!("  status: {}", task.status);
     pt::outln!("  kind: {}", task.kind);
     pt::outln!("  filing: {}", claim_review_line(&context.review.filing));
     if let Some(result) = &context.review.result {
@@ -2641,11 +2645,13 @@ fn run_planner(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Log {
+            task_word,
             task,
             limit,
             before_cursor,
             after_cursor,
         } => {
+            let task = task_word.or(task);
             let task_seq = task
                 .map(|task| pt::resolve_task_ref(&conn, &task))
                 .transpose()?;
