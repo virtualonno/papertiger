@@ -470,5 +470,11 @@ active plan's open tasks per kind (`open_by_kind`), e.g. `open by kind: F 3, B 1
 
 ## License
 
+Copyright (C) 2026 virtualonno.
+
+Papertiger is licensed under the GNU Affero General Public License, version 3
+only (`AGPL-3.0-only`); see [LICENSE](LICENSE). Releases up to and including
+0.20.0 were published under the MIT License and remain available under it.
+
 Distributions include [LICENSE](LICENSE), [LICENSE-SSL](LICENSE-SSL), and
 [LICENSE-VPL](LICENSE-VPL).

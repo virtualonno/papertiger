@@ -11,6 +11,9 @@ Local dogfood candidate `1.0.0-rc.7`; not published.
 Planner schema v14 and dump format `papertiger.dump.v11`. Run `init`
 deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
 
+Papertiger is now licensed under `AGPL-3.0-only` instead of MIT. Releases up to
+and including 0.20.0 remain available under the MIT License.
+
 Papertiger now ships as one agent skill directory (`papertiger/` with
 `SKILL.md`, `references/`, and `bin/papertiger` and `bin/papertiger-mise`).
 Extract it into your agent skills directory; to upgrade, replace that
