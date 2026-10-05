@@ -33,6 +33,8 @@ pub(crate) struct ProjectAuthority {
 
 /// The authority of the project rooted exactly at `root`, whether or not it
 /// exists yet: `init` creates it and every other command refuses a missing one.
+/// A linked Git worktree without its own authority selects its main working
+/// tree's, as discovery does.
 pub(crate) fn at_root(root: &Path) -> Result<ProjectAuthority> {
     let root = fs::canonicalize(root)
         .with_context(|| format!("resolve project root {}", root.display()))?;
@@ -43,11 +45,23 @@ pub(crate) fn at_root(root: &Path) -> Result<ProjectAuthority> {
         ));
     }
     let authority = root.join(AUTHORITY_PATH);
-    require_regular_or_absent(&authority)?;
+    if !require_regular_or_absent(&authority)?
+        && let Some(main) = linked_worktree_main(&root)?
+    {
+        let main_authority = main.join(AUTHORITY_PATH);
+        if require_regular_or_absent(&main_authority)? {
+            return Ok(ProjectAuthority {
+                root: main,
+                authority: main_authority,
+            });
+        }
+    }
     Ok(ProjectAuthority { root, authority })
 }
 
-/// The nearest project above `start` that has an authority, if any.
+/// The nearest project above `start` that has an authority, if any. Inside a
+/// linked Git worktree with none above it, that is the main working tree's
+/// authority: every worktree of a repository plans in one authority.
 pub(crate) fn discover(start: &Path) -> Result<Option<ProjectAuthority>> {
     let start = fs::canonicalize(start)
         .with_context(|| format!("resolve current directory {}", start.display()))?;
@@ -60,15 +74,111 @@ pub(crate) fn discover(start: &Path) -> Result<Option<ProjectAuthority>> {
             }));
         }
     }
+    if let Some(main) = linked_worktree_main(&start)? {
+        let authority = main.join(AUTHORITY_PATH);
+        if require_regular_or_absent(&authority)? {
+            return Ok(Some(ProjectAuthority {
+                root: main,
+                authority,
+            }));
+        }
+    }
     Ok(None)
 }
 
 /// The refusal for a command that needs an authority where none was found.
 pub(crate) fn not_found(start: &Path) -> anyhow::Error {
-    anyhow!(
-        "no Papertiger authority ({AUTHORITY_PATH}) was found in {} or any parent directory; run from inside the project, pass --project-root <project-root>, or start a genuinely new project's authority with `papertiger init` at its Git root or `papertiger --project-root <project-root> init`",
-        papertiger::portable_absolute(start).unwrap_or_else(|_| start.display().to_string())
-    )
+    let shown = portable(start);
+    match linked_worktree_main(start) {
+        Ok(Some(main)) => anyhow!(
+            "no Papertiger authority ({AUTHORITY_PATH}) was found in {shown} or any parent directory, nor in {}, the main working tree of this linked Git worktree; the project's authority belongs to the main working tree: for a genuinely new project start it with `papertiger --project-root {} init`",
+            portable(&main),
+            portable(&main)
+        ),
+        Ok(None) => anyhow!(
+            "no Papertiger authority ({AUTHORITY_PATH}) was found in {shown} or any parent directory; run from inside the project, pass --project-root <project-root>, or start a genuinely new project's authority with `papertiger init` at its Git root or `papertiger --project-root <project-root> init`"
+        ),
+        Err(error) => error,
+    }
+}
+
+/// Refuse `init` in a linked Git worktree whose main working tree has no
+/// authority: one created there would fork the project's plan. When the main
+/// tree has one, selection already resolves to it.
+pub(crate) fn refuse_init_in_linked_worktree(directory: &Path) -> Result<()> {
+    let cwd = &fs::canonicalize(directory)
+        .with_context(|| format!("resolve project root {}", directory.display()))?;
+    let Some(main) = linked_worktree_main(cwd)? else {
+        return Ok(());
+    };
+    if require_regular_or_absent(&main.join(AUTHORITY_PATH))? {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "refusing to create an authority in {}, a linked Git worktree of {}: the project's authority belongs to the main working tree; for a genuinely new project start it with `papertiger --project-root {} init`",
+        portable(cwd),
+        portable(&main),
+        portable(&main)
+    ))
+}
+
+/// The main working tree of the linked Git worktree containing `start`, if
+/// any. A linked worktree's `.git` is a file naming
+/// `<main>/.git/worktrees/<name>`, whose `commondir` leads back to the shared
+/// `<main>/.git`. A submodule's `.git` file has no `commondir`: it is its own
+/// project, as is a worktree of a bare repository, which has no main tree.
+fn linked_worktree_main(start: &Path) -> Result<Option<PathBuf>> {
+    let Some(top) = start
+        .ancestors()
+        .find(|directory| directory.join(".git").exists())
+    else {
+        return Ok(None);
+    };
+    let dot_git = top.join(".git");
+    if !fs::symlink_metadata(&dot_git)
+        .with_context(|| format!("inspect {}", dot_git.display()))?
+        .is_file()
+    {
+        return Ok(None);
+    }
+    let text =
+        fs::read_to_string(&dot_git).with_context(|| format!("read {}", dot_git.display()))?;
+    let Some(named) = text.lines().find_map(|line| line.strip_prefix("gitdir:")) else {
+        return Err(anyhow!(
+            "{} is not a Git worktree link (no 'gitdir:' line); repair it with `git worktree repair`, or run papertiger with --project-root <project-root>",
+            portable(&dot_git)
+        ));
+    };
+    let gitdir = top.join(named.trim());
+    if !gitdir.is_dir() {
+        return Err(anyhow!(
+            "{} names Git directory {}, which does not exist; repair the worktree with `git worktree repair`, or run papertiger with --project-root <project-root>",
+            portable(&dot_git),
+            gitdir.display()
+        ));
+    }
+    let commondir = match fs::read_to_string(gitdir.join("commondir")) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read {}", gitdir.join("commondir").display()));
+        }
+    };
+    let common = fs::canonicalize(gitdir.join(commondir.trim())).with_context(|| {
+        format!(
+            "resolve the shared Git directory named by {}",
+            gitdir.display()
+        )
+    })?;
+    match common.file_name() {
+        Some(name) if name == ".git" => Ok(common.parent().map(Path::to_path_buf)),
+        _ => Ok(None),
+    }
+}
+
+fn portable(path: &Path) -> String {
+    papertiger::portable_absolute(path).unwrap_or_else(|_| path.display().to_string())
 }
 
 /// Whether `path` is an existing regular file; refuses anything else that

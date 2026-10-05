@@ -260,9 +260,11 @@ papertiger log --json
 
 The binary walks upward from the current directory to the nearest
 `state/papertiger.sqlite`, the way Git finds its repository, so it works from
-nested directories without a launcher or shell wrapper. With no authority
-above the working directory, commands refuse and name `--project-root` and
-`init`. For an intentional command issued from a different repository, select
+nested directories without a launcher or shell wrapper. A linked Git worktree
+with no authority above it uses its main working tree's, so every worktree of
+a repository plans in one authority; `init` refuses to create a second one in
+a linked worktree. With no authority above the working directory, commands
+refuse and name `--project-root` and `init`. For an intentional command issued from a different repository, select
 the canonical project explicitly:
 
 ```bash

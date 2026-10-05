@@ -258,6 +258,13 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Fixed
 
+- A linked Git worktree plans in its main working tree's authority. With no
+  `state/papertiger.sqlite` above it, discovery and `--project-root
+  <worktree>` both select the main tree's. Previously, a bare `init` there
+  created a second store and edited `.gitignore`. `init` now refuses in a
+  linked worktree whose main tree has no authority, and so does a
+  missing-authority refusal from one; both name `papertiger --project-root
+  <main> init`.
 - `tree` counts retired and rejected children as closed: a parent shows
   `(6/7 closed: 5 done, 1 rejected)` instead of staying at `(5/7)` forever.
   When every closed child is done it still shows `(done/total)`.

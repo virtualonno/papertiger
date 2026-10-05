@@ -36,8 +36,12 @@ replacements and are never merged.
 
 A project's authority is `<project-root>/state/papertiger.sqlite`. From inside
 the project, `papertiger` uses the nearest one above the working directory;
-from anywhere else pass the global `--project-root <canonical-project-root>`,
-which names that exact root. With neither, commands refuse and name both.
+in a linked Git worktree with none above it, the main working tree's. From
+anywhere else pass the global `--project-root <canonical-project-root>`,
+which names that exact root (a linked worktree's root selects its main tree's
+authority the same way). With neither, commands refuse and name both. `init`
+refuses in a linked worktree whose main tree has no authority and names the
+main tree's `--project-root`.
 `--db` and `PAPERTIGER_DB` are deliberate overrides for recovery, never for
 ordinary selection.
 

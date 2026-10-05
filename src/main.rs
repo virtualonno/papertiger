@@ -1442,6 +1442,9 @@ fn run_planner(cli: Cli) -> Result<()> {
         // Selected paths are shown in refusals; render them as a user would
         // type them, without Windows verbatim prefixes.
         (None, Some(root)) => {
+            if matches!(cli.cmd, Cmd::Init) {
+                project_authority::refuse_init_in_linked_worktree(root)?;
+            }
             let selected = project_authority::at_root(root)?;
             init_root = Some(selected.root);
             pt::portable_absolute(&selected.authority)?
@@ -1453,7 +1456,10 @@ fn run_planner(cli: Cli) -> Result<()> {
                 // A bare init creates an authority only at a Git root, which
                 // is a project root by definition; from any other directory
                 // it could nest a second authority, so it names --project-root.
+                // A linked worktree's root is not one: its project's
+                // authority belongs to the main working tree.
                 None if matches!(cli.cmd, Cmd::Init) && cwd.join(".git").exists() => {
+                    project_authority::refuse_init_in_linked_worktree(&cwd)?;
                     let selected = project_authority::at_root(&cwd)?;
                     init_root = Some(selected.root);
                     pt::portable_absolute(&selected.authority)?

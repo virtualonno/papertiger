@@ -3393,6 +3393,110 @@ fn explicit_project_root_init_creates_the_project_authority_and_its_ignore_rules
 }
 
 #[test]
+fn a_linked_worktree_plans_in_its_main_working_tree_authority() {
+    let sandbox = TestDirectory::new("linked-worktree-authority");
+    let main = sandbox.0.join("main");
+    let worktree = sandbox.0.join("feature");
+    // Git's on-disk shape: the worktree's .git file names its private Git
+    // directory, whose commondir leads back to the main tree's .git.
+    let private = main.join(".git/worktrees/feature");
+    std::fs::create_dir_all(&private).unwrap();
+    std::fs::write(private.join("commondir"), "../..\n").unwrap();
+    std::fs::create_dir_all(worktree.join("src")).unwrap();
+    std::fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", private.display()),
+    )
+    .unwrap();
+    let run = |directory: &std::path::Path, args: &[&str]| {
+        support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+            .args(args)
+            .current_dir(directory)
+            .env_remove("PAPERTIGER_DB")
+            .output()
+            .unwrap()
+    };
+    let main_arg = main.to_str().unwrap();
+    let worktree_arg = worktree.to_str().unwrap();
+
+    // Without any authority, neither a bare nor an explicit init forks one
+    // into the worktree; both name the main tree's init.
+    for args in [&["init"][..], &["--project-root", worktree_arg, "init"]] {
+        let refused = run(&worktree, args);
+        assert!(!refused.status.success(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains("linked Git worktree")
+                && stderr.contains("--project-root")
+                && stderr.contains("main init`"),
+            "{stderr}"
+        );
+    }
+    let missing = run(&worktree.join("src"), &["status"]);
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(
+        stderr.contains("main working tree of this linked Git worktree")
+            && stderr.contains("main init`"),
+        "{stderr}"
+    );
+    assert!(!worktree.join("state").exists());
+    assert!(!worktree.join(".gitignore").exists());
+
+    // Once the main tree has an authority, the worktree reaches it by
+    // discovery and through an explicit --project-root.
+    assert_success(&run(&sandbox.0, &["--project-root", main_arg, "init"]));
+    for (directory, args) in [
+        (worktree.join("src"), &["status"][..]),
+        (
+            sandbox.0.clone(),
+            &["--project-root", worktree_arg, "status"],
+        ),
+    ] {
+        let status = run(&directory, args);
+        assert_success(&status);
+        assert!(
+            String::from_utf8_lossy(&status.stdout).contains("main/state/papertiger.sqlite"),
+            "{}",
+            String::from_utf8_lossy(&status.stdout)
+        );
+    }
+    // init from the worktree now reaches the main tree's current authority.
+    for args in [&["init"][..], &["--project-root", worktree_arg, "init"]] {
+        let current = run(&worktree, args);
+        assert_success(&current);
+        let stdout = String::from_utf8_lossy(&current.stdout);
+        assert!(
+            stdout.contains("main/state/papertiger.sqlite") && stdout.contains("nothing changed"),
+            "{args:?}: {stdout}"
+        );
+    }
+    assert!(!worktree.join("state").exists());
+
+    // A worktree link to a missing Git directory refuses rather than
+    // guessing; a submodule (no commondir) is its own project.
+    let stale = sandbox.0.join("stale");
+    std::fs::create_dir(&stale).unwrap();
+    std::fs::write(stale.join(".git"), "gitdir: ../gone/.git/worktrees/stale\n").unwrap();
+    let refused = run(&stale, &["init"]);
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("git worktree repair"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let module_dir = main.join(".git/modules/library");
+    std::fs::create_dir_all(&module_dir).unwrap();
+    let submodule = sandbox.0.join("library");
+    std::fs::create_dir(&submodule).unwrap();
+    std::fs::write(
+        submodule.join(".git"),
+        format!("gitdir: {}\n", module_dir.display()),
+    )
+    .unwrap();
+    assert_success(&run(&submodule, &["init"]));
+    assert!(submodule.join("state/papertiger.sqlite").is_file());
+}
+
+#[test]
 fn explicit_project_root_selects_the_existing_project_authority() {
     let sandbox = TestDirectory::new("project-root-default-authority");
     let project = sandbox.0.join("uninstalled");
