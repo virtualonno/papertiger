@@ -1026,6 +1026,14 @@ fn starting_and_reading_ask_for_nothing_extra() {
     let noted = papertiger(&db.0, &["note", "Plan-level thought"]);
     assert_success(&noted);
     assert_eq!(String::from_utf8_lossy(&noted.stdout).trim(), "noted");
+    // An unknown plan names the plans that exist.
+    let unknown = papertiger(&db.0, &["focus", "--plan", "nope"]);
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr)
+            .contains("no plan 'nope'; this authority's plans are: "),
+        "{}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
     let log = String::from_utf8(papertiger(&db.0, &["log", "--limit", "2"]).stdout).unwrap();
     assert!(
         log.contains("plan/note - Plan-level thought")

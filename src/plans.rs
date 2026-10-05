@@ -71,14 +71,29 @@ pub fn active_plan(conn: &Connection) -> Result<Option<(i64, String)>> {
 /// Resolve the plan to operate on: explicit slug, else the single active plan.
 pub fn resolve_plan(conn: &Connection, slug: Option<&str>) -> Result<(i64, String)> {
     if let Some(slug) = slug {
-        return conn
+        if let Some(found) = conn
             .query_row(
                 "SELECT plan_id, slug FROM plans WHERE slug=?1",
                 params![slug],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?
-            .ok_or_else(|| anyhow!("no plan '{slug}'"));
+        {
+            return Ok(found);
+        }
+        let known = conn
+            .prepare("SELECT slug FROM plans ORDER BY slug")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if known.is_empty() {
+            bail!(
+                "no plan '{slug}': this authority has no plans; create one with `plan add <slug> \"Title\"`"
+            );
+        }
+        bail!(
+            "no plan '{slug}'; this authority's plans are: {}",
+            known.join(", ")
+        );
     }
     active_plan(conn)?.ok_or_else(|| anyhow!("no active plan; create one with `plan add`"))
 }
