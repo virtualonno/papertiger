@@ -31,7 +31,8 @@ pub struct BackupReceipt {
 /// this neither migrates nor validates task/evidence semantics.
 pub fn backup_authority(source: &Path, output: &Path) -> Result<BackupReceipt> {
     backup_inner(source, output).with_context(|| {
-        format!("back up Papertiger authority {}; retain the source and retry `papertiger --db <source> backup --output <new-path>` after correcting the reported input", source.display())
+        let source = crate::portable_absolute(source).unwrap_or_else(|_| source.display().to_string());
+        format!("back up Papertiger authority {source}; retain the source and retry `papertiger --db {source} backup --output <new-path>` after correcting the reported input")
     })
 }
 

@@ -267,6 +267,8 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   <main> init`.
 - A note on a task names that task in its receipt (`noted on F-1`) like
   every other task receipt. A plan-level note still prints `noted`.
+- A failed `backup` names the real source in its retry command instead of a
+  `<source>` placeholder.
 - `tree` counts retired and rejected children as closed: a parent shows
   `(6/7 closed: 5 done, 1 rejected)` instead of staying at `(5/7)` forever.
   When every closed child is done it still shows `(done/total)`.

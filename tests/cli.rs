@@ -2135,7 +2135,14 @@ fn backup_refuses_existing_destinations_and_sidecars_without_touching_them() {
         );
         assert!(!result.status.success());
         assert!(result.stdout.is_empty());
-        assert!(String::from_utf8_lossy(&result.stderr).contains("choose a new --output path"));
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("choose a new --output path"), "{stderr}");
+        // The retry names the real source, so only the new output is left to choose.
+        assert!(
+            stderr.contains("source.sqlite backup --output <new-path>`")
+                && !stderr.contains("<source>"),
+            "{stderr}"
+        );
         assert_eq!(
             std::fs::read(&occupied).unwrap(),
             b"preserve existing bytes"
