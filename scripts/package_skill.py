@@ -9,15 +9,21 @@ ending in .zip or .tar.gz whose single top-level entry is `papertiger/`:
     papertiger/references/agent_integration.md
     papertiger/bin/papertiger[.exe], papertiger/bin/papertiger-mise[.exe]
     papertiger/README.md, CHANGELOG.md, MISE.md and the licenses
+    papertiger/papertiger-release.json
 
-Installing is extracting that directory into a harness skill directory; the
-skill runs bin/papertiger from beside itself. Integrity is the release
-archive's checksum, verified at download.
+The manifest names the version and the SHA-256 of every other file.
+`bin/papertiger install` verifies the directory against it, then writes exact
+copies to every agent skills directory and a PATH directory; `install --check`
+reports each copy's divergence. Integrity of the download itself is the
+release archive's checksum.
 """
+import hashlib
+import json
 import shutil
 import sys
 import tarfile
 import tempfile
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -25,6 +31,7 @@ TOOL = 'papertiger'
 BINARIES = ('papertiger', 'papertiger-mise')
 DOCUMENTS = ('README.md', 'CHANGELOG.md', 'MISE.md', 'LICENSE', 'LICENSE-SSL', 'LICENSE-VPL')
 SOURCE = Path(__file__).resolve().parents[1]
+MANIFEST = 'papertiger-release.json'
 
 
 def build(binaries: Path, skill: Path) -> None:
@@ -42,6 +49,18 @@ def build(binaries: Path, skill: Path) -> None:
                     skill / 'references/agent_integration.md')
     for name in DOCUMENTS:
         shutil.copyfile(SOURCE / name, skill / name)
+    write_manifest(skill)
+
+
+def write_manifest(skill: Path) -> None:
+    with open(SOURCE / 'Cargo.toml', 'rb') as manifest:
+        version = tomllib.load(manifest)['workspace']['package']['version']
+    files = {
+        path.relative_to(skill).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(skill.rglob('*')) if path.is_file()
+    }
+    document = {'schema': 'papertiger.release.v1', 'version': version, 'files': files}
+    (skill / MANIFEST).write_text(json.dumps(document, indent=2) + '\n', encoding='utf-8', newline='\n')
 
 
 def main() -> None:

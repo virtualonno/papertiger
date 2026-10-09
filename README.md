@@ -25,8 +25,8 @@ CAS evidence or establish that a campaign can still execute.
 Papertiger ships as one agent skill directory. Download the archive for the
 machine where the agent runs from
 [GitHub Releases](https://github.com/virtualonno/papertiger/releases), verify
-it against its adjacent `.sha256` file, and extract it into your agent skills
-directory. The archive holds one `papertiger/` directory:
+it against its adjacent `.sha256` file, and extract it anywhere outside your
+agent skills directories. The archive holds one `papertiger/` directory:
 
 ```text
 papertiger/SKILL.md
@@ -34,25 +34,41 @@ papertiger/references/agent_integration.md
 papertiger/bin/papertiger[.exe]
 papertiger/bin/papertiger-mise[.exe]
 papertiger/README.md, CHANGELOG.md, MISE.md and the licenses
+papertiger/papertiger-release.json
 ```
 
-Extract it into `~/.agents/skills/` for Codex, Pi, Cursor, OMP, OpenCode and
-other harnesses that read the shared Agent Skills directory, and into
-`~/.claude/skills/` (a copy or a directory link) for Claude Code. Start a fresh
-agent session. The skill runs `bin/papertiger` from beside itself, so no PATH
-change, shell profile, AGENTS.md edit or per-project installation is needed.
-Skill descriptions support automatic selection; they do not guarantee a model
-will choose the tool on every request. A synced skill does not bring a native
-executable to a remote or cloud environment: install there separately.
+Then run the extracted `papertiger/bin/papertiger install`
+(`bin\papertiger.exe` on Windows). It checks every file against
+`papertiger-release.json`, the release's SHA-256 manifest, and writes exact
+copies to three targets: `~/.claude/skills/papertiger` for Claude Code,
+`~/.agents/skills/papertiger` for Codex, Pi, Cursor, OMP, OpenCode and other
+harnesses that read the shared Agent Skills directory, and the two executables
+into `~/.local/bin` for harnesses that load no skills, such as headless
+workers. That directory must be on PATH. `--skills-dir <dir>` (repeatable) and
+`--bin-dir <dir>` name the targets instead of these defaults. Start a fresh
+agent session. No shell profile, AGENTS.md edit or per-project installation
+is needed. Skill descriptions support automatic selection; they do not
+guarantee a model will choose the tool on every request. A synced skill does
+not bring a native executable to a remote or cloud environment: install there
+separately.
 
-The checksum verified at download is the executables' integrity check;
-Papertiger does not re-hash them when it runs.
+Copies are never links. `install` refuses a target that is a symbolic link or
+junction; `--replace-links` replaces the link with a copy and leaves its
+destination untouched. Each copy is staged and verified beside its target.
+Then the old copy is renamed aside and the new one renamed into place. Windows
+refuses to delete a running executable but allows renaming it, so upgrading
+while agents run Papertiger never leaves a half-replaced directory; a command
+started in the instant between the two renames fails and can be rerun. A
+retired copy still held by a running process waits in the target's
+`.papertiger-install/` directory, and a later install removes it.
 
-To upgrade, replace the `papertiger/` directory with the new release's (no
-Papertiger command may be running from it on Windows). When a release raises
-the authority schema, each project's first read refuses with the exact `init`
-command that migrates it; take a `backup` first. To remove Papertiger, delete
-the directory; planning databases stay in their projects.
+To upgrade, run the new release's `bin/papertiger install` the same way.
+`papertiger install --check` reports each target's version and every changed,
+missing or extra file, and exits non-zero when any target differs from the
+release it runs from. When a release raises the authority schema, each
+project's first read refuses with the exact `init` command that migrates it;
+take a `backup` first. To remove Papertiger, delete the copies; planning
+databases stay in their projects.
 
 Each project keeps its authority at `state/papertiger.sqlite`. Start a new
 project's authority with `papertiger --project-root /path/to/project init`;
@@ -248,8 +264,9 @@ Git snapshot associations inward in the private Papertiger authority.
 
 ## Start planning
 
-Run the skill's `bin/papertiger` (`bin\papertiger.exe` on Windows); the
-examples use `papertiger` for that executable:
+Run `papertiger` from PATH, or the skill's `bin/papertiger`
+(`bin\papertiger.exe` on Windows); `install` puts the same verified release
+in both places:
 
 ```bash
 papertiger status
@@ -272,7 +289,23 @@ papertiger --project-root /path/to/canonical-project status
 ```
 
 `--project-root` selects that exact root's `state/papertiger.sqlite` and never
-walks upward into another project; only `init` creates a missing one. Choose
+walks upward into another project; only `init` creates a missing one. A runner
+may set `PAPERTIGER_PROJECT_ROOT` in one worker's environment instead; it
+selects the same way, but never creates an authority.
+
+A Git repository whose planning belongs to another project's authority is
+routed once from inside it:
+
+```bash
+papertiger route set /path/to/owning-project
+papertiger route show
+```
+
+The route is one line in the repository's shared Git directory, so Git never
+commits it, every worktree follows it, and no planner file enters the
+repository. Discovery then selects the owning authority. A route naming a
+missing authority, or kept beside the repository's own authority, refuses
+and names `route set` or `route clear`. Choose
 that root by the initiative or outcome that owns the work, not by every
 repository containing edited files. Keep a cross-repository outcome in one
 authority and record external commits there with stable `--repo` labels.

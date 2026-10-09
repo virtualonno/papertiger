@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use sha2::{Digest as _, Sha256};
 
 /// Stream bytes through the shared digest implementation without buffering a file.
-pub(crate) fn sha256_reader(reader: &mut impl std::io::Read) -> std::io::Result<String> {
+pub fn sha256_reader(reader: &mut impl std::io::Read) -> std::io::Result<String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {

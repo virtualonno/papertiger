@@ -6,7 +6,8 @@ Checks the layout, then runs the skill's own binaries against a fresh Git
 project: a bare init refuses to create an authority, init through
 --project-root adds the ignore rules, a nested
 directory finds the authority, a directory outside every project refuses,
-and Mise opens its separate authority beside the planner's.
+Mise opens its separate authority beside the planner's, and install writes
+verified copies that install --check then reports current.
 """
 import os
 import subprocess
@@ -24,6 +25,7 @@ mise = skill / 'bin' / (TOOL + '-mise' + suffix)
 expected = {
     'SKILL.md', 'references/agent_integration.md', 'bin/' + planner.name, 'bin/' + mise.name,
     'README.md', 'CHANGELOG.md', 'MISE.md', 'LICENSE', 'LICENSE-SSL', 'LICENSE-VPL',
+    'papertiger-release.json',
 }
 present = {p.relative_to(skill).as_posix() for p in skill.rglob('*') if p.is_file()}
 assert present == expected, (sorted(present - expected), sorted(expected - present))
@@ -80,4 +82,18 @@ with tempfile.TemporaryDirectory(prefix=TOOL + ' skill smoke ') as directory:
     assert '"initialized": false' in run(mise, '--project-root', project, 'status', '--json', cwd=root)
     run(mise, '--project-root', project, 'init', cwd=root)
     assert '"initialized": true' in run(mise, '--project-root', project, 'status', '--json', cwd=root)
+
+    targets = ['--skills-dir', root / 'claude skills', '--skills-dir', root / 'agent skills',
+               '--bin-dir', root / 'bin']
+    assert 'installed with a verified copy' in run(planner, 'install', *targets, cwd=root)
+    assert 'already current' in run(planner, 'install', *targets, cwd=root)
+    run(planner, 'install', '--check', *targets, cwd=root)
+    installed = root / 'agent skills' / TOOL
+    assert (installed / 'SKILL.md').read_bytes() == (skill / 'SKILL.md').read_bytes()
+    assert (root / 'bin' / planner.name).read_bytes() == planner.read_bytes()
+    (installed / 'SKILL.md').write_text('stale\n')
+    stale = subprocess.run([str(planner), 'install', '--check', *map(str, targets)], cwd=root,
+                           env=env, capture_output=True, text=True)
+    assert stale.returncode != 0 and 'changed SKILL.md' in stale.stdout, stale
+    assert '1 of 3 targets differ' in stale.stderr, stale.stderr
 print(f'{TOOL}: skill directory smoke passed')

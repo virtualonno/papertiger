@@ -20,6 +20,7 @@ pub fn papertiger_command(program: impl AsRef<OsStr>) -> Command {
         "PAPERTIGER_ACTOR",
         "PAPERTIGER_SESSION",
         "PAPERTIGER_REASONING_EFFORT",
+        "PAPERTIGER_PROJECT_ROOT",
     ] {
         command.env_remove(name);
     }

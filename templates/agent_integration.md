@@ -7,8 +7,11 @@ kinds, review, pickup, gates, commits, references and Mise.
 ## First use
 
 Papertiger is this skill directory: the skill, this reference and the
-executables in `bin/`. Installing, upgrading and removing it are covered by
-the README; nothing is installed in projects.
+executables in `bin/`. The operator installs and upgrades it with the
+release's `bin/papertiger install`, which writes verified copies into the agent
+skills directories and puts `papertiger` on PATH for harnesses that load no
+skills; `papertiger install --check` reports a stale or diverged copy. Nothing
+is installed in projects.
 
 Start from the authority the project already has. Only a genuinely new project
 with no planning history gets one: `papertiger init` at its Git root (or
@@ -42,6 +45,21 @@ which names that exact root (a linked worktree's root selects its main tree's
 authority the same way). With neither, commands refuse and name both. `init`
 refuses in a linked worktree whose main tree has no authority and names the
 main tree's `--project-root`.
+
+A Git repository whose planning belongs to another project's authority (a
+companion or research repository with no planner files of its own) is routed
+once: `papertiger route set <owning-project-root>` from inside it writes the
+owning root into the repository's shared Git directory
+(`<git-common-dir>/papertiger-authority`). Git never commits it, every
+worktree follows it, and discovery selects the owning authority with no
+per-call flag; `papertiger route show` names the selected authority and what
+selected it, and `papertiger route clear` removes the route. A route never
+chains, and one naming a missing authority, or beside the repository's own
+authority, refuses with the corrective command. A fleet runner that launches
+workers in directories outside every project sets `PAPERTIGER_PROJECT_ROOT` in
+each worker's process environment; it selects like `--project-root`, but never
+creates an authority, and refuses a root without one. Never set it, or
+`PAPERTIGER_DB`, machine-wide: that would misroute every other project.
 `--db` and `PAPERTIGER_DB` are deliberate overrides for recovery, never for
 ordinary selection.
 

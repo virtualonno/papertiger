@@ -16,8 +16,9 @@ and including 0.20.0 remain available under the MIT License.
 
 Papertiger now ships as one agent skill directory (`papertiger/` with
 `SKILL.md`, `references/`, and `bin/papertiger` and `bin/papertiger-mise`).
-Extract it into your agent skills directory; to upgrade, replace that
-directory. Nothing is installed in projects any more: delete a project's
+Extract it anywhere and run its `bin/papertiger install`, which writes
+hash-verified copies into `~/.claude/skills`, `~/.agents/skills` and
+`~/.local/bin`; upgrade the same way. Nothing is installed in projects any more: delete a project's
 `tools/papertiger/` and its `.agents/skills/papertiger` and
 `.claude/skills/papertiger` copies after installing the skill. A project whose
 authority is not at `state/papertiger.sqlite` must move it there (take a
@@ -249,6 +250,30 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 
 ### Added
 
+- `install` copies the release skill directory it runs from into every agent
+  skills directory (`~/.claude/skills` and `~/.agents/skills` by default) and
+  its executables into a PATH directory (`~/.local/bin`) for harnesses that
+  load no skills. Every copy is checked against the new
+  `papertiger-release.json` manifest of SHA-256 digests; a tampered release
+  refuses before any target changes. A copy is staged and verified, the old
+  one is renamed aside and the new one renamed into place, so an executable
+  that is running on Windows never leaves a half-replaced directory. A
+  retired copy still held by a process is reported and removed by a later
+  install. A symbolic link or junction target is refused unless
+  `--replace-links` replaces it with a copy. `install --check` reports each
+  target's version and every changed, missing or extra file, and fails when
+  any target differs.
+- `route set <project-root>` routes a Git repository whose planning belongs to
+  another project to that project's authority. The route is one line in the
+  repository's shared Git directory, so every worktree follows it and Git
+  never commits it. `route show` names the selected authority and what
+  selected it, and `route clear` removes the route. A route naming a missing
+  authority, or kept beside the repository's own authority, refuses with the
+  corrective command.
+- `PAPERTIGER_PROJECT_ROOT` selects the project root for one process, as
+  `--project-root` does, so a runner can route each worker without per-call
+  flags or global environment. Unlike the flag it never creates an
+  authority: a root without one refuses.
 - The installed agent reference is rewritten for the 1.0 surface and cut from
   about 26 KB to about 11 KB of use-only guidance; the skill teaches kinds,
   handles, authorship, review and `brief`.

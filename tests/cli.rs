@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "cli/install.rs"]
+mod install;
+#[path = "cli/routing.rs"]
+mod routing;
 #[path = "cli/schema_contracts.rs"]
 mod schema_contracts;
 #[path = "cli/task_outline.rs"]

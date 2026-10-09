@@ -13,14 +13,18 @@ existing team or domain lifecycle.
 
 ## Select the authority once
 
-The executable is `bin/papertiger[.exe]` inside this skill's directory; below,
-`papertiger` means that path. Run it in the native shell from the project you
-are working in, not from the skill directory: it uses the nearest
-`state/papertiger.sqlite` above the working directory, or in a linked Git
-worktree the main working tree's. Keep work in
-the canonical project that owns the outcome, including cross-repository work;
-from elsewhere pass `--project-root <canonical-root>`. Do not guess `--db` or
-create a second store in a worktree. When no project owns the work, use the
+Run `papertiger` from PATH, or else `bin/papertiger[.exe]` inside this skill's
+directory; both are the same verified release. Run it in the native shell from
+the project you are working in, not from the skill directory: it uses the
+nearest `state/papertiger.sqlite` above the working directory, in a linked Git
+worktree the main working tree's, and in a repository routed to another
+project that project's; `papertiger route show` names the authority and why.
+Keep work in the canonical project that owns the outcome, including
+cross-repository work; from elsewhere pass `--project-root <canonical-root>`
+(a runner may set `PAPERTIGER_PROJECT_ROOT` for one process instead). When
+your operator says a repository's planning belongs to another project, route
+it once from inside it with `papertiger route set <project-root>`. Do not
+guess `--db` or create a second store in a worktree. When no project owns the work, use the
 authority your operator named and put the consuming project's absolute root in
 each task intent. Write through `papertiger`, never raw SQLite. A refusal does
 not authorize removing guards or manufacturing admission; use the corrective

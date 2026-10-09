@@ -5,6 +5,7 @@ use rusqlite::{Connection, params};
 use std::io::Read;
 
 mod guide_contract;
+mod install;
 mod project_authority;
 mod text_input;
 
@@ -14,13 +15,14 @@ use text_input::{IntentArgs, NoteTextArgs, ResultArgs, WhyArgs, reject_multiple_
 #[command(
     name = "papertiger",
     version,
-    about = "Local task planning for cross-session engineering work"
+    about = "Local task planning for cross-session engineering work",
+    after_help = "Authority: run from inside the project; papertiger uses the nearest state/papertiger.sqlite above the working directory, or the project a repository's route names (`papertiger route show` says which and why). From elsewhere pass --project-root <root>; a runner may set PAPERTIGER_PROJECT_ROOT per process. Start with `papertiger status`, then `papertiger focus`."
 )]
 struct Cli {
-    /// Planning database path (default: PAPERTIGER_DB, else the nearest state/papertiger.sqlite above the working directory)
+    /// Planning database path for recovery (default: PAPERTIGER_DB, else the project selected by --project-root, PAPERTIGER_PROJECT_ROOT, a repository route or discovery)
     #[arg(long, global = true)]
     db: Option<String>,
-    /// Project root whose state/papertiger.sqlite is the authority; evidence verify and gate resolve also resolve file: locators beneath it
+    /// Project root whose state/papertiger.sqlite is the authority (default: PAPERTIGER_PROJECT_ROOT, else the nearest authority or route above the working directory); evidence verify and gate resolve also resolve file: locators beneath it
     #[arg(long = "project-root", global = true, value_name = "DIR")]
     authority_project_root: Option<std::path::PathBuf>,
     /// Actor label recorded on events (default: PAPERTIGER_ACTOR, else the harness and session, else 'operator' for the human model, else the model); provenance, never ownership
@@ -402,6 +404,27 @@ enum Cmd {
         #[command(subcommand)]
         cmd: MiseCmd,
     },
+    /// Route a Git repository's planning to another project's authority, recorded in its Git directory
+    Route {
+        #[command(subcommand)]
+        cmd: RouteCmd,
+    },
+    /// Copy this release to every agent skills directory and a PATH directory as hash-verified copies
+    Install(install::InstallArgs),
+}
+
+#[derive(Subcommand)]
+enum RouteCmd {
+    /// Name the authority this directory selects and what selected it
+    Show,
+    /// Route the Git repository containing the working directory, and its worktrees, to the authority of PROJECT_ROOT
+    Set {
+        /// Root of the project whose state/papertiger.sqlite owns this repository's planning
+        #[arg(value_name = "PROJECT_ROOT")]
+        project_root: std::path::PathBuf,
+    },
+    /// Remove the route of the Git repository containing the working directory
+    Clear,
 }
 
 #[derive(Subcommand)]
@@ -1372,6 +1395,18 @@ fn run_planner(cli: Cli) -> Result<()> {
         );
         return Ok(());
     }
+    if let Cmd::Install(args) = &cli.cmd {
+        if json || cli.db.is_some() || cli.authority_project_root.is_some() {
+            bail!(
+                "install reports in plain text and opens no authority; omit --json, --db and --project-root"
+            );
+        }
+        return install::run(args);
+    }
+    let selector = ProjectRootSelector::from_cli(cli.authority_project_root.clone())?;
+    if let Cmd::Route { cmd } = &cli.cmd {
+        return run_route(cmd, json, cli.db.as_deref(), &selector);
+    }
     let mutation = !cli.cmd.opens_authority_read_only()
         && !matches!(
             cli.cmd,
@@ -1419,7 +1454,7 @@ fn run_planner(cli: Cli) -> Result<()> {
         ($($args:tt)*) => { if !json { pt::outln!($($args)*); } };
     }
 
-    let project_root = cli.authority_project_root.clone();
+    let project_root = selector.root.clone();
     let db_override = cli.db.or_else(|| std::env::var("PAPERTIGER_DB").ok());
     let evidence_db_override = db_override.clone();
     let evidence_verify = matches!(
@@ -1436,42 +1471,14 @@ fn run_planner(cli: Cli) -> Result<()> {
     );
     if project_root.is_some() && db_override.is_some() && !evidence_verify && !evidence_resolve {
         bail!(
-            "ordinary planner commands do not accept --project-root together with --db or PAPERTIGER_DB; remove the database override so --project-root selects one canonical authority. `evidence verify` and `gate resolve` alone retain this combination so an explicitly selected database can verify or bind file: locators beneath a supplied project root"
+            "ordinary planner commands do not accept {} together with --db or PAPERTIGER_DB; remove the database override so the project root selects one canonical authority. `evidence verify` and `gate resolve` alone retain this combination so an explicitly selected database can verify or bind file: locators beneath a supplied project root",
+            selector.source
         );
     }
+    let selected = select_authority(db_override, &selector, matches!(cli.cmd, Cmd::Init))?;
+    let db_path = selected.db_path;
     // The project root of an authority `init` may create, for its ignore rules.
-    let mut init_root = None;
-    let db_path = match (db_override, project_root.as_deref()) {
-        (Some(path), _) => path,
-        // Selected paths are shown in refusals; render them as a user would
-        // type them, without Windows verbatim prefixes.
-        (None, Some(root)) => {
-            if matches!(cli.cmd, Cmd::Init) {
-                project_authority::refuse_init_in_linked_worktree(root)?;
-            }
-            let selected = project_authority::at_root(root)?;
-            init_root = Some(selected.root);
-            pt::portable_absolute(&selected.authority)?
-        }
-        (None, None) => {
-            let cwd = std::env::current_dir()?;
-            match project_authority::discover(&cwd)? {
-                Some(found) => pt::portable_absolute(&found.authority)?,
-                // A bare init creates an authority only at a Git root, which
-                // is a project root by definition; from any other directory
-                // it could nest a second authority, so it names --project-root.
-                // A linked worktree's root is not one: its project's
-                // authority belongs to the main working tree.
-                None if matches!(cli.cmd, Cmd::Init) && cwd.join(".git").exists() => {
-                    project_authority::refuse_init_in_linked_worktree(&cwd)?;
-                    let selected = project_authority::at_root(&cwd)?;
-                    init_root = Some(selected.root);
-                    pt::portable_absolute(&selected.authority)?
-                }
-                None => return Err(project_authority::not_found(&cwd)),
-            }
-        }
-    };
+    let init_root = selected.init_root;
     let actor = authorship
         .as_ref()
         .map(|authorship| authorship.actor.clone())
@@ -1594,7 +1601,7 @@ fn run_planner(cli: Cli) -> Result<()> {
     };
     match cli.cmd {
         Cmd::Init => unreachable!(),
-        Cmd::Schema => unreachable!(),
+        Cmd::Schema | Cmd::Route { .. } | Cmd::Install(_) => unreachable!(),
         Cmd::Backup { .. } => unreachable!(),
         Cmd::RepairGuards { .. } => unreachable!(),
         Cmd::Status {} => {
@@ -2970,6 +2977,175 @@ fn validate_new_evidence(
         .and_then(|path| pt::portable_absolute(&path).ok())
         .unwrap_or_else(|| db_path.to_owned());
     pt::validate_new_file_evidence(evidence, sha256, project_root.as_deref(), &authority)
+}
+
+/// The per-process project root a runner sets for one worker.
+const ENV_PROJECT_ROOT: &str = "PAPERTIGER_PROJECT_ROOT";
+
+/// The project root that selects the authority before discovery: the global
+/// `--project-root`, else the per-process `PAPERTIGER_PROJECT_ROOT`. Neither
+/// is ever inferred.
+struct ProjectRootSelector {
+    root: Option<std::path::PathBuf>,
+    source: &'static str,
+}
+
+impl ProjectRootSelector {
+    fn from_cli(flag: Option<std::path::PathBuf>) -> Result<Self> {
+        if let Some(root) = flag {
+            return Ok(Self {
+                root: Some(root),
+                source: "--project-root",
+            });
+        }
+        let root = match std::env::var_os(ENV_PROJECT_ROOT) {
+            None => None,
+            Some(value) if value.is_empty() => bail!(
+                "PAPERTIGER_PROJECT_ROOT is set but empty; set it to the canonical project root or unset it to use discovery"
+            ),
+            Some(value) => Some(std::path::PathBuf::from(value)),
+        };
+        Ok(Self {
+            root,
+            source: ENV_PROJECT_ROOT,
+        })
+    }
+}
+
+/// The selected authority path and, when it came from a project root, that
+/// root for `init`'s ignore rules; `how` names what selected it.
+struct SelectedAuthority {
+    db_path: String,
+    init_root: Option<std::path::PathBuf>,
+    how: String,
+}
+
+fn select_authority(
+    db_override: Option<String>,
+    selector: &ProjectRootSelector,
+    init: bool,
+) -> Result<SelectedAuthority> {
+    let routed = |found: &project_authority::ProjectAuthority, how: String| match &found.route {
+        Some(route) => format!("{how}, routed by {}", portable_shown(route)),
+        None => how,
+    };
+    match (db_override, selector.root.as_deref()) {
+        (Some(path), _) => Ok(SelectedAuthority {
+            db_path: path,
+            init_root: None,
+            how: "a database override (--db or PAPERTIGER_DB)".to_owned(),
+        }),
+        // Selected paths are shown in refusals; render them as a user would
+        // type them, without Windows verbatim prefixes.
+        (None, Some(root)) => {
+            if init {
+                project_authority::refuse_init_in_linked_worktree(root)?;
+            }
+            let selected = project_authority::at_root(root)
+                .with_context(|| format!("{} names {}", selector.source, root.display()))?;
+            // A runner's variable names an existing project; it never creates
+            // one, so a wrong value fails here rather than offering init.
+            if selector.source == ENV_PROJECT_ROOT && !selected.authority.is_file() {
+                bail!(
+                    "{ENV_PROJECT_ROOT} names {}, which has no state/papertiger.sqlite; set it to the canonical project root that owns this work",
+                    portable_shown(root)
+                );
+            }
+            Ok(SelectedAuthority {
+                db_path: pt::portable_absolute(&selected.authority)?,
+                how: routed(&selected, selector.source.to_owned()),
+                init_root: Some(selected.root),
+            })
+        }
+        (None, None) => {
+            let cwd = std::env::current_dir()?;
+            match project_authority::discover(&cwd)? {
+                Some(found) => Ok(SelectedAuthority {
+                    db_path: pt::portable_absolute(&found.authority)?,
+                    how: routed(&found, format!("discovery from {}", portable_shown(&cwd))),
+                    init_root: None,
+                }),
+                // A bare init creates an authority only at a Git root, which
+                // is a project root by definition; from any other directory
+                // it could nest a second authority, so it names --project-root.
+                // A linked worktree's root is not one: its project's
+                // authority belongs to the main working tree.
+                None if init && cwd.join(".git").exists() => {
+                    project_authority::refuse_init_in_linked_worktree(&cwd)?;
+                    let selected = project_authority::at_root(&cwd)?;
+                    Ok(SelectedAuthority {
+                        db_path: pt::portable_absolute(&selected.authority)?,
+                        how: "init at this Git root".to_owned(),
+                        init_root: Some(selected.root),
+                    })
+                }
+                None => Err(project_authority::not_found(&cwd)),
+            }
+        }
+    }
+}
+
+fn portable_shown(path: &std::path::Path) -> String {
+    pt::portable_absolute(path).unwrap_or_else(|_| path.display().to_string())
+}
+
+/// `route show|set|clear`: a route is repository configuration, not planning
+/// history, so these commands record no event and need no authorship.
+fn run_route(
+    cmd: &RouteCmd,
+    json: bool,
+    db: Option<&str>,
+    selector: &ProjectRootSelector,
+) -> Result<()> {
+    if json {
+        bail!("route reports in plain text only; omit --json");
+    }
+    let cwd = std::env::current_dir()?;
+    match cmd {
+        RouteCmd::Show => {
+            let db_override = db
+                .map(str::to_owned)
+                .or_else(|| std::env::var("PAPERTIGER_DB").ok());
+            let selected = select_authority(db_override, selector, false)?;
+            pt::outln!(
+                "authority {} (selected by {})",
+                selected.db_path,
+                selected.how
+            );
+        }
+        RouteCmd::Set { project_root } => {
+            if db.is_some() || selector.root.is_some() {
+                bail!(
+                    "route set takes the project root as its argument and routes the repository containing the working directory; remove --db, --project-root and PAPERTIGER_PROJECT_ROOT"
+                );
+            }
+            let (top, selected) = project_authority::set_route(&cwd, project_root)?;
+            pt::outln!(
+                "routed {} and its worktrees to {}; the route is {}, inside the Git directory, which Git never commits",
+                portable_shown(&top),
+                portable_shown(&selected.authority),
+                selected
+                    .route
+                    .as_deref()
+                    .map(portable_shown)
+                    .unwrap_or_default()
+            );
+        }
+        RouteCmd::Clear => {
+            if db.is_some() || selector.root.is_some() {
+                bail!(
+                    "route clear removes the route of the repository containing the working directory; remove --db, --project-root and PAPERTIGER_PROJECT_ROOT"
+                );
+            }
+            let (file, removed) = project_authority::clear_route(&cwd)?;
+            if removed {
+                pt::outln!("removed the route {}", portable_shown(&file));
+            } else {
+                pt::outln!("no route at {}; nothing changed", portable_shown(&file));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Read a whole input file, or stdin for '-'.

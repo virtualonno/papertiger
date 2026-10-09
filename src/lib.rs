@@ -6,7 +6,7 @@ pub use authorship::{
     resolve_authorship_from_env, set_authorship, validate_model, validate_reasoning_effort,
 };
 mod stdout;
-pub use digest::{sha256, sha256_bytes, validate_sha256};
+pub use digest::{sha256, sha256_bytes, sha256_reader, validate_sha256};
 pub use stdout::{OutputClosed, is_output_closed, print_stdout, write_stdout};
 mod atomic_file;
 pub use atomic_file::{atomic_create_file, atomic_replace_file};
