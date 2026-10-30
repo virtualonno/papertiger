@@ -121,7 +121,15 @@ fn identified_retries_are_eventless_and_real_blockers_remain_enforced() {
     let conn = Connection::open_in_memory().unwrap();
     let (plan, first, second) = seed(&conn);
     pt::add_dep(&conn, "test", second, first, Some("prerequisite")).unwrap();
-    assert!(pt::start_task(&conn, "test", second, None, Some("b")).is_err());
+    // A dependency orders completion, not starting: the pickup is recorded
+    // and completion waits for the prerequisite.
+    pt::start_task(&conn, "test", second, None, Some("c")).unwrap();
+    assert!(
+        pt::complete_task(&conn, "test", second, None)
+            .unwrap_err()
+            .to_string()
+            .contains(&format!("dependency F-{first} is not done"))
+    );
     pt::start_task(&conn, "test", first, None, Some("a")).unwrap();
     let before = serde_json::to_value(pt::export(&conn, None).unwrap()).unwrap();
     pt::start_task(&conn, "test", first, None, Some("a")).unwrap();

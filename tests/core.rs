@@ -1663,6 +1663,59 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
 }
 
 #[test]
+fn reopen_returns_a_started_task_to_proposed_without_an_outcome() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
+    let stale = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation::new("Stale", "feature"),
+    )
+    .unwrap();
+    let dependent = pt::add_task(
+        &conn,
+        "test",
+        plan,
+        pt::TaskCreation {
+            deps: &[stale],
+            ..pt::TaskCreation::new("Dependent", "feature")
+        },
+    )
+    .unwrap();
+    pt::start_task(&conn, "test", stale, None, Some("ended-session")).unwrap();
+    let readiness_before = pt::focus(&conn, plan, 10, true, None, false, None).unwrap();
+    pt::reopen_task(&conn, "test", stale, Some("lane ended without pushing")).unwrap();
+
+    let task = pt::get_task(&conn, stale).unwrap();
+    assert_eq!(task.status, "proposed");
+    assert!(task.pickup.is_none());
+    assert!(task.result.is_none());
+    let focus = pt::focus(&conn, plan, 10, true, None, false, None).unwrap();
+    let entry = |focus: &pt::FocusResponse, seq: i64| {
+        focus
+            .projection
+            .entries
+            .iter()
+            .find(|entry| entry.task.seq == seq)
+            .map(|entry| entry.readiness.clone())
+    };
+    assert_eq!(entry(&focus, stale).as_deref(), Some("ready"));
+    assert_eq!(
+        entry(&focus, dependent),
+        entry(&readiness_before, dependent)
+    );
+    let report = pt::model_report(&conn, None, None).unwrap();
+    assert!(report.models.iter().all(|outcome| {
+        outcome.results.reopened == 0 && outcome.filings.retired == 0 && outcome.filings.done == 0
+    }));
+    // Closed tasks reopen as before.
+    pt::complete_task(&conn, "test", stale, None).unwrap();
+    pt::reopen_task(&conn, "test", stale, Some("regressed")).unwrap();
+    assert_eq!(pt::get_task(&conn, stale).unwrap().status, "proposed");
+}
+
+#[test]
 fn lifecycle_refusals_have_exact_corrective_messages() {
     let conn = db();
     let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
@@ -1684,8 +1737,10 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
     )
     .unwrap();
     assert_exact_error(
-        pt::start_task(&conn, "test", blocked, None, None),
-        &format!("F-{blocked} is not ready; resolve dep:F-{dependency} before starting it"),
+        pt::complete_task(&conn, "test", blocked, None),
+        &format!(
+            "F-{blocked} cannot be completed yet: dependency F-{dependency} is not done (finish it, or `papertiger dep remove F-{blocked} F-{dependency}`)"
+        ),
     );
     pt::start_task(&conn, "test", dependency, None, None).unwrap();
     // Explicit resumption is allowed; pickup is advisory, not an exclusive hold.
@@ -1700,8 +1755,8 @@ fn lifecycle_refusals_have_exact_corrective_messages() {
         &format!("F-{dependency} is already done"),
     );
     assert_exact_error(
-        pt::reopen_task(&conn, "test", blocked, Some("not terminal")),
-        &format!("F-{blocked} is proposed; only terminal tasks can be reopened"),
+        pt::reopen_task(&conn, "test", blocked, Some("not started")),
+        &format!("F-{blocked} is already proposed"),
     );
 
     let decision = pt::add_task(
@@ -2830,8 +2885,10 @@ fn dependencies_and_external_blockers_gate_execution_but_not_planning() {
     )
     .unwrap();
 
+    // The open external gate holds the start; the unfinished dependency only
+    // orders completion, so the refusal names the gate alone.
     let err = pt::start_task(&conn, "test", decision, None, None).unwrap_err();
-    assert!(err.to_string().contains(&format!("dep:F-{prerequisite}")));
+    assert!(!err.to_string().contains(&format!("dep:F-{prerequisite}")));
     assert!(err.to_string().contains("external:operator input"));
     let default_focus = pt::focus(&conn, plan, 20, false, None, false, None).unwrap();
     assert!(

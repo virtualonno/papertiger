@@ -171,11 +171,17 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
   free-standing or on one task; give the text exactly once. The receipt names
   the note's event (`noted on F-3 as @2972`), which `note:2972` gate evidence
   cites.
-- Open dependencies, gates, and child tasks prevent completion. An `external`
-  gate (`gate add <N> <name> --kind external --requirement <condition>`) names
-  a condition outside the task, such as a vendor fix, and also keeps the task
-  from starting while open; it replaced blockers, which the v14 migration and
-  the `papertiger.dump.v10` conversion turn into external gates.
+- Open dependencies, gates, and child tasks prevent completion. A dependency
+  orders completion, not starting: `start` records the pickup of a task whose
+  dependency is unfinished and names what `done` still waits for. An
+  `external` gate (`gate add <N> <name> --kind external --requirement
+  <condition>`) names a condition outside the task, such as a vendor fix, and
+  also keeps the task from starting while open; it replaced blockers, which
+  the v14 migration and the `papertiger.dump.v10` conversion turn into
+  external gates.
+- `reopen <N>` returns a task to proposed: a done, retired or rejected task to
+  be worked again, or a started task nobody is working any more, whose pickup
+  then ends. Returning a started task records no outcome in `models`.
 - Every change records an actor and an event; idempotent identified pickup emits none. Actor labels are provenance,
   never assignees, leases, session handles, or liveness signals; unfinished
   work remains `in_progress` across agent replacement without reassignment.

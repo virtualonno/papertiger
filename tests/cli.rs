@@ -1159,6 +1159,30 @@ fn show_keeps_the_latest_note_whole_and_focus_surfaces_prose_holds() {
 }
 
 #[test]
+fn work_starts_ahead_of_a_dependency_and_goes_back_to_proposed() {
+    let db = TestDatabase::new("start-ahead");
+    let run = |args: &[&str]| {
+        let output = papertiger(&db.0, args);
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "work", "Work"]);
+    run(&["add", "--kind", "feature", "Core"]);
+    run(&["add", "--kind", "feature", "Built on core", "--dep", "F-1"]);
+    assert_eq!(
+        run(&["start", "F-2"]).trim(),
+        "F-2 in progress; done waits for F-1"
+    );
+    assert_eq!(
+        run(&["reopen", "F-2", "lane ended"]).trim(),
+        "F-2 back to proposed; its pickup ended"
+    );
+    let shown = run(&["show", "F-2"]);
+    assert!(shown.contains("\n  status: proposed\n"), "{shown}");
+}
+
+#[test]
 fn text_reads_cover_every_active_plan_when_none_is_named() {
     let db = TestDatabase::new("focus-all-plans");
     let run = |args: &[&str]| {
@@ -2402,13 +2426,25 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
     let db = TestDatabase::new("atomic-add-start");
     assert_success(&papertiger(&db.0, &["init"]));
     assert_success(&papertiger(&db.0, &["plan", "add", "work", "Work"]));
+    assert_success(&papertiger(&db.0, &["plan", "add", "held", "Held"]));
+    assert_success(&papertiger(
+        &db.0,
+        &[
+            "plan",
+            "set",
+            "held",
+            "paused",
+            "--why",
+            "exercise rollback",
+        ],
+    ));
     assert_success(&papertiger(
         &db.0,
         &[
             "add",
             "--kind",
             "feature",
-            "open dependency",
+            "existing task",
             "--plan",
             "work",
         ],
@@ -2426,9 +2462,7 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
             "feature",
             "blocked atomic task",
             "--plan",
-            "work",
-            "--dep",
-            "1",
+            "held",
             "--start",
             "--why",
             "exercise rollback",
@@ -2436,9 +2470,12 @@ fn add_start_is_atomic_and_rolls_back_every_refusal() {
     );
     assert!(!blocked.status.success());
     let blocked_stderr = String::from_utf8_lossy(&blocked.stderr);
-    assert!(blocked_stderr.contains("task was not created"));
-    assert!(blocked_stderr.contains("resolve dep:F-1"));
-    assert!(!blocked_stderr.contains("F-2 is not ready"));
+    assert!(
+        blocked_stderr.contains(
+            "task was not created: plan is paused; set it active before using add --start"
+        ),
+        "{blocked_stderr}"
+    );
     let after_refusal = papertiger(&db.0, &["log", "--json"]);
     assert_success(&after_refusal);
     let after_refusal: serde_json::Value = serde_json::from_slice(&after_refusal.stdout).unwrap();

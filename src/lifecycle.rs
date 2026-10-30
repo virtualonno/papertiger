@@ -60,7 +60,13 @@ pub(crate) fn start_task_in_mutation(
             task.handle
         );
     }
-    let blockers = entry_blockers(tx, &task)?;
+    // A dependency orders completion, not starting: a session may work ahead
+    // of an unfinished prerequisite and record its pickup, while `done` still
+    // waits for it. External gates and disputed results still hold the start.
+    let blockers = entry_blockers(tx, &task)?
+        .into_iter()
+        .filter(|blocker| !blocker.starts_with("dep:"))
+        .collect::<Vec<_>>();
     if !blockers.is_empty() {
         if created_in_same_mutation {
             bail!(
@@ -182,16 +188,30 @@ pub fn complete_task(conn: &Connection, actor: &str, seq: i64, result: Option<&s
     Ok(())
 }
 
+/// Return a task to proposed: a closed task to be worked again, or a started
+/// task nobody is working any more, whose pickup then ends.
 pub fn reopen_task(conn: &Connection, actor: &str, seq: i64, why: Option<&str>) -> Result<()> {
     let why = given_reason(why);
     let tx = begin_mutation(conn)?;
     let task = get_task(&tx, seq)?;
-    if !matches!(task.status.as_str(), "done" | "retired" | "rejected") {
-        bail!(
-            "{} is {}; only terminal tasks can be reopened",
-            task.handle,
-            task.status
-        );
+    if task.status == "in_progress" {
+        transition_task(
+            &tx,
+            actor,
+            &task,
+            TaskTransition {
+                status: "proposed",
+                why,
+                result: None,
+                replacement: None,
+                pickup: None,
+            },
+        )?;
+        tx.commit()?;
+        return Ok(());
+    }
+    if task.status != "done" && task.status != "retired" && task.status != "rejected" {
+        bail!("{} is already {}", task.handle, task.status);
     }
     let status = plan_status(&tx, task.plan_id)?;
     if matches!(status.as_str(), "done" | "retired") {

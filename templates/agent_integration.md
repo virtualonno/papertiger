@@ -164,7 +164,11 @@ cannot be detected.
 ## Pickup
 
 `start <task.seq>` records pickup and resumes in-progress work directly; an
-earlier pickup never needs release, permission or a heartbeat. Outside a
+earlier pickup never needs release, permission or a heartbeat. A dependency
+orders completion, not starting: `start` records the pickup of a task whose
+dependency is unfinished and names what `done` waits for. When a lane ends
+without finishing, `reopen <task.seq> --why <reason>` returns its task to
+proposed and ends the pickup, recording no outcome. Outside a
 detected harness, set `PAPERTIGER_SESSION` once to a unique identity per agent
 session. `focus` prefers your own work, then unattributed in-progress work,
 then ready work, then work picked up elsewhere; when choosing freely, prefer

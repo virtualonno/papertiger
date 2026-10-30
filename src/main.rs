@@ -214,7 +214,7 @@ enum Cmd {
         #[command(flatten)]
         result: ResultArgs,
     },
-    /// Reopen a finished task
+    /// Return a task to proposed: reopen a finished one, or put back a started one nobody is working
     Reopen {
         /// Task: N, #N or its handle (e.g. F-N)
         task: String,
@@ -2110,7 +2110,18 @@ fn run_planner(cli: Cli) -> Result<()> {
             let seq = pt::resolve_task_ref(&conn, &task)?;
             pt::start_task(&conn, &actor, seq, why.as_deref(), session.as_deref())?;
             let handle = pt::seq_handle(&conn, seq)?;
-            mutation_output!("{handle} in progress");
+            let waiting = pt::open_deps(&conn, pt::get_task(&conn, seq)?.task_id)?
+                .into_iter()
+                .map(|dependency| pt::seq_handle(&conn, dependency))
+                .collect::<Result<Vec<_>>>()?;
+            if waiting.is_empty() {
+                mutation_output!("{handle} in progress");
+            } else {
+                mutation_output!(
+                    "{handle} in progress; done waits for {}",
+                    waiting.join(", ")
+                );
+            }
         }
         Cmd::MovePlan { tasks, plan, why } => {
             let why = why.optional()?;
@@ -2131,9 +2142,14 @@ fn run_planner(cli: Cli) -> Result<()> {
         Cmd::Reopen { task, text, why } => {
             let why = second_word(text, why.optional()?, "why")?;
             let seq = pt::resolve_task_ref(&conn, &task)?;
+            let started = pt::get_task(&conn, seq)?.status == "in_progress";
             pt::reopen_task(&conn, &actor, seq, why.as_deref())?;
             let handle = pt::seq_handle(&conn, seq)?;
-            mutation_output!("{handle} reopened");
+            if started {
+                mutation_output!("{handle} back to proposed; its pickup ended");
+            } else {
+                mutation_output!("{handle} reopened");
+            }
         }
         Cmd::Retire {
             task,

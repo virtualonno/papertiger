@@ -247,6 +247,13 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   reinstalls every write guard, and refuses if a foreign-key reference is
   broken. Dumps move to `papertiger.dump.v11`; `papertiger.dump.v9` is no
   longer converted.
+- A dependency orders completion, not starting: `start` (and `add --start`)
+  records the pickup of a task whose dependency is unfinished, and its receipt
+  names what `done` waits for (`F-2 in progress; done waits for F-1`). Open
+  external gates and disputed results still hold the start.
+- `reopen` returns a started task to proposed and ends its pickup, recording
+  no outcome in `models` (`F-12 back to proposed; its pickup ended`). It
+  still reopens done, retired and rejected tasks as before.
 - Text `show` prints the newest note in full under `latest note @N`, even when
   later events pushed it out of the recent history, and clips older notes to
   one line each with their `@N`; `show --json` adds `latest_note`

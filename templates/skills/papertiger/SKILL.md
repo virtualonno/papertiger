@@ -48,8 +48,10 @@ them. Text output is written for you to read and is the cheapest; add
 `--json` only when a script parses the output or you need a field the text
 omits.
 Another session's pickup is advisory: not a lock, and no reason to ask
-permission for requested work. `start` a task before working on it: until
-then it looks free to every other session.
+permission for requested work. `start` a task before working on it, even ahead
+of an unfinished dependency: until then it looks free to every other session.
+If you stop without finishing, leave a handoff `note`; `reopen <N>` returns a
+started task nobody will continue to proposed.
 
 ```text
 papertiger start <N>
