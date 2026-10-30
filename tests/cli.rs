@@ -2017,6 +2017,56 @@ fn a_reader_that_closes_the_pipe_ends_output_without_failure() {
 }
 
 #[test]
+fn init_brings_a_current_authority_storage_up_to_date() {
+    let db = TestDatabase::new("storage-update");
+    let created = papertiger(&db.0, &["init"]);
+    assert_success(&created);
+    let storage = |db: &Path| {
+        let raw = rusqlite::Connection::open(db).unwrap();
+        let mode: String = raw
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        let indexes: i64 = raw
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type='index'
+                  AND name IN ('idx_tasks_parent','idx_deps_depends_on')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        (mode, indexes)
+    };
+    // A new authority logs ahead and has its lookup indexes.
+    assert_eq!(storage(&db.0), ("wal".to_owned(), 2));
+    // One created before them is brought up to date by init, once.
+    {
+        let raw = rusqlite::Connection::open(&db.0).unwrap();
+        raw.execute_batch("DROP INDEX idx_tasks_parent; DROP INDEX idx_deps_depends_on;")
+            .unwrap();
+        let mode: String = raw
+            .query_row("PRAGMA journal_mode=DELETE", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "delete");
+    }
+    let updated = papertiger(&db.0, &["init"]);
+    assert_success(&updated);
+    assert!(
+        String::from_utf8_lossy(&updated.stdout).contains(
+            "at schema v14; added lookup indexes; switched to write-ahead logging so reads no longer hold off writes"
+        ),
+        "{}",
+        String::from_utf8_lossy(&updated.stdout)
+    );
+    assert_eq!(storage(&db.0), ("wal".to_owned(), 2));
+    let again = papertiger(&db.0, &["init"]);
+    assert!(String::from_utf8_lossy(&again.stdout).contains("nothing changed"));
+    assert_eq!(
+        String::from_utf8_lossy(&papertiger(&db.0, &["audit"]).stdout).trim(),
+        "no findings"
+    );
+}
+
+#[test]
 fn orientation_reads_leave_the_authority_bytes_unchanged() {
     let db = TestDatabase::new("orientation-reads");
     assert_success(&papertiger(&db.0, &["init"]));

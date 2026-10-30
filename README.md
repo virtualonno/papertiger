@@ -73,7 +73,13 @@ databases stay in their projects.
 Each project keeps its authority at `state/papertiger.sqlite`. Start a new
 project's authority with `papertiger --project-root /path/to/project init`;
 in a Git working tree, `init` also adds the database, its `-journal`, `-wal`
-and `-shm` sidecars and the Mise authority to `.gitignore`. Ignore rules do not
+and `-shm` sidecars and the Mise authority to `.gitignore`. `init` keeps the
+authority in SQLite write-ahead-log mode, so a long read keeps its snapshot
+without holding off a concurrent write; on an existing authority at the
+current schema it switches that mode on and adds missing lookup indexes, and
+reports what it changed. Copy an authority with `backup`, never by copying the
+database file, whose recent commits may still sit in its `-wal` sidecar.
+Ignore rules do not
 untrack an existing path: if an authority is already tracked, remove only its
 index entry with `git rm --cached -- <path>`, preserving the local file.
 
@@ -376,7 +382,7 @@ and import preserve the envelope. Missing timezones and associations remain
 unknown, and no task state is inferred. Quarantine never accepts structurally
 valid history as a substitute for recording a disagreement.
 
-`backup` preserves planner schemas 1–13 and committed WAL data through SQLite's
+`backup` preserves planner schemas 1–14 and committed WAL data through SQLite's
 [online backup API](https://www.sqlite.org/backup.html). It publishes one recovery
 file after SQLite integrity verification and returns its SHA-256, byte count,
 original schema, and task/event counts. It refuses foreign authorities, newer

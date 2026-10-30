@@ -247,6 +247,13 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   reinstalls every write guard, and refuses if a foreign-key reference is
   broken. Dumps move to `papertiger.dump.v11`; `papertiger.dump.v9` is no
   longer converted.
+- `init` keeps an authority in SQLite write-ahead-log mode and adds lookup
+  indexes for parent and dependent walks. On an authority already at schema
+  v14 it switches the mode on and adds missing indexes, and says what it
+  changed. A long read now keeps its snapshot without holding off a concurrent
+  write, and `focus`, `status` and `audit` no longer scan the whole tasks
+  table per candidate. Copy an authority with `backup`, never by copying the
+  database file: recent commits may still sit in its `-wal` sidecar.
 - A dependency orders completion, not starting: `start` (and `add --start`)
   records the pickup of a task whose dependency is unfinished, and its receipt
   names what `done` waits for (`F-2 in progress; done waits for F-1`). Open

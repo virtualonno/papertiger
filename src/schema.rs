@@ -13,7 +13,71 @@ pub fn init(conn: &Connection) -> Result<InitOutcome> {
     init_at(conn, "the selected database")
 }
 
+/// Indexes for the parent, dependent and child walks every orientation read
+/// makes. `init` installs them on new, migrated and current authorities alike.
+const LOOKUP_INDEXES: &[(&str, &str)] = &[
+    (
+        "idx_tasks_parent",
+        "CREATE INDEX idx_tasks_parent ON tasks(parent_id)",
+    ),
+    (
+        "idx_deps_depends_on",
+        "CREATE INDEX idx_deps_depends_on ON deps(depends_on)",
+    ),
+];
+
+/// Create any missing lookup index; true when one was added.
+fn install_lookup_indexes(tx: &Connection) -> Result<bool> {
+    let mut added = false;
+    for (name, sql) in LOOKUP_INDEXES {
+        let present = tx
+            .query_row(
+                "SELECT 1 FROM sqlite_schema WHERE type='index' AND name=?1",
+                params![name],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !present {
+            tx.execute_batch(sql)?;
+            added = true;
+        }
+    }
+    Ok(added)
+}
+
+/// Switch a file authority to write-ahead logging, so a long read keeps its
+/// snapshot without holding off a concurrent write. True when the mode
+/// changed; a filesystem without write-ahead logging keeps its journal.
+fn enable_write_ahead_log(conn: &Connection) -> Result<bool> {
+    let mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+    if matches!(mode.as_str(), "wal" | "memory") {
+        return Ok(false);
+    }
+    let mode: String = conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
+    Ok(mode == "wal")
+}
+
 pub fn init_at(conn: &Connection, path: &str) -> Result<InitOutcome> {
+    let outcome = init_schema(conn, path)?;
+    let write_ahead_log = enable_write_ahead_log(conn)?;
+    Ok(match outcome {
+        InitOutcome::Current | InitOutcome::StorageUpdated { .. } => {
+            let indexes = matches!(outcome, InitOutcome::StorageUpdated { indexes: true, .. });
+            if indexes || write_ahead_log {
+                InitOutcome::StorageUpdated {
+                    indexes,
+                    write_ahead_log,
+                }
+            } else {
+                InitOutcome::Current
+            }
+        }
+        other => other,
+    })
+}
+
+fn init_schema(conn: &Connection, path: &str) -> Result<InitOutcome> {
     let has_meta: bool = conn
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'",
@@ -38,7 +102,13 @@ pub fn init_at(conn: &Connection, path: &str) -> Result<InitOutcome> {
             }
             write_guard::verify(conn)?;
             history_recovery::validate(conn)?;
-            return Ok(InitOutcome::Current);
+            let tx = begin_mutation(conn)?;
+            let indexes = install_lookup_indexes(&tx)?;
+            tx.commit()?;
+            return Ok(InitOutcome::StorageUpdated {
+                indexes,
+                write_ahead_log: false,
+            });
         }
         migrate(conn, from)?;
         return Ok(InitOutcome::Migrated {
@@ -135,6 +205,7 @@ CREATE INDEX idx_commit_associations_lookup ON commit_associations(repository, c
         "INSERT INTO meta (key, value) VALUES (?1, ?2)",
         params![AUTHORITY_IDENTITY_KEY, AUTHORITY_IDENTITY],
     )?;
+    install_lookup_indexes(&tx)?;
     tx.commit()?;
     Ok(InitOutcome::Created)
 }
@@ -493,6 +564,7 @@ ALTER TABLE tasks
     if version != SCHEMA_VERSION {
         bail!("no papertiger migration path from schema v{from} to v{SCHEMA_VERSION}");
     }
+    install_lookup_indexes(&tx)?;
     tx.execute(
         "UPDATE meta SET value=?1 WHERE key='schema_version'",
         params![SCHEMA_VERSION.to_string()],

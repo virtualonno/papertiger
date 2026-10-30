@@ -1532,6 +1532,25 @@ fn run_planner(cli: Cli) -> Result<()> {
             pt::InitOutcome::Migrated { from, to } => {
                 pt::outln!("migrated {db_path} from schema v{from} to v{to}")
             }
+            pt::InitOutcome::StorageUpdated {
+                indexes,
+                write_ahead_log,
+            } => {
+                let changes = [
+                    indexes.then_some("added lookup indexes"),
+                    write_ahead_log.then_some(
+                        "switched to write-ahead logging so reads no longer hold off writes",
+                    ),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+                pt::outln!(
+                    "{db_path} is a Papertiger authority at schema v{}; {}",
+                    pt::SCHEMA_VERSION,
+                    changes.join("; ")
+                );
+            }
             pt::InitOutcome::Current => pt::outln!(
                 "{db_path} is already a Papertiger authority at schema v{}; nothing changed",
                 pt::SCHEMA_VERSION

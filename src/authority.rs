@@ -248,7 +248,16 @@ pub(crate) fn schema_version(conn: &Connection, path: &str) -> Result<i64> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InitOutcome {
     Created,
-    Migrated { from: i64, to: i64 },
+    Migrated {
+        from: i64,
+        to: i64,
+    },
+    /// At the current schema, with storage brought up to date: the lookup
+    /// indexes added, or write-ahead logging switched on.
+    StorageUpdated {
+        indexes: bool,
+        write_ahead_log: bool,
+    },
     Current,
 }
 

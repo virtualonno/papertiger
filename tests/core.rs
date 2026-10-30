@@ -1265,7 +1265,7 @@ ALTER TABLE tasks DROP COLUMN pickup_pid;",
 }
 
 #[test]
-fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_replay() {
+fn sqlite_lock_grace_covers_validation_and_writer_admission_and_reads_never_hold_off_writes() {
     let path = unique_test_path("sqlite-lock-grace");
     let conn = pt::open_for_init(path.to_str().unwrap()).unwrap();
     pt::init(&conn).unwrap();
@@ -1346,41 +1346,14 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
         .unwrap();
     assert_eq!(plan_count, 3);
 
+    // With write-ahead logging, a long read keeps its snapshot without
+    // holding off a write: the write commits and the snapshot is unchanged.
     let reader = pt::open_existing_read_only(path.to_str().unwrap()).unwrap();
     let read_transaction = reader.unchecked_transaction().unwrap();
-    let _: i64 = read_transaction
+    let before: i64 = read_transaction
         .query_row("SELECT COUNT(*) FROM plans", [], |row| row.get(0))
         .unwrap();
-    let started = Instant::now();
-    let refused_commit = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
-        .args([
-            "--db",
-            path.to_str().unwrap(),
-            "plan",
-            "add",
-            "fourth",
-            "Fourth",
-        ])
-        .output()
-        .unwrap();
-    let elapsed = started.elapsed();
-    assert_bounded_lock_refusal(&refused_commit, elapsed, "mutation commit");
-    let plan_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM plans", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(plan_count, 3, "failed commit must roll back its plan row");
-    let event_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM events WHERE entity='plan' AND kind='create'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(event_count, 3, "failed commit must roll back its event");
-
-    drop(read_transaction);
-    drop(reader);
-    let retried_commit = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
+    let committed = support::papertiger_command(env!("CARGO_BIN_EXE_papertiger"))
         .args([
             "--db",
             path.to_str().unwrap(),
@@ -1392,11 +1365,27 @@ fn sqlite_lock_grace_covers_validation_writer_admission_and_commit_without_repla
         .output()
         .unwrap();
     assert!(
-        retried_commit.status.success(),
-        "{}",
-        String::from_utf8_lossy(&retried_commit.stderr)
+        committed.status.success(),
+        "a write beside an open read snapshot must commit: {}",
+        String::from_utf8_lossy(&committed.stderr)
     );
+    let during: i64 = read_transaction
+        .query_row("SELECT COUNT(*) FROM plans", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!((before, during), (3, 3), "the read snapshot must not move");
+    drop(read_transaction);
+    drop(reader);
+    let plan_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM plans", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(plan_count, 4);
 
+    // An authority that `init` has not yet switched to write-ahead logging
+    // still refuses a read held off by a writer within the same grace.
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode=DELETE", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "delete");
     let exclusive =
         rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Exclusive)
             .unwrap();
