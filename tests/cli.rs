@@ -1020,16 +1020,39 @@ fn starting_and_reading_ask_for_nothing_extra() {
     assert!(String::from_utf8_lossy(&bare.stderr).contains("reject requires a reason"));
     assert_success(&papertiger(&db.0, &["reject", "B-2", "duplicate of F-1"]));
     // A note reads its text, or a task and then its text, positionally; its
-    // receipt names the task like every other task receipt.
+    // receipt names the task like every other task receipt, and the event id
+    // that `note:<event-id>` evidence cites.
     let noted = papertiger(&db.0, &["note", "F-1", "Found the cause"]);
     assert_success(&noted);
-    assert_eq!(
-        String::from_utf8_lossy(&noted.stdout).trim(),
-        "noted on F-1"
+    let receipt = String::from_utf8_lossy(&noted.stdout).trim().to_owned();
+    let event_id = receipt
+        .strip_prefix("noted on F-1 as @")
+        .unwrap_or_else(|| panic!("{receipt}"));
+    assert!(
+        event_id.bytes().all(|byte| byte.is_ascii_digit()),
+        "{receipt}"
+    );
+    let shown = String::from_utf8(papertiger(&db.0, &["show", "F-1"]).stdout).unwrap();
+    assert!(
+        shown.contains(&format!("latest note @{event_id} ")),
+        "{shown}"
     );
     let noted = papertiger(&db.0, &["note", "Plan-level thought"]);
     assert_success(&noted);
-    assert_eq!(String::from_utf8_lossy(&noted.stdout).trim(), "noted");
+    assert!(
+        String::from_utf8_lossy(&noted.stdout)
+            .trim()
+            .starts_with("noted as @")
+    );
+    let help = String::from_utf8(papertiger(&db.0, &["gate", "resolve", "--help"]).stdout).unwrap();
+    for form in [
+        "file:<path>",
+        "commit:<oid>",
+        "note:<event-id>",
+        "url:<url>",
+    ] {
+        assert!(help.contains(form), "{help}");
+    }
     // An unknown plan names the plans that exist.
     let unknown = papertiger(&db.0, &["focus", "--plan", "nope"]);
     assert!(
@@ -1051,7 +1074,12 @@ fn starting_and_reading_ask_for_nothing_extra() {
         "{task_log}"
     );
     let twice = papertiger(&db.0, &["note", "F-1", "text", "--text", "again"]);
-    assert!(String::from_utf8_lossy(&twice.stderr).contains("give the note text once"));
+    let stderr = String::from_utf8_lossy(&twice.stderr);
+    assert!(
+        stderr.contains("give the note text once")
+            && stderr.contains("papertiger note <task> --text-file <path>"),
+        "{stderr}"
+    );
     // Status names a note's task, and a plan with nothing open says so.
     let status = String::from_utf8(papertiger(&db.0, &["status"]).stdout).unwrap();
     assert!(status.contains("on F-1: Found the cause"), "{status}");
@@ -1067,6 +1095,67 @@ fn starting_and_reading_ask_for_nothing_extra() {
         args.extend(["--model", "claude-opus-5-5", "--reasoning-effort", "high"]);
         assert_success(&papertiger(&db.0, &args));
     }
+}
+
+#[test]
+fn show_keeps_the_latest_note_whole_and_focus_surfaces_prose_holds() {
+    let db = TestDatabase::new("latest-note");
+    let run = |args: &[&str]| {
+        let output = papertiger(&db.0, args);
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "work", "Work"]);
+    run(&["add", "--kind", "feature", "Handed off", "--start"]);
+    run(&["add", "--kind", "feature", "Restructured after its note"]);
+    let long_note = format!("Progress: {}", "earlier detail ".repeat(40));
+    run(&["note", "F-1", &long_note]);
+    let handoff = format!("HANDOFF: next step is the parser.\n{}", "x".repeat(900));
+    run(&["note", "F-1", &handoff]);
+    // Twelve later edits push the handoff out of the recent events window.
+    for index in 0..12 {
+        run(&["edit", "F-1", "--title", &format!("Handed off {index}")]);
+    }
+    let shown = run(&["show", "F-1"]);
+    assert!(
+        shown.contains("  latest note @")
+            && shown.contains(&"x".repeat(900))
+            && shown.contains("HANDOFF: next step is the parser."),
+        "{shown}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&run(&["show", "F-1", "--json"])).unwrap();
+    assert_eq!(json["latest_note"]["why"], handoff);
+
+    // With both notes in the window, the older one is clipped to one line.
+    run(&["note", "F-2", &long_note]);
+    run(&["note", "F-2", "Hold until the parser lands"]);
+    let shown = run(&["show", "F-2"]);
+    assert!(
+        shown.contains("  latest note @")
+            && shown.contains("Hold until the parser lands")
+            && !shown.contains(&long_note)
+            && shown.contains("(older notes clipped; full text: papertiger show F-2 --json)"),
+        "{shown}"
+    );
+
+    // Focus shows a note no structural change followed; an edit clears it.
+    let focus = run(&["focus"]);
+    assert!(
+        focus.contains("note since last change @") && focus.contains("Hold until the parser lands"),
+        "{focus}"
+    );
+    assert!(!focus.contains("HANDOFF"), "{focus}");
+    run(&[
+        "edit",
+        "F-2",
+        "--priority",
+        "later",
+        "--why",
+        "held for the parser",
+    ]);
+    let focus = run(&["focus"]);
+    assert!(!focus.contains("note since last change"), "{focus}");
 }
 
 #[test]
@@ -2898,7 +2987,7 @@ fn new_file_evidence_must_name_an_existing_file_beneath_the_project_root() {
     assert!(
         missing.contains("(missing)")
             && missing.contains("with a path relative to project root")
-            && missing.contains("--evidence note:<summary>"),
+            && missing.contains("--evidence note:<event-id>"),
         "{missing}"
     );
     let blocker_missing = refusal(&in_project(&[
@@ -4086,6 +4175,22 @@ fn long_text_files_and_stdin_round_trip_without_losing_intent_clear() {
         &["note", "--text-file", "-", "--task", "1"],
         "  stdin note\n  ",
     ));
+    // With the text in a flag, a lone word is the task, as the skill teaches.
+    for args in [
+        &["note", "1", "--text-file", &note_path][..],
+        &["note", "1", "--text", "flagged note"],
+    ] {
+        let noted = papertiger(&db.0, args);
+        assert_success(&noted);
+        assert!(
+            String::from_utf8_lossy(&noted.stdout).starts_with("noted on "),
+            "{}",
+            String::from_utf8_lossy(&noted.stdout)
+        );
+    }
+    let noted = papertiger_with_stdin(&db.0, &["note", "1", "--text-file", "-"], "piped note");
+    assert_success(&noted);
+    assert!(String::from_utf8_lossy(&noted.stdout).starts_with("noted on "));
 
     let show = papertiger(&db.0, &["show", "1", "--json"]);
     assert_success(&show);

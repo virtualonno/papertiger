@@ -41,8 +41,8 @@ outside a harness set `PAPERTIGER_SESSION` to one unique session ID.
 ## Enter, work, finish
 
 Orient to an unfamiliar authority with `status` once. For a known task, read
-`show <N>` and resume it; for a goal or parent, `brief <N>` shows its whole
-subtree. Otherwise select work with `focus`, and before adding, look for it
+`show <N>`, which prints its latest note (usually the handoff) in full, and
+resume it; for a goal or parent, `brief <N>` shows its whole subtree. Otherwise select work with `focus`, and before adding, look for it
 with `search "<terms>"`; both cover every plan unless `--plan <slug>` narrows
 them. Text output is written for you to read and is the cheapest; add
 `--json` only when a script parses the output or you need a field the text

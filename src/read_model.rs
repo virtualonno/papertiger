@@ -3,7 +3,7 @@
 use std::{collections::HashSet, path::Path};
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension as _, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -547,6 +547,44 @@ pub fn event_log(
         truncated,
         continuation,
     })
+}
+
+/// A task's newest note, wherever it falls in the task's history: a
+/// session's handoff is usually its last note.
+pub fn latest_task_note(conn: &Connection, seq: i64) -> Result<Option<EventRecord>> {
+    conn.query_row(
+        "SELECT event_id, at, actor, entity, entity_id, entity_plan, entity_seq,
+                gate_name, kind, why, payload
+           FROM canonical_events
+          WHERE entity='task' AND entity_seq=?1 AND kind='note'
+          ORDER BY event_id DESC
+          LIMIT 1",
+        params![seq],
+        event_from_row,
+    )
+    .optional()?
+    .map(StoredEvent::public)
+    .transpose()
+}
+
+/// A task's newest note when no structural change followed it: no status,
+/// definition, dependency or gate event. Such a note may hold or defer the
+/// task in prose that ranking cannot see.
+pub fn note_since_structural_change(conn: &Connection, seq: i64) -> Result<Option<EventRecord>> {
+    let Some(note) = latest_task_note(conn, seq)? else {
+        return Ok(None);
+    };
+    let later_change: bool = conn.query_row(
+        "SELECT EXISTS (
+             SELECT 1 FROM canonical_events
+              WHERE entity_seq=?1 AND event_id>?2
+                AND (entity IN ('dep','gate')
+                     OR (entity='task' AND kind IN ('create','status','edit','gate_remove')))
+         )",
+        params![seq, note.event_id],
+        |row| row.get(0),
+    )?;
+    Ok((!later_change).then_some(note))
 }
 
 pub fn task_activity(conn: &Connection, seq: i64) -> Result<TaskActivity> {

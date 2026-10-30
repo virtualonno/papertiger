@@ -217,9 +217,10 @@ vendor fix, and keeps the task out of ready work while open. Clear gates with
 `gate resolve` refuses a new `file:` locator unless it is relative to the
 project root, uses `/` separators and names an existing file whose bytes match
 any `--sha256` given. Evidence under ignored or temporary paths rots: keep
-durable text in the authority with `note --text-file <path> --task <task.seq>`
-and resolve with a `note:<summary>` locator. `evidence verify --json`
-re-checks stored bindings read-only and names corrective commands.
+durable text in the authority with `note <task.seq> --text-file <path>` and
+resolve with `note:<event-id>`, the `@N` its receipt prints. `gate resolve
+--help` lists every scheme's value form. `evidence verify --json` re-checks
+stored bindings read-only and names corrective commands.
 
 ## Commits and references
 

@@ -7,8 +7,9 @@ use serde::Serialize;
 use crate::{
     CommitAssociation, EventCursor, EventRecord, ExternalReference, Plan, TASK_COLS, Task,
     TaskActivity, TaskMiseProjectionSummary, TaskSummary, commit_associations, event_log,
-    external_references, get_plan, get_task, immediate_unlock_count, task_activity, task_from_row,
-    task_handle, task_mise_projection_summaries, task_tags_by_id, unfinished_downstream_count,
+    external_references, get_plan, get_task, immediate_unlock_count, latest_task_note,
+    task_activity, task_from_row, task_handle, task_mise_projection_summaries, task_tags_by_id,
+    unfinished_downstream_count,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +51,9 @@ pub struct TaskContext {
     pub recent_events: Vec<EventRecord>,
     pub recent_events_truncated: bool,
     pub older_events_cursor: Option<EventCursor>,
+    /// The task's newest note in full, even when it is older than
+    /// `recent_events`: usually the last session's handoff.
+    pub latest_note: Option<EventRecord>,
 }
 
 /// Handles of a task's ancestors from the root down to its direct parent;
@@ -88,6 +92,7 @@ pub fn task_current(conn: &Connection, seq: i64) -> Result<serde_json::Value> {
     object.remove("recent_events");
     object.remove("recent_events_truncated");
     object.remove("older_events_cursor");
+    object.remove("latest_note");
     object.insert("schema".into(), "papertiger.task_current.v4".into());
     object.insert(
         "history_command".into(),
@@ -179,12 +184,18 @@ fn task_context_with_history(
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     const RECENT_EVENT_LIMIT: usize = 12;
-    let (recent_events, recent_events_truncated, older_events_cursor) = if include_history {
-        let log = event_log(conn, Some(task.seq), RECENT_EVENT_LIMIT, None, None)?;
-        (log.events, log.truncated, log.continuation)
-    } else {
-        (Vec::new(), false, None)
-    };
+    let (recent_events, recent_events_truncated, older_events_cursor, latest_note) =
+        if include_history {
+            let log = event_log(conn, Some(task.seq), RECENT_EVENT_LIMIT, None, None)?;
+            (
+                log.events,
+                log.truncated,
+                log.continuation,
+                latest_task_note(conn, task.seq)?,
+            )
+        } else {
+            (Vec::new(), false, None, None)
+        };
 
     let ancestry = task_ancestry(conn, &task)?;
     let review = crate::task_review(conn, &task)?;
@@ -211,6 +222,7 @@ fn task_context_with_history(
         recent_events,
         recent_events_truncated,
         older_events_cursor,
+        latest_note,
         task,
     })
 }

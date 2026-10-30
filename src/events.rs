@@ -5,15 +5,17 @@ use rusqlite::{Connection, Transaction, params};
 
 use crate::{begin_mutation, get_task, mutation, now};
 
-pub fn add_note(conn: &Connection, actor: &str, task_seq: Option<i64>, text: &str) -> Result<()> {
+/// Record a note and return its event id, which `note:<event-id>` evidence cites.
+pub fn add_note(conn: &Connection, actor: &str, task_seq: Option<i64>, text: &str) -> Result<i64> {
     let tx = begin_mutation(conn)?;
     let (entity, entity_id) = match task_seq {
         Some(seq) => ("task", Some(get_task(&tx, seq)?.task_id)),
         None => ("plan", None),
     };
-    record_event_in_mutation(&tx, actor, entity, entity_id, "note", Some(text), None)?;
+    let event_id =
+        record_event_in_mutation(&tx, actor, entity, entity_id, "note", Some(text), None)?;
     tx.commit()?;
-    Ok(())
+    Ok(event_id)
 }
 
 pub(crate) fn record_event_in_mutation(
@@ -24,7 +26,7 @@ pub(crate) fn record_event_in_mutation(
     kind: &str,
     why: Option<&str>,
     payload: Option<&serde_json::Value>,
-) -> Result<()> {
+) -> Result<i64> {
     let mut payload = payload.cloned();
     let object = payload
         .get_or_insert_with(|| serde_json::json!({}))
@@ -85,6 +87,7 @@ pub(crate) fn record_event_in_mutation(
             payload.as_ref().map(|p| p.to_string())
         ],
     )?;
-    mutation::capture_event(tx, tx.last_insert_rowid())?;
-    Ok(())
+    let event_id = tx.last_insert_rowid();
+    mutation::capture_event(tx, event_id)?;
+    Ok(event_id)
 }

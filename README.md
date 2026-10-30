@@ -93,7 +93,13 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
   currently done. Their actor fields record transition authorship, not task
   ownership. `list --sort activity` orders work by the latest meaningful event
   without inventing time tracking.
-- `show --json` is the task work record. Task context v8 includes full details
+- Text `show` prints a task's newest note, usually the last session's handoff,
+  in full even when later events have pushed it out of the recent history, and
+  clips older notes to one line each; `show --json` carries `latest_note` and
+  every recent note in full. Text `focus` prints, under a candidate, its newest
+  note when no status, definition, dependency or gate change followed it, so a
+  hold or deferral recorded only in prose is visible without opening the task.
+- `show --json` is the task work record. Task context v9 includes full details
   for the selected task and compact identity/status summaries for related
   tasks; read a related task explicitly for its full context. `schema` prints
   the bundled JSON Schema without opening a database; its top-level `oneOf`
@@ -160,9 +166,11 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
   cannot be assigned; `audit` reports open `work` tasks with a suggested kind.
   Probe, decision and bug tasks require `--result` or `--result-file` before
   they can complete.
-- `note "<text>"`, `note <N> "<text>"`, or `note --text-file <path|->
-  [--task <N>]` records an evented note, free-standing or on one task; give
-  the text exactly once.
+- `note "<text>"`, `note <N> "<text>"`, `note <N> --text-file <path|->`, or
+  `note --text-file <path|-> [--task <N>]` records an evented note,
+  free-standing or on one task; give the text exactly once. The receipt names
+  the note's event (`noted on F-3 as @2972`), which `note:2972` gate evidence
+  cites.
 - Open dependencies, gates, and child tasks prevent completion. An `external`
   gate (`gate add <N> <name> --kind external --requirement <condition>`) names
   a condition outside the task, such as a vendor fix, and also keeps the task

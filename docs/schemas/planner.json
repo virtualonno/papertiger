@@ -837,6 +837,17 @@
               "type": "null"
             }
           ]
+        },
+        "latest_note": {
+          "description": "The task's newest note in full, even when it is older than recent_events.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/event"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -861,7 +872,8 @@
         "unfinished_downstream_count",
         "recent_events",
         "recent_events_truncated",
-        "older_events_cursor"
+        "older_events_cursor",
+        "latest_note"
       ],
       "additionalProperties": false
     },
@@ -2277,6 +2289,17 @@
               },
               "owner_state": {
                 "$ref": "#/$defs/owner_state"
+              },
+              "note_since_change": {
+                "description": "The task's newest note when no status, definition, dependency or gate change followed it; it may hold or defer the task in prose.",
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/event"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -2291,7 +2314,8 @@
               "closed_child_count",
               "ancestry",
               "review",
-              "unreviewed_dependencies"
+              "unreviewed_dependencies",
+              "note_since_change"
             ],
             "additionalProperties": false
           }

@@ -328,7 +328,8 @@ enum Cmd {
     },
     /// Record a free-standing evented note (course changes, decisions)
     Note {
-        /// The note text, or a task and then its text: `note "text"`, `note F-3 "text"`
+        /// The note text, or a task and then its text: `note "text"`, `note F-3 "text"`,
+        /// `note F-3 --text-file handoff.md`
         #[arg(value_name = "TASK] [TEXT", num_args = 0..=2)]
         words: Vec<String>,
         #[command(flatten)]
@@ -636,7 +637,13 @@ enum GateCmd {
         task: String,
         /// Name of the open gate
         name: String,
-        /// Evidence locator, scheme:value (file:, receipt:, claim:, spec:, commit:, url:, note:)
+        /// Evidence locator, scheme:value (file:, commit:, note:, url:, receipt:, claim:, spec:)
+        ///
+        /// file:<path> names an existing file beneath the project root, with '/' separators;
+        /// commit:<oid> a full lowercase 40- or 64-character commit id; note:<event-id> a
+        /// recorded note, by the @N that note, log and show print (e.g. note:2972); url:<url> a
+        /// web page; receipt:, claim: and spec: name an outside receipt, claim or specification by
+        /// its own identifier.
         #[arg(long)]
         evidence: String,
         /// Optional lowercase SHA-256 digest binding the evidence bytes
@@ -1337,15 +1344,31 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
             child.title
         );
     }
-    let notes = context
+    // Older notes fit on one line each; the newest, usually a handoff, is
+    // printed whole even when it is older than the recent events.
+    let latest_id = context.latest_note.as_ref().map(|note| note.event_id);
+    let older = context
         .recent_events
         .iter()
-        .filter(|event| event.kind == "note")
-        .take(5)
+        .filter(|event| event.kind == "note" && Some(event.event_id) != latest_id)
+        .take(4)
         .collect::<Vec<_>>();
-    for event in notes.into_iter().rev() {
+    let mut clipped = false;
+    for event in older.into_iter().rev() {
+        let text = event.why.as_deref().unwrap_or_default();
+        let line = clip(text, 200);
+        clipped |= line != text;
         pt::outln!(
-            "  note {} {}: {}",
+            "  note @{} {} {}: {line}",
+            event.event_id,
+            short_event_time(&event.at),
+            event.actor,
+        );
+    }
+    if let Some(event) = &context.latest_note {
+        pt::outln!(
+            "  latest note @{} {} {}: {}",
+            event.event_id,
             short_event_time(&event.at),
             event.actor,
             event
@@ -1353,6 +1376,12 @@ fn print_task_context(context: &pt::TaskContext) -> Result<()> {
                 .as_deref()
                 .unwrap_or_default()
                 .replace('\n', "\n    ")
+        );
+    }
+    if clipped {
+        pt::outln!(
+            "  (older notes clipped; full text: papertiger show {} --json)",
+            task.handle
         );
     }
     if context.recent_events_truncated {
@@ -2575,6 +2604,18 @@ fn run_planner(cli: Cli) -> Result<()> {
                             blockers,
                             pickup_label(entry.pickup.as_ref()),
                         );
+                        // A hold or deferral recorded only in prose would
+                        // otherwise hide behind the ranking.
+                        if let Some(note) = &entry.note_since_change {
+                            let text = note.why.as_deref().unwrap_or_default();
+                            pt::outln!(
+                                "    note since last change @{} {} {}: {}",
+                                note.event_id,
+                                short_event_time(&note.at),
+                                note.actor,
+                                preview(text.lines().next().unwrap_or_default())
+                            );
+                        }
                     }
                     if response.projection.omitted_count > 0
                         && let Some(command) = response.projection.continuation_command
@@ -2621,18 +2662,17 @@ fn run_planner(cli: Cli) -> Result<()> {
         }
         Cmd::Note { words, text, task } => {
             // Positional words read by count: one is the text, two are a
-            // task and its text; flags say the same thing explicitly.
-            let (positional_task, positional_text) = match words.as_slice() {
-                [text] => (None, Some(text.clone())),
-                [task, text] => (Some(task.clone()), Some(text.clone())),
-                _ => (None, None),
-            };
-            let text = match (positional_text, text.optional()?) {
-                (Some(_), Some(_)) => bail!(
-                    "give the note text once, positionally or with --text/--text-file, not both"
+            // task and its text. When --text/--text-file gives the text, a
+            // lone word is the task.
+            let (positional_task, text) = match (words.as_slice(), text.optional()?) {
+                ([], Some(text)) => (None, text),
+                ([task], Some(text)) => (Some(task.clone()), text),
+                ([text], None) => (None, text.clone()),
+                ([task, text], None) => (Some(task.clone()), text.clone()),
+                ([_, _], Some(_)) => bail!(
+                    "give the note text once, positionally or with --text/--text-file, not both: `papertiger note <task> \"<text>\"` or `papertiger note <task> --text-file <path>`"
                 ),
-                (Some(text), None) | (None, Some(text)) => text,
-                (None, None) => bail!(
+                _ => bail!(
                     "note needs its text: `papertiger note [<task>] \"<text>\"`, or --text/--text-file"
                 ),
             };
@@ -2645,10 +2685,12 @@ fn run_planner(cli: Cli) -> Result<()> {
             let task_seq = task
                 .map(|task| pt::resolve_task_ref(&conn, &task))
                 .transpose()?;
-            pt::add_note(&conn, &actor, task_seq, &text)?;
+            let event_id = pt::add_note(&conn, &actor, task_seq, &text)?;
             match task_seq {
-                Some(seq) => mutation_output!("noted on {}", pt::seq_handle(&conn, seq)?),
-                None => mutation_output!("noted"),
+                Some(seq) => {
+                    mutation_output!("noted on {} as @{event_id}", pt::seq_handle(&conn, seq)?)
+                }
+                None => mutation_output!("noted as @{event_id}"),
             }
         }
         Cmd::Log {

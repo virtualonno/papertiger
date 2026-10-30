@@ -247,6 +247,17 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   reinstalls every write guard, and refuses if a foreign-key reference is
   broken. Dumps move to `papertiger.dump.v11`; `papertiger.dump.v9` is no
   longer converted.
+- Text `show` prints the newest note in full under `latest note @N`, even when
+  later events pushed it out of the recent history, and clips older notes to
+  one line each with their `@N`; `show --json` adds `latest_note`
+  (`papertiger.task_context.v9`).
+- Text `focus` prints, under a candidate, its newest note when no status,
+  definition, dependency or gate change followed it, so a hold or deferral
+  recorded only in prose is visible; `focus --json` entries add
+  `note_since_change` (`papertiger.focus.v8`).
+- `gate resolve --help` states each evidence scheme's value form, and the
+  documented form for note evidence is `note:<event-id>`, the `@N` that
+  `note`, `log` and `show` print.
 
 ### Added
 
@@ -290,8 +301,12 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   linked worktree whose main tree has no authority, and so does a
   missing-authority refusal from one; both name `papertiger --project-root
   <main> init`.
-- A note on a task names that task in its receipt (`noted on F-1`) like
-  every other task receipt. A plan-level note still prints `noted`.
+- A note on a task names that task and the note's event in its receipt
+  (`noted on F-1 as @2972`), like every other task receipt; a plan-level note
+  prints `noted as @2972`.
+- `note F-3 --text-file <path>` and `note F-3 --text "..."` record the note on
+  F-3, as the skill teaches, instead of refusing with "give the note text
+  once": with the text in a flag, a lone word is the task.
 - A failed `backup` names the real source in its retry command instead of a
   `<source>` placeholder.
 - An unknown `--plan` slug lists the plans the authority has instead of only

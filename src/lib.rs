@@ -47,7 +47,8 @@ pub use read_model::{
     ActivityEvent, AuthorityInfo, EventCursor, EventLog, EventRecord, PlanIdentity, PlanStatus,
     StatusInProgress, StatusProjection, StatusReadyTask, StatusResponse, StatusTask, TaskActivity,
     TaskCounts, TaskListItem, TaskListResponse, TaskSummary, authority_info, event_cursor,
-    event_head, event_log, status_response, task_activity, task_list_response,
+    event_head, event_log, latest_task_note, note_since_structural_change, status_response,
+    task_activity, task_list_response,
 };
 pub use task_outline::{
     MAX_OUTLINE_BYTES, MAX_OUTLINE_CHILDREN, OutlineChild, OutlineEntry, TASK_OUTLINE_SCHEMA,

@@ -332,7 +332,7 @@ pub fn validate_new_file_evidence(
     if !scheme.eq_ignore_ascii_case("file") {
         return Ok(());
     }
-    let keep_text = "or keep the evidence text in the authority with `note --text-file <path> --task <task>` and resolve with a non-file locator such as `--evidence note:<summary>`, or waive a gate with `gate waive <task> <name> --why <reason>`";
+    let keep_text = "or keep the evidence text in the authority with `note --text-file <path> --task <task>` and resolve with `--evidence note:<event-id>`, the @N that `note` prints, or waive a gate with `gate waive <task> <name> --why <reason>`";
     let Some(project_root) = project_root else {
         bail!(
             "evidence {locator:?} names a file, but authority {authority} was selected without a project root (by --db, PAPERTIGER_DB, or the personal store), so the path cannot be checked; rerun with --db \"{authority}\" --project-root <project-root> for the project the path is relative to, {keep_text}"

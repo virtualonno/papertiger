@@ -93,6 +93,10 @@ pub struct FocusEntry {
     /// Done dependencies whose results still need someone else's check.
     /// Results recorded before authorship are not listed.
     pub unreviewed_dependencies: Vec<String>,
+    /// The task's newest note when no status, definition, dependency or gate
+    /// change followed it: it may hold or defer the task in prose that this
+    /// ranking cannot see.
+    pub note_since_change: Option<crate::EventRecord>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -167,6 +171,7 @@ pub fn focus(
                 ancestry: task_ancestry(conn, &task)?,
                 review: crate::task_review(conn, &task)?.filing,
                 unreviewed_dependencies: unreviewed_dependencies(conn, &task)?,
+                note_since_change: crate::note_since_structural_change(conn, task.seq)?,
                 task: TaskSummary::from(&task),
                 owner_state: task.pickup.as_ref().map(crate::owner_state),
                 pickup: task.pickup,
