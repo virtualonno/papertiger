@@ -255,8 +255,13 @@ fn focus_readiness_rank(readiness: &str) -> u8 {
 }
 
 pub(crate) fn immediate_unlock_count(conn: &Connection, task_id: i64) -> Result<usize> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*)
+    let seq: i64 = conn.query_row(
+        "SELECT seq FROM tasks WHERE task_id=?1",
+        params![task_id],
+        |row| row.get(0),
+    )?;
+    let mut statement = conn.prepare(
+        "SELECT dependent.task_id
            FROM deps dependency
            JOIN tasks dependent ON dependent.task_id=dependency.task_id
           WHERE dependency.depends_on=?1
@@ -266,24 +271,26 @@ pub(crate) fn immediate_unlock_count(conn: &Connection, task_id: i64) -> Result<
             )
             AND NOT EXISTS (
                 SELECT 1
-                  FROM deps other_dependency
-                  JOIN tasks prerequisite
-                    ON prerequisite.task_id=other_dependency.depends_on
-                 WHERE other_dependency.task_id=dependent.task_id
-                   AND other_dependency.depends_on<>?1
-                   AND prerequisite.status<>'done'
-            )
-            AND NOT EXISTS (
-                SELECT 1
                   FROM gates external
                  WHERE external.task_id=dependent.task_id
                    AND external.kind='external'
                    AND external.status='open'
             )",
-        params![task_id],
-        |row| row.get(0),
     )?;
-    Ok(count as usize)
+    let dependents = statement
+        .query_map(params![task_id], |row| row.get::<_, i64>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut count = 0;
+    for dependent in dependents {
+        // Ready once this task finishes: no other prerequisite still holds it.
+        if open_deps(conn, dependent)?
+            .iter()
+            .all(|other| *other == seq)
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 pub(crate) fn unfinished_downstream_count(conn: &Connection, task_id: i64) -> Result<usize> {

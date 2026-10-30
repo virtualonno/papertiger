@@ -397,13 +397,7 @@ pub fn decompose_task(
                     }
                     // An unreadable existing task refuses with its own corrective error.
                     let task = get_task(&tx, seq)?;
-                    if task.plan_id != parent.plan_id {
-                        problems.push(format!(
-                            "{label}: dependency {} belongs to a different plan than parent {}",
-                            task.handle,
-                            parent.handle
-                        ));
-                    } else if matches!(task.status.as_str(), "retired" | "rejected") {
+                    if matches!(task.status.as_str(), "retired" | "rejected") {
                         problems.push(format!(
                             "{label}: dependency {} is {}; reopen it or choose a viable prerequisite",
                             task.handle,

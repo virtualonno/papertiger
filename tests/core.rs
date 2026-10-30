@@ -1620,10 +1620,8 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
         pt::add_dep(&conn, "test", a, a, Some("self dependency")),
         &format!("F-{a} cannot depend on itself"),
     );
-    assert_exact_error(
-        pt::add_dep(&conn, "test", a, other, Some("cross-plan dependency")),
-        &format!("F-{a} and dependency F-{other} belong to different plans"),
-    );
+    // Ordering between plans of one authority is real, so the edge is kept.
+    pt::add_dep(&conn, "test", other, a, Some("cross-plan dependency")).unwrap();
     assert_exact_error(
         pt::add_dep(&conn, "test", a, c, Some("cycle")),
         &format!("dependency F-{a} -> F-{c} would create a cycle"),
@@ -1659,6 +1657,83 @@ fn dependency_and_read_projection_refusals_have_exact_messages() {
     assert_exact_error(
         pt::search_tasks(&conn, "task", None, Some("complete"), None, 20),
         "unknown task status 'complete' (expected proposed|in_progress|done|retired|rejected)",
+    );
+}
+
+#[test]
+fn retired_prerequisites_settle_their_dependents_and_rejected_ones_hold_them() {
+    let conn = db();
+    let plan = pt::add_plan(&conn, "test", "p", "Plan", "").unwrap();
+    let add = |title: &str, deps: &[i64]| {
+        pt::add_task(
+            &conn,
+            "test",
+            plan,
+            pt::TaskCreation {
+                deps,
+                ..pt::TaskCreation::new(title, "feature")
+            },
+        )
+        .unwrap()
+    };
+    let abandoned = add("Abandoned prerequisite", &[]);
+    let superseded = add("Superseded prerequisite", &[]);
+    let successor = add("Successor route", &[]);
+    let invalid = add("Invalid prerequisite", &[]);
+    let after_abandoned = add("After abandoned", &[abandoned]);
+    let after_superseded = add("After superseded", &[superseded]);
+    let after_invalid = add("After invalid", &[invalid]);
+    let unlocking = add("Unlocking work", &[]);
+    add("Two prerequisites", &[unlocking, abandoned]);
+
+    // Retired as no longer worth doing: nothing left to wait for.
+    pt::retire_task(&conn, "test", abandoned, None, Some("not needed")).unwrap();
+    pt::complete_task(&conn, "test", after_abandoned, None).unwrap();
+    // Focus credits the unlock of a dependent whose other prerequisite retired.
+    let focus = pt::focus(&conn, plan, 20, false, None, false, None).unwrap();
+    let unlocks = focus
+        .projection
+        .entries
+        .iter()
+        .find(|entry| entry.task.seq == unlocking)
+        .unwrap()
+        .immediate_unlock_count;
+    assert_eq!(unlocks, 1);
+    // Retired into a successor: dependents wait for the successor instead.
+    pt::retire_task(&conn, "test", superseded, Some(successor), None).unwrap();
+    assert!(pt::complete_task(&conn, "test", after_superseded, None).is_err());
+    pt::complete_task(&conn, "test", successor, None).unwrap();
+    pt::complete_task(&conn, "test", after_superseded, None).unwrap();
+    // A rejected prerequisite still holds its dependents until the edge goes.
+    pt::reject_task(&conn, "test", invalid, "duplicate filing").unwrap();
+    assert!(
+        pt::complete_task(&conn, "test", after_invalid, None)
+            .unwrap_err()
+            .to_string()
+            .contains(&format!("dependency F-{invalid} is not done"))
+    );
+    // Every edge stays in history, and audit sees no open dependency.
+    for (dependent, prerequisite) in [(after_abandoned, abandoned), (after_superseded, superseded)]
+    {
+        let context = pt::task_context(&conn, dependent).unwrap();
+        assert!(
+            context
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.seq == prerequisite)
+        );
+    }
+    // Only the rejected prerequisite's edge is reported.
+    let findings = pt::audit(&conn)
+        .unwrap()
+        .into_iter()
+        .map(|finding| format!("[{}] {}", finding.kind, finding.detail))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        findings,
+        [format!(
+            "[dep_on_dead] F-{after_invalid} depends on F-{invalid} which is rejected; run `papertiger dep remove F-{after_invalid} F-{invalid}` or depend on the work that replaces it"
+        )]
     );
 }
 

@@ -204,11 +204,16 @@ papertiger done <task.seq> --result "Outcome and verification"
 ```
 
 `done` refuses open dependencies, gates or children; resolve or waive them
-with evidence and reasons rather than routing around the refusal. Check
-`list --status rejected` before reviving an old approach; `reopen` revisits a
-rejected task. For a duplicate, `retire <duplicate> --into <canonical>`; for an
-approach that should not be pursued, `reject --why <reason>`. Rehome a
-connected set with `move-plan <N>... --plan <destination>`.
+with evidence and reasons rather than routing around the refusal. A dependency
+retired as no longer worth doing settles its dependents, and one retired
+`--into` a replacement settles them when the replacement is done; a rejected
+one holds them until `dep remove`. Check `list --status rejected` before
+reviving an old approach; `reopen` revisits a rejected task. For a duplicate,
+`retire <duplicate> --into <canonical>`; for an approach that should not be
+pursued, `reject --why <reason>`. Dependencies may cross plans; `edit
+<task.seq> --parent <task>` with a parent in another plan moves the task and
+its subtree there, and `move-plan <N>... --plan <destination>` rehomes a
+connected set.
 
 ## Gates and evidence
 

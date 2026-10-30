@@ -251,6 +251,19 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
   records the pickup of a task whose dependency is unfinished, and its receipt
   names what `done` waits for (`F-2 in progress; done waits for F-1`). Open
   external gates and disputed results still hold the start.
+- A dependency retired as no longer worth doing settles its dependents, and
+  one retired `--into` a replacement settles them once the replacement chain
+  ends done; the edge stays in history. A rejected dependency still holds its
+  dependents, and `audit` reports `dep_on_dead` only for rejected ones, naming
+  `dep remove`.
+- Dependencies may cross plans within one authority, through `dep add`,
+  `add --dep`, outlines and import; `audit` no longer reports
+  `cross_plan_dep`. `edit <N> --parent <task>` with a parent in another plan
+  moves the task and its descendants into that plan, recording a plan
+  revision for each; a replacement link that would cross plans refuses with
+  the `move-plan` command to use instead. `move-plan` sets are bound only by
+  parent and replacement links. A one-plan `export --plan` refuses while its
+  tasks depend on another plan, and names the whole-authority export.
 - `reopen` returns a started task to proposed and ends its pickup, recording
   no outcome in `models` (`F-12 back to proposed; its pickup ended`). It
   still reopens done, retired and rejected tasks as before.

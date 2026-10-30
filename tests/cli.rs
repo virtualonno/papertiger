@@ -1183,6 +1183,84 @@ fn work_starts_ahead_of_a_dependency_and_goes_back_to_proposed() {
 }
 
 #[test]
+fn parent_edits_carry_a_subtree_across_plans_and_dependencies_may_cross() {
+    let db = TestDatabase::new("cross-plan");
+    let run = |args: &[&str]| {
+        let output = papertiger(&db.0, args);
+        assert_success(&output);
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["init"]);
+    run(&["plan", "add", "alpha", "Alpha"]);
+    run(&["plan", "add", "beta", "Beta"]);
+    run(&["add", "--kind", "goal", "Umbrella", "--plan", "alpha"]);
+    run(&["add", "--kind", "feature", "Stray", "--plan", "beta"]);
+    run(&["add", "--kind", "feature", "Stray child", "--parent", "F-2"]);
+    run(&[
+        "add",
+        "--kind",
+        "feature",
+        "Beta work",
+        "--plan",
+        "beta",
+        "--dep",
+        "F-3",
+    ]);
+    run(&["add", "--kind", "feature", "Superseded", "--plan", "beta"]);
+    run(&["add", "--kind", "feature", "Successor", "--plan", "beta"]);
+    run(&["retire", "F-5", "--into", "F-6"]);
+
+    // The parent edit takes the task and its child into the parent's plan.
+    assert_eq!(
+        run(&["edit", "F-2", "--parent", "G-1", "--why", "consolidate"]).trim(),
+        "F-2 updated (plan, parent)"
+    );
+    for (task, plan) in [("F-2", "alpha"), ("F-3", "alpha"), ("F-4", "beta")] {
+        let shown: serde_json::Value =
+            serde_json::from_str(&run(&["show", task, "--json"])).unwrap();
+        assert_eq!(shown["plan"]["slug"], plan, "{task}");
+    }
+    // F-4 keeps its dependency on F-3, now in another plan, and new edges may cross.
+    let shown = run(&["show", "F-4"]);
+    assert!(shown.contains("depends · F-3 Stray child"), "{shown}");
+    run(&["dep", "add", "F-6", "G-1"]);
+    assert_eq!(run(&["audit"]).trim(), "no findings");
+
+    // A replacement link may not cross plans, so that move names its fix.
+    let refused = papertiger(&db.0, &["edit", "F-5", "--parent", "G-1"]);
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("replacement link(s) F-5 -> F-6 would cross plans")
+            && stderr.contains("papertiger move-plan <tasks> --plan alpha"),
+        "{stderr}"
+    );
+
+    // One plan alone cannot carry an edge into another plan; the whole
+    // authority round-trips with its cross-plan edges and history.
+    let scoped = papertiger(&db.0, &["export", "--plan", "beta"]);
+    assert!(!scoped.status.success());
+    assert!(
+        String::from_utf8_lossy(&scoped.stderr).contains(
+            "cannot export plan 'beta' alone: F-4 depends on F-3 in another plan; export the whole authority with `papertiger export` (omit --plan)"
+        ),
+        "{}",
+        String::from_utf8_lossy(&scoped.stderr)
+    );
+    let dump_path = PathBuf::from(format!("{}.cross-plan.json", db.0.display()));
+    run(&["export", "--output", dump_path.to_str().unwrap()]);
+    let restored = TestDatabase::new("cross-plan-restored");
+    assert_success(&papertiger(&restored.0, &["init"]));
+    assert_success(&papertiger(
+        &restored.0,
+        &["import", dump_path.to_str().unwrap()],
+    ));
+    let audit = papertiger(&restored.0, &["audit"]);
+    assert_eq!(String::from_utf8_lossy(&audit.stdout).trim(), "no findings");
+    std::fs::remove_file(dump_path).unwrap();
+}
+
+#[test]
 fn text_reads_cover_every_active_plan_when_none_is_named() {
     let db = TestDatabase::new("focus-all-plans");
     let run = |args: &[&str]| {

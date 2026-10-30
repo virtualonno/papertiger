@@ -144,8 +144,14 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
   attribution, not authenticated identity or a model-quality score.
 - `move-plan <N>... --plan <slug> [--why <reason>]` moves an explicitly selected
   related set atomically. Dependencies, hierarchy, replacement links, gates,
-  references, status, and task identity remain intact. A partial set refuses
-  with the missing task selectors. Historical events keep their original plans.
+  references, status, and task identity remain intact. Parent and replacement
+  links stay within one plan, so a set that would split one refuses with the
+  missing task selectors; dependencies may cross plans and do not bind the set.
+  `edit <N> --parent <task>` with a parent in another plan moves the task and
+  its descendants into that plan, recording a plan revision for each.
+  Historical events keep their original plans. A one-plan `export --plan`
+  refuses while its tasks depend on tasks in another plan; export the whole
+  authority instead.
 - `reference add <N> <locator> --kind <kind>` records inward issue, pull-request,
   review, ADR, input, or other references. Optional `--sha256` and `--note`
   retain byte identity and context; `reference list`, `find`, and `remove`
@@ -173,12 +179,15 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
   cites.
 - Open dependencies, gates, and child tasks prevent completion. A dependency
   orders completion, not starting: `start` records the pickup of a task whose
-  dependency is unfinished and names what `done` still waits for. An
-  `external` gate (`gate add <N> <name> --kind external --requirement
-  <condition>`) names a condition outside the task, such as a vendor fix, and
-  also keeps the task from starting while open; it replaced blockers, which
-  the v14 migration and the `papertiger.dump.v10` conversion turn into
-  external gates.
+  dependency is unfinished and names what `done` still waits for. A dependency
+  retired as no longer worth doing settles its dependents, one retired
+  `--into` a replacement settles them once that replacement is done, and a
+  rejected one holds them until the edge is removed; each edge stays in
+  history. An `external` gate (`gate add <N> <name> --kind external
+  --requirement <condition>`) names a condition outside the task, such as a
+  vendor fix, and also keeps the task from starting while open; it replaced
+  blockers, which the v14 migration and the `papertiger.dump.v10` conversion
+  turn into external gates.
 - `reopen <N>` returns a task to proposed: a done, retired or rejected task to
   be worked again, or a started task nobody is working any more, whose pickup
   then ends. Returning a started task records no outcome in `models`.

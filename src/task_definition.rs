@@ -357,11 +357,20 @@ pub fn edit_task(
                 if new_parent.task_id == task.task_id {
                     bail!("{} cannot be its own parent", task.handle);
                 }
+                // A parent in another plan takes the task and its subtree
+                // along into that plan.
                 if new_parent.plan_id != task.plan_id {
-                    bail!(
-                        "{} and parent {} belong to different plans",
-                        task.handle,
-                        new_parent.handle
+                    let (before, after) = crate::plan_move::move_subtree_for_parent(
+                        &tx,
+                        actor,
+                        &task,
+                        &new_parent,
+                        why,
+                    )?;
+                    changed.push("plan");
+                    changes.insert(
+                        "plan".into(),
+                        serde_json::json!({"before": before, "after": after}),
                     );
                 }
                 if matches!(task.status.as_str(), "proposed" | "in_progress")
@@ -573,15 +582,10 @@ pub(crate) fn add_dep_inner(
 ) -> Result<()> {
     let task = get_task(tx, seq)?;
     let on = get_task(tx, on_seq)?;
+    // Dependencies may cross plans within one authority: plans organize work,
+    // and ordering between them is real.
     if task.task_id == on.task_id {
         bail!("{} cannot depend on itself", task.handle);
-    }
-    if task.plan_id != on.plan_id {
-        bail!(
-            "{} and dependency {} belong to different plans",
-            task.handle,
-            on.handle
-        );
     }
     if event && matches!(task.status.as_str(), "done" | "retired" | "rejected") {
         bail!(

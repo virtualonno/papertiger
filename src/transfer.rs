@@ -308,11 +308,22 @@ pub fn export(conn: &Connection, plan: Option<&str>) -> Result<Dump> {
                 None => None,
             };
             let mut st = conn.prepare(
-                "SELECT b.seq FROM deps d JOIN tasks b ON b.task_id=d.depends_on WHERE d.task_id=?1 ORDER BY b.seq",
+                "SELECT b.seq, b.plan_id FROM deps d JOIN tasks b ON b.task_id=d.depends_on WHERE d.task_id=?1 ORDER BY b.seq",
             )?;
-            let deps: Vec<i64> = st
-                .query_map(params![t.task_id], |r| r.get(0))?
+            let edges: Vec<(i64, i64)> = st
+                .query_map(params![t.task_id], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
+            // A one-plan dump cannot carry an edge into another plan.
+            if plan.is_some()
+                && let Some((outside, _)) = edges.iter().find(|(_, other)| *other != plan_id)
+            {
+                bail!(
+                    "cannot export plan '{slug}' alone: {} depends on {} in another plan; export the whole authority with `papertiger export` (omit --plan)",
+                    t.handle,
+                    seq_handle(conn, *outside)?
+                );
+            }
+            let deps: Vec<i64> = edges.into_iter().map(|(seq, _)| seq).collect();
             let mut st = conn.prepare("SELECT tag FROM task_tags WHERE task_id=?1 ORDER BY tag")?;
             let tags: Vec<String> = st
                 .query_map(params![t.task_id], |r| r.get(0))?
@@ -843,17 +854,10 @@ pub fn import(conn: &Connection, actor: &str, dump: &Dump) -> Result<(usize, usi
             )?;
         }
         for on in &td.deps {
-            let dependency_plan = imported_plan_by_seq.get(on).with_context(|| {
-                format!(
+            if !imported_plan_by_seq.contains_key(on) {
+                bail!(
                     "import: {} depends on missing #{on}",
                     task_handle(seq, &td.kind)
-                )
-            })?;
-            if *dependency_plan != td.plan {
-                bail!(
-                    "import: {} and dependency {} belong to different plans",
-                    seq_handle(&tx, seq)?,
-                    seq_handle(&tx, *on)?
                 );
             }
             add_dep_inner(&tx, actor, seq, *on, false, None)?;

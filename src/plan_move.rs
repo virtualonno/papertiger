@@ -1,12 +1,12 @@
 //! Explicit, atomic relocation with unchanged identity and append-only history.
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    Dump, EventDump, TASK_DEFINITION_REVISION_SCHEMA, begin_mutation, get_plan, get_task,
-    given_reason, now, record_event_in_mutation, resolve_plan,
+    Dump, EventDump, TASK_COLS, TASK_DEFINITION_REVISION_SCHEMA, Task, begin_mutation, get_plan,
+    get_task, given_reason, now, record_event_in_mutation, resolve_plan, seq_handle, task_from_row,
 };
 
 pub fn move_tasks_to_plan(
@@ -26,11 +26,7 @@ pub fn move_tasks_to_plan(
     }
     let tx = begin_mutation(conn)?;
     let (destination_id, _) = resolve_plan(&tx, Some(destination))?;
-    if get_plan(&tx, destination_id)?.status != "active" {
-        bail!(
-            "destination plan '{destination}' is not active; use `papertiger plan set {destination} active --why <reason>` or select an active plan"
-        );
-    }
+    require_active_destination(&tx, destination_id)?;
     let mut tasks = sequences
         .iter()
         .map(|seq| get_task(&tx, *seq))
@@ -44,16 +40,10 @@ pub fn move_tasks_to_plan(
             );
         }
     }
-    // Every currently same-plan edge remains same-plan. Callers explicitly name
-    // the complete related set; relocation never rewrites a dependency or parent.
-    let mut statement = tx.prepare(
-        "SELECT a.seq, b.seq FROM tasks a JOIN tasks b ON b.task_id=a.parent_id
-         UNION SELECT a.seq, b.seq FROM tasks a JOIN tasks b ON b.task_id=a.replacement_task_id
-         UNION SELECT a.seq, b.seq FROM deps d JOIN tasks a ON a.task_id=d.task_id JOIN tasks b ON b.task_id=d.depends_on")?;
-    let edges = statement
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    drop(statement);
+    // Parent and replacement links stay within one plan, so callers name the
+    // complete linked set; relocation never rewrites a link. Dependencies may
+    // cross plans and do not bind the set.
+    let edges = plan_bound_edges(&tx)?;
     // Return the entire closure, so the corrective command needs no guessing.
     let mut adjacency = HashMap::<i64, Vec<i64>>::new();
     for (a, b) in edges {
@@ -73,7 +63,7 @@ pub fn move_tasks_to_plan(
     if !missing.is_empty() {
         missing.sort_unstable();
         bail!(
-            "move-plan would split parent, dependency, or replacement links; also supply related tasks {} in the same `papertiger move-plan ... --plan {destination} --why <reason>` command, or explicitly remove/reparent those links first",
+            "move-plan would split parent or replacement links; also supply related tasks {} in the same `papertiger move-plan ... --plan {destination} --why <reason>` command, or explicitly reparent those links first",
             missing
                 .iter()
                 .map(i64::to_string)
@@ -81,17 +71,114 @@ pub fn move_tasks_to_plan(
                 .join(" ")
         );
     }
+    relocate_in_mutation(&tx, actor, &tasks, destination_id, why)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Move a task and its descendants into its new parent's plan, so a parent
+/// edit may cross plans. The task's own plan change belongs to the caller's
+/// edit event; each descendant gets its own plan revision. Returns the source
+/// and destination plan slugs.
+pub(crate) fn move_subtree_for_parent(
+    tx: &Transaction<'_>,
+    actor: &str,
+    task: &Task,
+    parent: &Task,
+    why: Option<&str>,
+) -> Result<(String, String)> {
+    require_active_destination(tx, parent.plan_id)?;
+    let source = get_plan(tx, task.plan_id)?.slug;
+    let destination = get_plan(tx, parent.plan_id)?.slug;
+    let mut descendants = Vec::new();
+    let mut pending = vec![task.task_id];
+    let mut statement = tx.prepare(&format!(
+        "SELECT {TASK_COLS} FROM tasks WHERE parent_id=?1 ORDER BY seq"
+    ))?;
+    while let Some(task_id) = pending.pop() {
+        for child in statement
+            .query_map(params![task_id], task_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        {
+            pending.push(child.task_id);
+            descendants.push(child);
+        }
+    }
+    drop(statement);
+    let members = std::iter::once(task.seq)
+        .chain(descendants.iter().map(|child| child.seq))
+        .collect::<HashSet<_>>();
+    let mut statement = tx.prepare(
+        "SELECT a.seq, b.seq FROM tasks a JOIN tasks b ON b.task_id=a.replacement_task_id",
+    )?;
+    let crossing = statement
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(a, b)| members.contains(a) != members.contains(b))
+        .map(|(a, b)| Ok(format!("{} -> {}", seq_handle(tx, a)?, seq_handle(tx, b)?)))
+        .collect::<Result<Vec<_>>>()?;
+    drop(statement);
+    if !crossing.is_empty() {
+        bail!(
+            "{handle} would move to plan '{destination}' with its new parent, but replacement link(s) {} would cross plans; move the linked tasks together with `papertiger move-plan <tasks> --plan {destination} --why <reason>`, then set the parent",
+            crossing.join(", "),
+            handle = task.handle
+        );
+    }
+    tx.execute(
+        "UPDATE tasks SET plan_id=?1, updated_at=?2 WHERE task_id=?3",
+        params![parent.plan_id, now(), task.task_id],
+    )?;
+    relocate_in_mutation(tx, actor, &descendants, parent.plan_id, why)?;
+    Ok((source, destination))
+}
+
+pub(crate) fn require_active_destination(tx: &Transaction<'_>, destination_id: i64) -> Result<()> {
+    let destination = get_plan(tx, destination_id)?;
+    if destination.status != "active" {
+        bail!(
+            "destination plan '{slug}' is not active; use `papertiger plan set {slug} active --why <reason>` or select an active plan",
+            slug = destination.slug
+        );
+    }
+    Ok(())
+}
+
+/// Parent and replacement links as sequence pairs: the links that must stay
+/// within one plan.
+pub(crate) fn plan_bound_edges(tx: &Transaction<'_>) -> Result<Vec<(i64, i64)>> {
+    let mut statement = tx.prepare(
+        "SELECT a.seq, b.seq FROM tasks a JOIN tasks b ON b.task_id=a.parent_id
+         UNION SELECT a.seq, b.seq FROM tasks a JOIN tasks b ON b.task_id=a.replacement_task_id",
+    )?;
+    Ok(statement
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Move `tasks` into the destination plan with unchanged identity, recording
+/// one plan revision per task. Callers have checked that no parent or
+/// replacement link would cross plans.
+pub(crate) fn relocate_in_mutation(
+    tx: &Transaction<'_>,
+    actor: &str,
+    tasks: &[Task],
+    destination_id: i64,
+    why: Option<&str>,
+) -> Result<()> {
+    let destination = get_plan(tx, destination_id)?.slug;
     let moved_at = now();
-    for task in &tasks {
+    for task in tasks {
         tx.execute(
             "UPDATE tasks SET plan_id=?1, updated_at=?2 WHERE task_id=?3",
             params![destination_id, moved_at, task.task_id],
         )?;
     }
-    for task in &tasks {
-        let source = get_plan(&tx, task.plan_id)?;
+    for task in tasks {
+        let source = get_plan(tx, task.plan_id)?;
         record_event_in_mutation(
-            &tx,
+            tx,
             actor,
             "task",
             Some(task.task_id),
@@ -103,7 +190,6 @@ pub fn move_tasks_to_plan(
             })),
         )?;
     }
-    tx.commit()?;
     Ok(())
 }
 

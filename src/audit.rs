@@ -504,16 +504,19 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
     }
 
     let mut st = conn.prepare(
-        "SELECT task.seq, dependency.seq
+        "SELECT task.seq, dependency.seq, dependency.task_id
            FROM deps
            JOIN tasks task ON task.task_id=deps.task_id
            JOIN tasks dependency ON dependency.task_id=deps.depends_on
           WHERE task.status='done' AND dependency.status<>'done'",
     )?;
-    let rows: Vec<(i64, i64)> = st
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+    let rows: Vec<(i64, i64, i64)> = st
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    for (task, dependency) in rows {
+    for (task, dependency, dependency_id) in rows {
+        if crate::task_context::prerequisite_settled(conn, dependency_id)? {
+            continue;
+        }
         push(
             "done_with_open_dependency",
             format!(
@@ -561,24 +564,7 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         );
     }
 
-    let mut st = conn.prepare(
-        "SELECT a.seq, b.seq FROM deps d JOIN tasks a ON a.task_id=d.task_id
-         JOIN tasks b ON b.task_id=d.depends_on WHERE a.plan_id<>b.plan_id",
-    )?;
-    let rows: Vec<(i64, i64)> = st
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<rusqlite::Result<_>>()?;
-    for (task, dependency) in rows {
-        push(
-            "cross_plan_dep",
-            format!(
-                "{task} depends on {dependency} from a different plan",
-                task = seq_handle(conn, task)?,
-                dependency = seq_handle(conn, dependency)?
-            ),
-        );
-    }
-
+    // Dependencies may cross plans; parents and replacements may not.
     let mut st = conn.prepare(
         "SELECT c.seq, p.seq FROM tasks c JOIN tasks p ON p.task_id=c.parent_id
          WHERE c.plan_id<>p.plan_id",
@@ -763,22 +749,21 @@ pub fn audit(conn: &Connection) -> Result<Vec<AuditFinding>> {
         );
     }
 
-    // Live tasks depending on retired/rejected tasks.
+    // Live tasks held by a rejected prerequisite; a retired one settles them.
     let mut st = conn.prepare(
         "SELECT a.seq, b.seq, b.status FROM deps d
          JOIN tasks a ON a.task_id=d.task_id JOIN tasks b ON b.task_id=d.depends_on
-         WHERE a.status IN ('proposed','in_progress') AND b.status IN ('retired','rejected')",
+         WHERE a.status IN ('proposed','in_progress') AND b.status='rejected'",
     )?;
     let rows: Vec<(i64, i64, String)> = st
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
     for (a, b, s) in rows {
+        let (a, b) = (seq_handle(conn, a)?, seq_handle(conn, b)?);
         push(
             "dep_on_dead",
             format!(
-                "{a} depends on {b} which is {s}",
-                a = seq_handle(conn, a)?,
-                b = seq_handle(conn, b)?
+                "{a} depends on {b} which is {s}; run `papertiger dep remove {a} {b}` or depend on the work that replaces it"
             ),
         );
     }

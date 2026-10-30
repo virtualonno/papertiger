@@ -256,7 +256,6 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
         "child 7 (\"f\"): dependency \"missing\" names no key in this outline",
         "child 7 (\"f\"): dependency \"#1\" is a string; write an existing task as the integer 1",
         "child 7 (\"f\"): dependency F-1 is retired",
-        "child 7 (\"f\"): dependency F-4 belongs to a different plan than parent F-3",
         "child 7 (\"f\"): dependency F-3 finishes only after parent F-3, which waits for this child",
         "child 7 (\"f\"): dependency F-2 finishes only after parent F-3, which waits for this child",
         "child 7 (\"f\"): dependency F-5 finishes only after parent F-3, which waits for this child (F-5 depends on F-3); depend on a task that does not wait for F-3, or first remove a dependency in that chain with `papertiger dep remove 5 3 --why <reason>`",
@@ -280,6 +279,8 @@ fn decompose_refuses_the_whole_outline_and_names_every_problem() {
             "missing {expected:?} in:\n{message}"
         );
     }
+    // A dependency on F-4 in another plan of this authority is allowed.
+    assert!(!message.contains("dependency F-4"), "{message}");
     assert_eq!(log_head(&db), head);
     assert_eq!(task_count(&db), 4);
 

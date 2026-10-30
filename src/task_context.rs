@@ -234,15 +234,49 @@ fn query_related_tasks(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Blocking dependencies of a task: every dependency that is not done.
-/// Retired and rejected prerequisites remain blockers until the stale edge is
-/// explicitly removed as a course correction.
+/// Blocking dependencies of a task: every dependency that is not settled.
 pub fn open_deps(conn: &Connection, task_id: i64) -> Result<Vec<i64>> {
     let mut st = conn.prepare(
-        "SELECT t.seq FROM deps d JOIN tasks t ON t.task_id = d.depends_on
+        "SELECT t.task_id, t.seq FROM deps d JOIN tasks t ON t.task_id = d.depends_on
          WHERE d.task_id=?1 AND t.status <> 'done' ORDER BY t.seq",
     )?;
-    Ok(st
-        .query_map(params![task_id], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?)
+    let candidates = st
+        .query_map(params![task_id], |r| Ok((r.get::<_, i64>(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<(i64, i64)>>>()?;
+    let mut open = Vec::new();
+    for (dependency, seq) in candidates {
+        if !prerequisite_settled(conn, dependency)? {
+            open.push(seq);
+        }
+    }
+    Ok(open)
+}
+
+/// Whether a prerequisite no longer holds its dependents: it is done, retired
+/// as no longer worth doing, or retired into a replacement chain that ends
+/// settled. Its dependency edge stays in history either way. A rejected or
+/// open prerequisite holds them until it finishes or the edge is removed.
+pub(crate) fn prerequisite_settled(conn: &Connection, task_id: i64) -> Result<bool> {
+    let mut seen = std::collections::HashSet::new();
+    let mut next = task_id;
+    // A broken chain (a cycle or a missing row, which audit reports) settles
+    // nothing, so the dependent stays held.
+    while seen.insert(next) {
+        let Some((status, replacement)) = conn
+            .query_row(
+                "SELECT status, replacement_task_id FROM tasks WHERE task_id=?1",
+                params![next],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()?
+        else {
+            return Ok(false);
+        };
+        match (status.as_str(), replacement) {
+            ("done", _) | ("retired", None) => return Ok(true),
+            ("retired", Some(replacement)) => next = replacement,
+            _ => return Ok(false),
+        }
+    }
+    Ok(false)
 }
