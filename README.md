@@ -135,7 +135,11 @@ index entry with `git rm --cached -- <path>`, preserving the local file.
   operator's shell is never recorded as the operator; `runtime` is reserved
   for transitions the tool performs itself. The harness (Claude Code, Codex,
   pi, OpenCode, Cursor) and its session come from the environment, as does
-  Claude Code's reasoning effort; `--reasoning-effort` or
+  Claude Code's reasoning effort. An agent launched inside another agent's
+  shell also inherits the outer agent's session variable; when several are
+  visible, the nearest harness process above the command (found from the
+  process table on Windows and Linux) decides, and without one unique answer no
+  harness or session is recorded rather than the outer agent's; `--reasoning-effort` or
   `PAPERTIGER_REASONING_EFFORT` overrides it. The actor label defaults to the
   harness and a short session id (`claude-e2affada`), the operator for
   `human`, or else the model; `--actor`/`PAPERTIGER_ACTOR` overrides it. A

@@ -327,6 +327,11 @@ authority is not at `state/papertiger.sqlite` must move it there (take a
 - `note F-3 --text-file <path>` and `note F-3 --text "..."` record the note on
   F-3, as the skill teaches, instead of refusing with "give the note text
   once": with the text in a flag, a lone word is the task.
+- A write from an agent launched inside another agent's shell is attributed
+  to the nearest harness process above it, found from the process table on
+  Windows and Linux, instead of the outer agent whose session variable it
+  inherited. Where no unique harness can be placed, no harness or session is
+  recorded rather than the wrong one.
 - A failed `backup` names the real source in its retry command instead of a
   `<source>` placeholder.
 - An unknown `--plan` slug lists the plans the authority has instead of only

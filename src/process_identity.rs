@@ -193,6 +193,99 @@ pub fn observe_process(pid: u32) -> Result<ProcessObservation> {
     )
 }
 
+/// Executable names of this process's ancestors, nearest first, in lowercase
+/// without an `.exe` suffix. `None` where the platform cannot report them.
+pub(crate) fn ancestor_executables() -> Option<Vec<String>> {
+    #[cfg(windows)]
+    {
+        let table = windows_process_table()?;
+        walk_ancestors(std::process::id(), |pid| table.get(&pid).cloned())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        walk_ancestors(std::process::id(), linux_parent)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        None
+    }
+}
+
+/// Follow parent links from `start`, naming each ancestor, until the chain
+/// ends, repeats or grows implausibly long.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+fn walk_ancestors(
+    start: u32,
+    parent_of: impl Fn(u32) -> Option<(u32, String)>,
+) -> Option<Vec<String>> {
+    const MAX_DEPTH: usize = 64;
+    let mut seen = std::collections::HashSet::from([start]);
+    let (mut next, _) = parent_of(start)?;
+    let mut names = Vec::new();
+    while next != 0 && seen.insert(next) && names.len() < MAX_DEPTH {
+        let Some((parent, name)) = parent_of(next) else {
+            break;
+        };
+        let name = name.to_ascii_lowercase();
+        names.push(name.strip_suffix(".exe").unwrap_or(&name).to_owned());
+        next = parent;
+    }
+    Some(names)
+}
+
+/// Every process's parent and executable name at one instant.
+#[cfg(windows)]
+fn windows_process_table() -> Option<std::collections::HashMap<u32, (u32, String)>> {
+    use std::mem::size_of;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let mut table = std::collections::HashMap::new();
+    // SAFETY: the snapshot handle is checked before use and closed once; each
+    // entry states its size before the walk reads into it.
+    unsafe {
+        let handle = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if handle == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let mut entry = PROCESSENTRY32W {
+            dwSize: size_of::<PROCESSENTRY32W>() as u32,
+            ..std::mem::zeroed()
+        };
+        let mut more = Process32FirstW(handle, &mut entry) != 0;
+        while more {
+            let length = entry
+                .szExeFile
+                .iter()
+                .position(|&unit| unit == 0)
+                .unwrap_or(entry.szExeFile.len());
+            table.insert(
+                entry.th32ProcessID,
+                (
+                    entry.th32ParentProcessID,
+                    String::from_utf16_lossy(&entry.szExeFile[..length]),
+                ),
+            );
+            more = Process32NextW(handle, &mut entry) != 0;
+        }
+        CloseHandle(handle);
+    }
+    Some(table)
+}
+
+/// A process's parent and command name from `/proc/<pid>/stat`.
+#[cfg(target_os = "linux")]
+fn linux_parent(pid: u32) -> Option<(u32, String)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (head, tail) = stat.rsplit_once(')')?;
+    let name = head.split_once('(')?.1.to_owned();
+    let parent = tail.split_whitespace().nth(1)?.parse().ok()?;
+    Some((parent, name))
+}
+
 #[cfg(all(test, any(windows, target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::{ProcessObservation, observe_process};
@@ -207,5 +300,18 @@ mod tests {
             panic!("current test process must be active: {observation:?}");
         };
         assert!(!process_birth_identity.trim().is_empty());
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn the_current_process_names_its_ancestors() {
+        let ancestors = super::ancestor_executables().expect("process ancestry");
+        assert!(!ancestors.is_empty());
+        assert!(
+            ancestors
+                .iter()
+                .all(|name| !name.ends_with(".exe") && *name == name.to_ascii_lowercase()),
+            "{ancestors:?}"
+        );
     }
 }

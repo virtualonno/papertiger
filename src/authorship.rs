@@ -30,6 +30,20 @@ pub struct Harness {
     pub pid_variable: Option<&'static str>,
     /// Configured reasoning effort, where the harness exposes it.
     pub effort_variable: Option<&'static str>,
+    /// Executable names of the harness process (`codex` also covers its
+    /// `codex-*` helpers); they place it in a command's process ancestry.
+    pub host_executables: &'static [&'static str],
+}
+
+impl Harness {
+    fn hosts(&self, executable: &str) -> bool {
+        self.host_executables.iter().any(|host| {
+            executable == *host
+                || executable
+                    .strip_prefix(host)
+                    .is_some_and(|rest| rest.starts_with('-'))
+        })
+    }
 }
 
 pub const HARNESSES: &[Harness] = &[
@@ -39,6 +53,7 @@ pub const HARNESSES: &[Harness] = &[
         session_variable: "CLAUDE_CODE_SESSION_ID",
         pid_variable: Some("CLAUDE_PID"),
         effort_variable: Some("CLAUDE_EFFORT"),
+        host_executables: &["claude"],
     },
     Harness {
         name: "Codex",
@@ -46,6 +61,7 @@ pub const HARNESSES: &[Harness] = &[
         session_variable: "CODEX_THREAD_ID",
         pid_variable: None,
         effort_variable: None,
+        host_executables: &["codex"],
     },
     Harness {
         name: "pi",
@@ -53,6 +69,8 @@ pub const HARNESSES: &[Harness] = &[
         session_variable: "PI_SESSION_ID",
         pid_variable: None,
         effort_variable: None,
+        // pi runs as a Node.js script.
+        host_executables: &["pi", "node"],
     },
     Harness {
         name: "OpenCode",
@@ -60,6 +78,7 @@ pub const HARNESSES: &[Harness] = &[
         session_variable: "OPENCODE_SESSION_ID",
         pid_variable: Some("OPENCODE_PID"),
         effort_variable: None,
+        host_executables: &["opencode"],
     },
     Harness {
         name: "Cursor",
@@ -67,6 +86,7 @@ pub const HARNESSES: &[Harness] = &[
         session_variable: "CURSOR_CONVERSATION_ID",
         pid_variable: None,
         effort_variable: None,
+        host_executables: &["cursor"],
     },
 ];
 
@@ -167,22 +187,69 @@ pub fn validate_reasoning_effort(effort: &str) -> Result<()> {
     Ok(())
 }
 
+/// The harness running this command. A single visible harness session names
+/// it. An agent launched inside another agent's shell also inherits the outer
+/// agent's session variable, so when several are visible the nearest harness
+/// host in the process ancestry decides; without one unique answer no harness
+/// is recorded rather than the outer agent.
+fn running_harness(
+    env: &dyn Fn(&str) -> Option<String>,
+    ancestry: &dyn Fn() -> Option<Vec<String>>,
+) -> Option<&'static Harness> {
+    let visible = HARNESSES
+        .iter()
+        .filter(|harness| {
+            env(harness.session_variable).is_some_and(|value| !value.trim().is_empty())
+        })
+        .collect::<Vec<_>>();
+    match visible.as_slice() {
+        [] => None,
+        [only] => Some(only),
+        _ => {
+            for executable in ancestry()? {
+                let claims = visible
+                    .iter()
+                    .filter(|harness| harness.hosts(&executable))
+                    .collect::<Vec<_>>();
+                match claims.as_slice() {
+                    [] => {}
+                    [harness] => return Some(harness),
+                    _ => return None,
+                }
+            }
+            None
+        }
+    }
+}
+
 /// Resolve authorship from flags and an environment lookup. Explicit flags
-/// win, then `PAPERTIGER_*` variables, then what the harness provides.
+/// win, then `PAPERTIGER_*` variables, then what the harness provides. With
+/// several harness sessions visible and no process ancestry to place them,
+/// no harness is recorded.
 pub fn resolve_authorship(
     flags: AuthorshipFlags<'_>,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Authorship> {
+    resolve_authorship_within(flags, env, &|| None)
+}
+
+fn resolve_authorship_within(
+    flags: AuthorshipFlags<'_>,
+    env: &dyn Fn(&str) -> Option<String>,
+    ancestry: &dyn Fn() -> Option<Vec<String>>,
+) -> Result<Authorship> {
     let nonblank = |name: &str| env(name).filter(|value| !value.trim().is_empty());
-    let harness = HARNESSES
+    // Any visible harness session means an agent runs this command.
+    let visible = HARNESSES
         .iter()
         .find(|harness| nonblank(harness.session_variable).is_some());
+    let harness = running_harness(env, ancestry);
     let (model, model_source) = match (flags.model, nonblank("PAPERTIGER_MODEL")) {
         (Some(model), _) => (model.to_owned(), ModelSource::Flag),
         (None, Some(model)) => (model, ModelSource::Environment),
         (None, None) => bail!(
             "every write records the model that authored it; pass --model <model-id> (your own model) on this command, or set PAPERTIGER_MODEL in its environment{}",
-            if harness.is_some() {
+            if visible.is_some() {
                 ""
             } else {
                 "; for manual operator use set PAPERTIGER_MODEL=human"
@@ -197,7 +264,7 @@ pub fn resolve_authorship(
         );
     }
     if model == HUMAN_MODEL
-        && let Some(harness) = harness
+        && let Some(harness) = visible
     {
         bail!(
             "the model '{HUMAN_MODEL}' records the operator's manual use, but this command runs inside {} ({} is set); pass the agent's own model with --model <model-id>",
@@ -251,18 +318,18 @@ pub fn resolve_authorship(
 }
 
 /// The session of a read: an explicit flag, then `PAPERTIGER_SESSION`, then
-/// the harness session, so focus recognizes this caller's own pickups.
+/// the running harness's session, so focus recognizes this caller's own
+/// pickups.
 pub fn resolve_session(
     flag: Option<&str>,
     env: &dyn Fn(&str) -> Option<String>,
+    ancestry: &dyn Fn() -> Option<Vec<String>>,
 ) -> Result<Option<String>> {
     let nonblank = |name: &str| env(name).filter(|value| !value.trim().is_empty());
     let session = match flag {
         Some(session) => Some(session.to_owned()),
         None => nonblank("PAPERTIGER_SESSION").or_else(|| {
-            HARNESSES
-                .iter()
-                .find_map(|harness| nonblank(harness.session_variable))
+            running_harness(env, ancestry).and_then(|harness| nonblank(harness.session_variable))
         }),
     };
     if let Some(session) = &session {
@@ -272,12 +339,21 @@ pub fn resolve_session(
 }
 
 pub fn resolve_session_from_env(flag: Option<&str>) -> Result<Option<String>> {
-    resolve_session(flag, &|name| std::env::var(name).ok())
+    resolve_session(
+        flag,
+        &|name| std::env::var(name).ok(),
+        &crate::process_identity::ancestor_executables,
+    )
 }
 
-/// Resolve authorship from flags and the process environment.
+/// Resolve authorship from flags, the process environment and, when several
+/// harness sessions are visible, the process ancestry.
 pub fn resolve_authorship_from_env(flags: AuthorshipFlags<'_>) -> Result<Authorship> {
-    let mut authorship = resolve_authorship(flags, &|name| std::env::var(name).ok())?;
+    let mut authorship = resolve_authorship_within(
+        flags,
+        &|name| std::env::var(name).ok(),
+        &crate::process_identity::ancestor_executables,
+    )?;
     // The harness process outlives each command, so a pickup can name it.
     authorship.owner = HARNESSES
         .iter()
@@ -567,5 +643,49 @@ mod tests {
         assert_eq!(authorship.session.as_deref(), Some("batch-1"));
         assert_eq!(authorship.harness.as_deref(), Some("pi"));
         assert_eq!(authorship.reasoning_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn a_nested_agent_is_attributed_to_the_nearest_harness_in_its_ancestry() {
+        let env: HashMap<String, String> = [
+            ("PAPERTIGER_MODEL", "gpt-6.1-sol"),
+            ("CLAUDE_CODE_SESSION_ID", "40fa0f64-outer"),
+            ("PI_SESSION_ID", "0199-inner"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect();
+        let env = |name: &str| env.get(name).cloned();
+        let within = |ancestry: Option<&[&str]>| {
+            let ancestry =
+                ancestry.map(|names| names.iter().map(|name| (*name).to_owned()).collect());
+            resolve_authorship_within(AuthorshipFlags::default(), &env, &|| ancestry.clone())
+                .unwrap()
+        };
+        // pi launched from a Claude Code shell runs papertiger from its own shell.
+        let inner = within(Some(&["bash", "node", "bash", "claude"]));
+        assert_eq!(inner.harness.as_deref(), Some("pi"));
+        assert_eq!(inner.session.as_deref(), Some("0199-inner"));
+        assert_eq!(inner.actor, "pi-0199-inn");
+        // The reverse nesting is attributed to Claude Code.
+        let reverse = within(Some(&["bash", "claude", "bash", "node"]));
+        assert_eq!(reverse.harness.as_deref(), Some("Claude Code"));
+        assert_eq!(reverse.session.as_deref(), Some("40fa0f64-outer"));
+        // Without an ancestry that places one of them, neither is recorded.
+        for ancestry in [None, Some(&["bash", "explorer"][..])] {
+            let unplaced = within(ancestry);
+            assert_eq!(unplaced.harness, None);
+            assert_eq!(unplaced.session, None);
+            assert_eq!(unplaced.actor, "gpt-6.1-sol");
+        }
+        assert_eq!(
+            resolve_session(None, &env, &|| Some(vec!["node".into(), "claude".into()]))
+                .unwrap()
+                .as_deref(),
+            Some("0199-inner")
+        );
+        // A harness's helper processes place it too.
+        assert!(HARNESSES[1].hosts("codex-command-runner"));
+        assert!(!HARNESSES[1].hosts("codexify"));
     }
 }
