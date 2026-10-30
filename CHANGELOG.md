@@ -6,10 +6,14 @@ All notable user-visible changes are documented here. Papertiger follows
 
 ## [Unreleased]
 
-Local dogfood candidate `1.0.0-rc.9`; not published.
+## [1.0.0] - 2026-10-30
 
-Planner schema v14 and dump format `papertiger.dump.v11`. Run `init`
-deliberately after taking a `backup`; `import` converts `papertiger.dump.v10`.
+Planner schema v14, Mise schema v11 and dump format `papertiger.dump.v11`.
+Take a `backup`, then run `init` deliberately on each authority: it migrates
+an older schema, and on one already at v14 (a 1.0 release candidate) it
+switches on write-ahead logging and adds the lookup indexes. Run
+`papertiger-mise --db <database> init` for a Mise authority. `import` converts
+`papertiger.dump.v10`.
 
 Papertiger is now licensed under `AGPL-3.0-only` instead of MIT. Releases up to
 and including 0.20.0 remain available under the MIT License.
@@ -1168,7 +1172,8 @@ development version and has no public tag or release artifact.
 - Fail-closed schema migration, writer admission, evidence validation, frozen
   evaluator identity, and process-lifecycle refusal paths.
 
-[Unreleased]: https://github.com/virtualonno/papertiger/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/virtualonno/papertiger/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/virtualonno/papertiger/compare/v0.20.0...v1.0.0
 [0.20.0]: https://github.com/virtualonno/papertiger/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/virtualonno/papertiger/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/virtualonno/papertiger/compare/v0.17.1...v0.18.0
